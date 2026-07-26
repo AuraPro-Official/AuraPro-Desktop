@@ -17,8 +17,8 @@ minimum quality, security, and review requirements for changes to the project.
 
 Requirements:
 
-- Node.js 22
-- npm
+- Node.js 24 LTS
+- npm 12
 - Git
 - Native build tools for the target platform
 
