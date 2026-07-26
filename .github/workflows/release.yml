@@ -166,8 +166,6 @@ jobs:
       - name: Package for macOS (ad-hoc fallback)
         if: matrix.os == 'macos-latest' && (steps.apple_cert.outcome != 'success' || steps.mac_build.outcome == 'failure')
         env:
-          CSC_LINK: ''
-          CSC_KEY_PASSWORD: ''
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: |
           rm -rf dist/
