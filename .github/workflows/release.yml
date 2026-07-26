@@ -95,7 +95,7 @@ jobs:
       # ── Flatpak setup (Linux only) ──
       - name: Cache Flatpak SDKs
         if: runner.os == 'Linux' && matrix.arch == 'x64'
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.local/share/flatpak
           key: flatpak-sdk-23.08-electron2-${{ runner.os }}
