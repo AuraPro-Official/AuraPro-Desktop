@@ -1,0 +1,4 @@
+provider: github
+owner: AuraPro-Official
+repo: AuraPro-Desktop
+updaterCacheDirName: desktop-updater

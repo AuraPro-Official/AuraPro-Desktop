@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.aurapro.desktop</id>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-or-later</project_license>
+
+  <name>AuraPro</name>
+  <summary>Local AI translation and inference desktop client</summary>
+
+  <developer id="site.aurapro">
+    <name>AuraPro Inc.</name>
+  </developer>
+
+  <description>
+    <p>
+      AuraPro Desktop manages local AI inference, translation, voice,
+      knowledge workflows, and remote AuraPro service connections.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">com.aurapro.desktop</launchable>
+
+  <content_rating type="oars-1.1">
+    <content_attribute id="social-chat">intense</content_attribute>
+  </content_rating>
+
+  <url type="bugtracker">https://github.com/AuraPro-Official/AuraPro-Desktop/issues</url>
+  <url type="homepage">https://aurapro.site</url>
+  <url type="vcs-browser">https://github.com/AuraPro-Official/AuraPro-Desktop</url>
+
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/AuraPro-Official/AuraPro-Desktop/main/demo.png</image>
+    </screenshot>
+  </screenshots>
+
+  <releases>
+    <release version="3.9.3" date="2026-07-25">
+      <url type="details">https://github.com/AuraPro-Official/AuraPro-Desktop/releases/tag/v3.9.3</url>
+    </release>
+  </releases>
+</component>

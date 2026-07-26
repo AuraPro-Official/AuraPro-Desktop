@@ -1,0 +1,100 @@
+appId: com.aurapro.desktop
+productName: AuraPro
+directories:
+  buildResources: build
+files:
+  - '!**/.vscode/*'
+  - '!**/.idea/*'
+  - '!**/.github/**/*'
+  - '!src/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!svelte.config.mjs'
+  - '!{.editorconfig,.eslintcache,.gitattributes,.gitignore,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml}'
+  - '!{README.md,README.zh-CN.md,CHANGELOG.md,CHANGELOG.zh-CN.md,CONTRIBUTING.md,SECURITY.md,SUPPORT.md,CODE_OF_CONDUCT.md}'
+  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+extraResources:
+  - from: CHANGELOG.zh-CN.md
+    to: CHANGELOG.zh-CN.md
+  - from: data
+    to: data
+    filter:
+      - '**/*'
+      - '!glossary*.json'
+      - '!.key'
+      - '!*.db-shm'
+      - '!*.db-wal'
+asarUnpack:
+  - resources/**
+  - node_modules/node-pty/**
+win:
+  executableName: aurapro
+nsis:
+  artifactName: ${name}-${arch}-setup.${ext}
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: always
+  include: build/installer.nsh
+mac:
+  target:
+    - target: dmg
+    - target: zip
+      arch:
+        - x64
+        - arm64
+  artifactName: ${name}-${arch}-mac.${ext}
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    - NSCameraUsageDescription: Application requests access to the device's camera.
+    - NSMicrophoneUsageDescription: Application requests access to the device's microphone.
+    - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
+    - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
+dmg:
+  background: build/dmg-background.png
+  artifactName: ${name}-${arch}.${ext}
+  title: ${productName}
+  contents:
+    - x: 225
+      y: 250
+      type: file
+    - x: 400
+      y: 240
+      type: link
+      path: /Applications
+linux:
+  target:
+    - AppImage
+    - snap
+    - deb
+    - flatpak
+  maintainer: aurapro.site
+  category: Utility
+deb:
+  artifactName: ${name}_${arch}.${ext}
+snap:
+  artifactName: ${name}_${arch}.${ext}
+appImage:
+  artifactName: ${name}-${arch}.${ext}
+flatpak:
+  base: org.electronjs.Electron2.BaseApp
+  baseVersion: '23.08'
+  runtime: org.freedesktop.Platform
+  runtimeVersion: '23.08'
+  sdk: org.freedesktop.Sdk
+  artifactName: ${name}.flatpak
+  finishArgs:
+    - --share=ipc
+    - --socket=x11
+    - --socket=wayland
+    - --socket=pulseaudio
+    - --share=network
+    - --device=dri
+    - --filesystem=home
+    - --talk-name=org.freedesktop.Notifications
+    - --talk-name=org.freedesktop.portal.Desktop
+npmRebuild: true
+publish:
+  provider: github
+  owner: AuraPro-Official
+  repo: AuraPro-Desktop
