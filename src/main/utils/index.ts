@@ -128,9 +128,11 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.9.3'
+export const AURAPRO_UI_TARGET_VERSION = '3.9.4'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
+export const AURAPRO_UI_LAST_VERSION = '3.9.3'
+export const AURAPRO_WEBUI_FIRST_VERSION = '3.9.4'
 
 const parseSemver = (version?: string | null): number[] | null => {
   const match = `${version ?? ''}`
@@ -149,6 +151,14 @@ const compareSemver = (left: string, right: string): number => {
     if (a[i] !== b[i]) return a[i] - b[i]
   }
   return 0
+}
+
+const isVersionAtOrBefore = (version: string, boundary: string): boolean => {
+  const coreVersion = version
+    .trim()
+    .replace(/^v/i, '')
+    .match(/^(\d+\.\d+\.\d+)/)?.[1]
+  return Boolean(coreVersion && compareSemver(coreVersion, boundary) <= 0)
 }
 
 export const isSupportedOpenWebUIVersion = (version?: string | null): boolean => {
@@ -174,11 +184,23 @@ export const resolveOpenWebUITargetVersion = (version?: string | null): string =
 const isLatestOpenWebUITarget = (version: string): boolean =>
   version.toLowerCase() === AURAPRO_UI_LATEST_VERSION
 
+export const getOpenWebUIPackageNameForVersion = (
+  version?: string | null
+): 'aurapro-webui' | 'aurapro-ui' => {
+  const normalized = `${version ?? ''}`.trim().replace(/^v/i, '')
+  if (!normalized || normalized.toLowerCase() === AURAPRO_UI_LATEST_VERSION) {
+    return 'aurapro-webui'
+  }
+  return compareSemver(normalized, AURAPRO_WEBUI_FIRST_VERSION) >= 0
+    ? 'aurapro-webui'
+    : 'aurapro-ui'
+}
+
 const normalizeOpenWebUIPackageSource = (source: string, version?: string): string => {
   const trimmed = source.trim()
   if (!trimmed) return ''
   if (version && /^(aurapro-webui|aurapro-ui|open-webui)\s*([=<>!~]=?|$)/i.test(trimmed)) {
-    return `aurapro-webui==${version}`
+    return `${getOpenWebUIPackageNameForVersion(version)}==${version}`
   }
   return trimmed
 }
@@ -196,7 +218,7 @@ export const getOpenWebUIPackageSource = (version?: string): string => {
   return (
     normalizeOpenWebUIPackageSource(process.env['AURAPRO_WEBUI_PACKAGE_SOURCE'] || '', version) ||
     normalizeOpenWebUIPackageSource(configuredSource, version) ||
-    (version ? `aurapro-webui==${version}` : 'aurapro-webui')
+    (version ? `${getOpenWebUIPackageNameForVersion(version)}==${version}` : 'aurapro-webui')
   )
 }
 
@@ -1286,12 +1308,13 @@ const getDistributionMigrationScriptPath = (): string => {
   return scriptPath
 }
 
-const removeLegacyOpenWebUIDistribution = (
-  packageName: Exclude<OpenWebUIPackageName, 'aurapro-webui'>
+const removeSupersededOpenWebUIDistribution = (
+  packageName: OpenWebUIPackageName,
+  replacementPackageName: OpenWebUIPackageName
 ): void => {
   const output = execFileSync(
     getPythonPath(),
-    [getDistributionMigrationScriptPath(), packageName, 'aurapro-webui'],
+    [getDistributionMigrationScriptPath(), packageName, replacementPackageName],
     {
       encoding: 'utf-8',
       env: pythonEnv(),
@@ -1309,26 +1332,51 @@ export const ensureOpenWebUIPackage = async (
 ): Promise<OpenWebUIPackageName> => {
   const desiredVersion = resolveOpenWebUITargetVersion(targetVersion)
   const useLatest = isLatestOpenWebUITarget(desiredVersion)
-  const version = getExactPackageVersion('aurapro-webui')
+  const desiredPackageName = getOpenWebUIPackageNameForVersion(desiredVersion)
+  const version = getExactPackageVersion(desiredPackageName)
+  const newAuraProVersion = getExactPackageVersion('aurapro-webui')
   const legacyAuraProVersion = getExactPackageVersion('aurapro-ui')
   const legacyOpenWebUIVersion = getExactPackageVersion('open-webui')
-  const legacyPackages = [
-    ['aurapro-ui', legacyAuraProVersion],
-    ['open-webui', legacyOpenWebUIVersion]
-  ] as const
-  const hasLegacyPackage = legacyPackages.some(([, packageVersion]) => Boolean(packageVersion))
+  const migratableLegacyAuraProVersion =
+    legacyAuraProVersion && isVersionAtOrBefore(legacyAuraProVersion, AURAPRO_UI_LAST_VERSION)
+      ? legacyAuraProVersion
+      : null
+  const supersededPackages: [OpenWebUIPackageName, string | null][] =
+    desiredPackageName === 'aurapro-webui'
+      ? [
+          ['aurapro-ui', migratableLegacyAuraProVersion],
+          ['open-webui', legacyOpenWebUIVersion]
+        ]
+      : [
+          ['aurapro-webui', newAuraProVersion],
+          ['open-webui', legacyOpenWebUIVersion]
+        ]
+  const hasSupersededPackage = supersededPackages.some(([, packageVersion]) =>
+    Boolean(packageVersion)
+  )
   const targetSatisfied = useLatest
     ? Boolean(version) && options.updateLatest === false
     : version === desiredVersion
 
-  if (targetSatisfied && !hasLegacyPackage) {
+  if (
+    desiredPackageName === 'aurapro-webui' &&
+    legacyAuraProVersion &&
+    !migratableLegacyAuraProVersion
+  ) {
+    log.warn(
+      `Found aurapro-ui ${legacyAuraProVersion}, which is outside the supported migration boundary ` +
+        `(up to ${AURAPRO_UI_LAST_VERSION}); it will be preserved.`
+    )
+  }
+
+  if (targetSatisfied && !hasSupersededPackage) {
     await installTorchPackage(version ?? desiredVersion, onStatus)
-    return 'aurapro-webui'
+    return desiredPackageName
   }
 
   await prepareOpenWebUIPackageMutation(onStatus)
 
-  if (hasLegacyPackage) {
+  if (hasSupersededPackage) {
     const dataDir = getOpenWebUIDataPath()
     onStatus?.(
       `Migrating the previous WebUI package to Open WebUI ${
@@ -1336,7 +1384,7 @@ export const ensureOpenWebUIPackage = async (
       }...`
     )
     log.info(
-      `Migrating legacy WebUI packages to aurapro-webui ${
+      `Migrating superseded WebUI packages to ${desiredPackageName} ${
         useLatest ? 'latest' : desiredVersion
       }. Data directory will be preserved: ${dataDir}`
     )
@@ -1351,10 +1399,10 @@ export const ensureOpenWebUIPackage = async (
         ? `Open WebUI package version ${version ?? 'missing'} will be updated to latest`
         : `Open WebUI package version ${version ?? 'missing'} does not match ${desiredVersion}; installing in place`
     )
-    await installPackage('aurapro-webui', useLatest ? undefined : desiredVersion, onStatus)
+    await installPackage(desiredPackageName, useLatest ? undefined : desiredVersion, onStatus)
   }
 
-  const installedVersion = getExactPackageVersion('aurapro-webui')
+  const installedVersion = getExactPackageVersion(desiredPackageName)
   if (useLatest) {
     if (!installedVersion) {
       throw new Error(
@@ -1368,24 +1416,24 @@ export const ensureOpenWebUIPackage = async (
     )
   }
 
-  for (const [packageName, packageVersion] of legacyPackages) {
+  for (const [packageName, packageVersion] of supersededPackages) {
     if (!packageVersion) continue
     onStatus?.(`Removing previous ${packageName} package...`)
     try {
-      removeLegacyOpenWebUIDistribution(packageName)
+      removeSupersededOpenWebUIDistribution(packageName, desiredPackageName)
       log.info(
-        `Removed legacy ${packageName} package version ${packageVersion} without deleting shared aurapro-webui files`
+        `Removed superseded ${packageName} package version ${packageVersion} without deleting shared ${desiredPackageName} files`
       )
     } catch (error) {
       log.warn(
-        `Failed to remove legacy ${packageName}; the new aurapro-webui package remains usable and cleanup will be retried:`,
+        `Failed to remove superseded ${packageName}; ${desiredPackageName} remains usable and cleanup will be retried:`,
         error
       )
     }
   }
 
   await installTorchPackage(installedVersion ?? desiredVersion, onStatus)
-  return 'aurapro-webui'
+  return desiredPackageName
 }
 
 export const installTorchPackage = async (
@@ -1910,6 +1958,7 @@ export interface Connection {
 export interface AppConfig {
   version: number
   dataVersion: number
+  webuiDistributionMigrationVersion: number
   defaultConnectionId: string | null
   connections: Connection[]
   runInBackground: boolean
@@ -2001,6 +2050,7 @@ export interface AppConfig {
 const DEFAULT_CONFIG: AppConfig = {
   version: 0,
   dataVersion: 0,
+  webuiDistributionMigrationVersion: 0,
   defaultConnectionId: null,
   connections: [],
   runInBackground: true,

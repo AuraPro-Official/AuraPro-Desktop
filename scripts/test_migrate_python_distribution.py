@@ -67,7 +67,7 @@ class DistributionMigrationTests(unittest.TestCase):
             new_info = write_distribution(
                 site_packages,
                 "aurapro-webui",
-                "3.9.3",
+                "3.9.4",
                 {
                     "open_webui/shared.py": "new shared",
                     "open_webui/new_only.py": "new only",
@@ -96,7 +96,7 @@ class DistributionMigrationTests(unittest.TestCase):
             self.assertEqual(report["legacy"], "aurapro-ui")
             self.assertEqual(report["legacy_version"], "3.9.3")
             self.assertEqual(report["replacement"], "aurapro-webui")
-            self.assertEqual(report["replacement_version"], "3.9.3")
+            self.assertEqual(report["replacement_version"], "3.9.4")
             self.assertFalse(old_info.exists())
             self.assertTrue(new_info.exists())
             self.assertFalse((site_packages / "open_webui" / "old_only.py").exists())
@@ -145,7 +145,7 @@ class DistributionMigrationTests(unittest.TestCase):
             new_info = write_distribution(
                 site_packages,
                 "aurapro-webui",
-                "3.9.3",
+                "3.9.4",
                 {"open_webui/new_only.py": "new only"},
             )
 

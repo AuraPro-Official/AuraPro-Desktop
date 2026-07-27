@@ -45,6 +45,8 @@ import {
   getExactPackageVersion,
   getPackageVersion,
   ensureOpenWebUIPackage,
+  getOpenWebUIPackageNameForVersion,
+  AURAPRO_UI_TARGET_VERSION,
   resolveOpenWebUITargetVersion,
   getLocalNetworkAddresses,
   uninstallPackage,
@@ -1372,6 +1374,43 @@ const migrateDataIfNeeded = async (): Promise<void> => {
   }
 }
 
+const migrateWebUIDistributionConfigIfNeeded = async (): Promise<void> => {
+  if (!CONFIG) CONFIG = await getConfig()
+  const currentConfig = CONFIG
+  const requiredMigrationVersion = 1
+  if (Number(currentConfig.webuiDistributionMigrationVersion ?? 0) >= requiredMigrationVersion) {
+    return
+  }
+
+  const configuredVersion = `${currentConfig.localServer?.version ?? ''}`.trim()
+  let upgradeLegacyTarget = false
+
+  if (configuredVersion) {
+    try {
+      const resolvedVersion = resolveOpenWebUITargetVersion(configuredVersion)
+      upgradeLegacyTarget = getOpenWebUIPackageNameForVersion(resolvedVersion) === 'aurapro-ui'
+    } catch (error) {
+      log.warn(
+        `Preserving unsupported custom WebUI version during distribution migration: ${configuredVersion}`,
+        error
+      )
+    }
+  }
+
+  await setConfig({
+    webuiDistributionMigrationVersion: requiredMigrationVersion,
+    ...(upgradeLegacyTarget ? { localServer: { version: AURAPRO_UI_TARGET_VERSION } } : {})
+  })
+  CONFIG = await getConfig()
+
+  if (upgradeLegacyTarget) {
+    log.info(
+      `Migrated legacy WebUI target ${configuredVersion} to ${AURAPRO_UI_TARGET_VERSION}; ` +
+        'the existing data directory will be preserved during package replacement.'
+    )
+  }
+}
+
 let lastAutomaticLlamaDiagnosticFingerprint: string | null = null
 
 const runAutomaticLlamaDiagnostic = async (
@@ -1741,8 +1780,8 @@ if (!gotTheLock) {
   app.setAboutPanelOptions({
     applicationName: 'AuraPro',
     iconPath: icon,
-    applicationVersion: '3.9.3',
-    version: '3.9.3',
+    applicationVersion: '3.9.4',
+    version: '3.9.4',
     website: 'https://aurapro.site',
     copyright: `© ${new Date().getFullYear()} AuraPro`
   })
@@ -2187,7 +2226,8 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     ipcMain.handle('status:package', async () => {
       const config = await getConfig()
       const owuiVersion = resolveOpenWebUITargetVersion(config?.localServer?.version)
-      const installedVersion = getExactPackageVersion('aurapro-webui')
+      const packageName = getOpenWebUIPackageNameForVersion(owuiVersion)
+      const installedVersion = getExactPackageVersion(packageName)
       return owuiVersion === 'latest' ? installedVersion !== null : installedVersion === owuiVersion
     })
 
@@ -3336,6 +3376,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
       }
 
       void (async () => {
+        await migrateWebUIDistributionConfigIfNeeded()
         await migrateDataIfNeeded()
         await startGlossaryCtxSizeSync()
         await startConfiguredServices(defaultConnection)
