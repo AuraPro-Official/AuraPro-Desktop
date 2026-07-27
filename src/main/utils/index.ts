@@ -1054,34 +1054,6 @@ const prepareOpenWebUIPackageMutation = async (
   await sleep(1000)
 }
 
-const uninstallPythonPackage = async (
-  packageName: string,
-  onStatus?: (status: string) => void
-): Promise<void> => {
-  const maxAttempts = 2
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      execFileSync(getPythonPath(), ['-m', 'uv', 'pip', 'uninstall', '-y', packageName], {
-        encoding: 'utf-8',
-        env: pythonEnv(),
-        windowsHide: true,
-        timeout: 60000
-      })
-      return
-    } catch (error) {
-      if (attempt < maxAttempts && isPackageFileLockedError(error)) {
-        log.warn(
-          `Package uninstall for ${packageName} hit a locked file; stopping WebUI and retrying`,
-          error
-        )
-        await prepareOpenWebUIPackageMutation(onStatus)
-        continue
-      }
-      throw error
-    }
-  }
-}
-
 export const uninstallPython = (installationDir?: string): boolean => {
   installationDir = installationDir || getPythonInstallationDir()
   if (!fs.existsSync(installationDir)) {
@@ -1233,7 +1205,7 @@ export const isPackageInstalled = (packageName: string): boolean => {
   }
 }
 
-const getExactPackageVersion = (packageName: string): string | null => {
+export const getExactPackageVersion = (packageName: string): string | null => {
   const pythonPath = getPythonPath()
   if (!fs.existsSync(pythonPath)) return null
   try {
@@ -1285,28 +1257,78 @@ export const getPackageVersion = (packageName: string): string | null => {
   }
 }
 
+type OpenWebUIPackageName = 'aurapro-webui' | 'aurapro-ui' | 'open-webui'
+
+const getInstalledOpenWebUIPackageName = (): OpenWebUIPackageName | null => {
+  for (const packageName of [
+    'aurapro-webui',
+    'aurapro-ui',
+    'open-webui'
+  ] as OpenWebUIPackageName[]) {
+    if (getExactPackageVersion(packageName)) return packageName
+  }
+  return null
+}
+
+const getDistributionMigrationScriptPath = (): string => {
+  const scriptName = 'migrate_python_distribution.py'
+  const candidates = [
+    path.join(process.resourcesPath ?? '', 'app.asar.unpacked', 'resources', scriptName),
+    path.join(process.resourcesPath ?? '', 'resources', scriptName),
+    path.join(getAppPath(), 'app.asar.unpacked', 'resources', scriptName),
+    path.join(getAppPath(), 'resources', scriptName),
+    path.join(process.cwd(), 'resources', scriptName)
+  ]
+  const scriptPath = candidates.find((candidate) => fs.existsSync(candidate))
+  if (!scriptPath) {
+    throw new Error(`Python distribution migration helper was not found: ${scriptName}`)
+  }
+  return scriptPath
+}
+
+const removeLegacyOpenWebUIDistribution = (
+  packageName: Exclude<OpenWebUIPackageName, 'aurapro-webui'>
+): void => {
+  const output = execFileSync(
+    getPythonPath(),
+    [getDistributionMigrationScriptPath(), packageName, 'aurapro-webui'],
+    {
+      encoding: 'utf-8',
+      env: pythonEnv(),
+      windowsHide: true,
+      timeout: 60000
+    }
+  )
+  log.info(`Legacy WebUI package migration result: ${output.trim()}`)
+}
+
 export const ensureOpenWebUIPackage = async (
   targetVersion = AURAPRO_UI_TARGET_VERSION,
   onStatus?: (status: string) => void,
   options: { updateLatest?: boolean } = {}
-): Promise<void> => {
+): Promise<OpenWebUIPackageName> => {
   const desiredVersion = resolveOpenWebUITargetVersion(targetVersion)
   const useLatest = isLatestOpenWebUITarget(desiredVersion)
   const version = getExactPackageVersion('aurapro-webui')
-  if (!useLatest && version === desiredVersion) {
-    await installTorchPackage(desiredVersion, onStatus)
-    return
-  }
-  if (useLatest && version && options.updateLatest === false) {
-    await installTorchPackage(version, onStatus)
-    return
-  }
-
   const legacyAuraProVersion = getExactPackageVersion('aurapro-ui')
   const legacyOpenWebUIVersion = getExactPackageVersion('open-webui')
+  const legacyPackages = [
+    ['aurapro-ui', legacyAuraProVersion],
+    ['open-webui', legacyOpenWebUIVersion]
+  ] as const
+  const hasLegacyPackage = legacyPackages.some(([, packageVersion]) => Boolean(packageVersion))
+  const targetSatisfied = useLatest
+    ? Boolean(version) && options.updateLatest === false
+    : version === desiredVersion
+
+  if (targetSatisfied && !hasLegacyPackage) {
+    await installTorchPackage(version ?? desiredVersion, onStatus)
+    return 'aurapro-webui'
+  }
+
   await prepareOpenWebUIPackageMutation(onStatus)
 
-  if (legacyAuraProVersion || legacyOpenWebUIVersion) {
+  if (hasLegacyPackage) {
     const dataDir = getOpenWebUIDataPath()
     onStatus?.(
       `Migrating the previous WebUI package to Open WebUI ${
@@ -1318,46 +1340,20 @@ export const ensureOpenWebUIPackage = async (
         useLatest ? 'latest' : desiredVersion
       }. Data directory will be preserved: ${dataDir}`
     )
-
-    for (const [packageName, packageVersion] of [
-      ['aurapro-ui', legacyAuraProVersion],
-      ['open-webui', legacyOpenWebUIVersion]
-    ] as const) {
-      if (!packageVersion) continue
-      try {
-        await uninstallPythonPackage(packageName, onStatus)
-        log.info(`Uninstalled legacy ${packageName} package version ${packageVersion}`)
-      } catch (error) {
-        log.warn(
-          `Failed to uninstall legacy ${packageName}; continuing with aurapro-webui install:`,
-          error
-        )
-      }
-    }
   }
 
-  if (!useLatest && version && version !== desiredVersion) {
-    onStatus?.(`Updating Open WebUI ${version} to ${desiredVersion}...`)
-    try {
-      await uninstallPythonPackage('aurapro-webui', onStatus)
-      log.info(`Uninstalled old aurapro-webui package version ${version}`)
-    } catch (error) {
-      log.warn(
-        `Failed to uninstall old aurapro-webui ${version}; continuing with reinstall:`,
-        error
-      )
-    }
+  if (!targetSatisfied) {
+    onStatus?.(
+      useLatest ? 'Installing latest Open WebUI...' : `Installing Open WebUI ${desiredVersion}...`
+    )
+    log.info(
+      useLatest
+        ? `Open WebUI package version ${version ?? 'missing'} will be updated to latest`
+        : `Open WebUI package version ${version ?? 'missing'} does not match ${desiredVersion}; installing in place`
+    )
+    await installPackage('aurapro-webui', useLatest ? undefined : desiredVersion, onStatus)
   }
 
-  onStatus?.(
-    useLatest ? 'Installing latest Open WebUI...' : `Installing Open WebUI ${desiredVersion}...`
-  )
-  log.info(
-    useLatest
-      ? `Open WebUI package version ${version ?? 'missing'} will be updated to latest`
-      : `Open WebUI package version ${version ?? 'missing'} does not match ${desiredVersion}; reinstalling`
-  )
-  await installPackage('aurapro-webui', useLatest ? undefined : desiredVersion, onStatus)
   const installedVersion = getExactPackageVersion('aurapro-webui')
   if (useLatest) {
     if (!installedVersion) {
@@ -1371,7 +1367,25 @@ export const ensureOpenWebUIPackage = async (
         'Please check the WebUI install log and retry.'
     )
   }
+
+  for (const [packageName, packageVersion] of legacyPackages) {
+    if (!packageVersion) continue
+    onStatus?.(`Removing previous ${packageName} package...`)
+    try {
+      removeLegacyOpenWebUIDistribution(packageName)
+      log.info(
+        `Removed legacy ${packageName} package version ${packageVersion} without deleting shared aurapro-webui files`
+      )
+    } catch (error) {
+      log.warn(
+        `Failed to remove legacy ${packageName}; the new aurapro-webui package remains usable and cleanup will be retried:`,
+        error
+      )
+    }
+  }
+
   await installTorchPackage(installedVersion ?? desiredVersion, onStatus)
+  return 'aurapro-webui'
 }
 
 export const installTorchPackage = async (
@@ -1586,13 +1600,25 @@ export const startServer = async (
   const host = expose ? '0.0.0.0' : '127.0.0.1'
   const useHttps = Boolean(expose && config.localServer?.httpsEnabled !== false)
   if (!isPythonInstalled()) throw new Error('Python is not installed')
-  await ensureOpenWebUIPackage(
-    resolveOpenWebUITargetVersion(config.localServer?.version),
-    onStatus,
-    {
-      updateLatest: config.localServer?.autoUpdate !== false
-    }
-  )
+  let webUIPackageName: OpenWebUIPackageName
+  try {
+    webUIPackageName = await ensureOpenWebUIPackage(
+      resolveOpenWebUITargetVersion(config.localServer?.version),
+      onStatus,
+      {
+        updateLatest: config.localServer?.autoUpdate !== false
+      }
+    )
+  } catch (error) {
+    const fallbackPackage = getInstalledOpenWebUIPackageName()
+    if (!fallbackPackage) throw error
+    webUIPackageName = fallbackPackage
+    log.warn(
+      `Open WebUI package update failed; continuing with installed ${fallbackPackage}:`,
+      error
+    )
+    onStatus?.('WebUI update failed. Continuing with the previously installed version...')
+  }
   const localOpenWebUISourcePath = getLocalOpenWebUISourcePath()
   const localFrontendBuildDir = localOpenWebUISourcePath
     ? path.join(localOpenWebUISourcePath, 'build')
@@ -1612,7 +1638,7 @@ export const startServer = async (
     throw new Error(`Python executable not found at: ${pythonPath}`)
   }
 
-  const commandArgs = ['-m', 'uv', 'run', 'aurapro-webui', 'serve', '--host', host]
+  const commandArgs = ['-m', 'uv', 'run', webUIPackageName, 'serve', '--host', host]
   if (useHttps) {
     const certDir = path.join(getUserDataPath(), 'certs')
     const lanHosts = getLocalNetworkAddresses()

@@ -33,6 +33,14 @@ jobs:
       - name: Setup npm
         run: npm install --global npm@${{ env.NPM_VERSION }}
 
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Test WebUI package migration
+        run: python scripts/test_migrate_python_distribution.py
+
       - name: Install Dependencies
         run: npm ci
 
