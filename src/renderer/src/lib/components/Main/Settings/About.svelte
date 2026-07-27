@@ -149,7 +149,7 @@
   }
 
   onMount(async () => {
-    openWebuiVersion = await window.electronAPI.getPackageVersion('aurapro-ui')
+    openWebuiVersion = await window.electronAPI.getPackageVersion('aurapro-webui')
     openTerminalVersion = await window.electronAPI.getPackageVersion('open-terminal')
     sherpaVersion = await window.electronAPI.getPackageVersion('sherpa-onnx')
 
@@ -312,7 +312,7 @@
   {#if openWebuiVersion}
     <button
       class="w-full py-4 flex items-center justify-between bg-transparent border-none cursor-pointer group"
-      onclick={() => openRelease('AuraPro-Official/AuraPro-Desktop', openWebuiVersion!)}
+      onclick={() => openRelease('AuraPro-Official/AuraPro-WebUI', openWebuiVersion!)}
     >
       <div>
         <div class="text-[13px] opacity-70">{$i18n.t('settings.about.openWebuiVersion')}</div>

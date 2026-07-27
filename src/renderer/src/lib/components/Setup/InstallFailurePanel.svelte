@@ -107,7 +107,7 @@
       ],
       'package-install': [
         '确认可以访问 PyPI 或配置的软件包源。',
-        '关闭正在运行的 AuraPro WebUI 进程。',
+        '关闭正在运行的 Open WebUI 进程。',
         '在杀毒软件中允许内置 Python 目录。'
       ],
       'model-download': [

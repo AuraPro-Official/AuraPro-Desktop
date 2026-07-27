@@ -103,14 +103,19 @@ export const getOpenWebUIDataPath = (): string => {
 export const getLocalOpenWebUISourcePath = (): string | null => {
   const candidates = [
     path.resolve(getAppPath(), '..', 'webui-main'),
+    path.resolve(getAppPath(), '..', 'AuraPro-WebUI'),
     path.resolve(getAppPath(), '..', 'AuraPro-UI'),
     path.resolve(getAppPath(), '..', '..', 'webui-main'),
+    path.resolve(getAppPath(), '..', '..', 'AuraPro-WebUI'),
     path.resolve(getAppPath(), '..', '..', 'AuraPro-UI'),
     path.resolve(process.cwd(), '..', 'webui-main'),
+    path.resolve(process.cwd(), '..', 'AuraPro-WebUI'),
     path.resolve(process.cwd(), '..', 'AuraPro-UI'),
     path.resolve(process.cwd(), '..', '..', 'webui-main'),
+    path.resolve(process.cwd(), '..', '..', 'AuraPro-WebUI'),
     path.resolve(process.cwd(), '..', '..', 'AuraPro-UI'),
     path.join(process.resourcesPath ?? '', 'webui-main'),
+    path.join(process.resourcesPath ?? '', 'AuraPro-WebUI'),
     path.join(process.resourcesPath ?? '', 'AuraPro-UI')
   ]
 
@@ -159,7 +164,7 @@ export const resolveOpenWebUITargetVersion = (version?: string | null): string =
   const normalized = requested
   if (!isSupportedOpenWebUIVersion(normalized)) {
     throw new Error(
-      `AuraPro UI version ${normalized} is not supported. Please use latest or version ` +
+      `Open WebUI distribution version ${normalized} is not supported. Please use latest or version ` +
         `${AURAPRO_UI_MIN_VERSION} or newer.`
     )
   }
@@ -172,8 +177,8 @@ const isLatestOpenWebUITarget = (version: string): boolean =>
 const normalizeOpenWebUIPackageSource = (source: string, version?: string): string => {
   const trimmed = source.trim()
   if (!trimmed) return ''
-  if (version && /^(aurapro-ui|open-webui)\s*([=<>!~]=?|$)/i.test(trimmed)) {
-    return `aurapro-ui==${version}`
+  if (version && /^(aurapro-webui|aurapro-ui|open-webui)\s*([=<>!~]=?|$)/i.test(trimmed)) {
+    return `aurapro-webui==${version}`
   }
   return trimmed
 }
@@ -191,7 +196,7 @@ export const getOpenWebUIPackageSource = (version?: string): string => {
   return (
     normalizeOpenWebUIPackageSource(process.env['AURAPRO_WEBUI_PACKAGE_SOURCE'] || '', version) ||
     normalizeOpenWebUIPackageSource(configuredSource, version) ||
-    (version ? `aurapro-ui==${version}` : 'aurapro-ui')
+    (version ? `aurapro-webui==${version}` : 'aurapro-webui')
   )
 }
 
@@ -977,8 +982,8 @@ $targets = Get-CimInstance Win32_Process | Where-Object {
   $cmd = $_.CommandLine
   $exe = $_.ExecutablePath
   if (-not $cmd) { return $false }
-  $isAuraProWebUI = ($cmd -like '*aurapro-ui*' -or $cmd -like '*open_webui*' -or $cmd -like '*open-webui*')
-  $isServerCommand = ($cmd -like '* serve*' -or $cmd -like '*uv run*' -or $_.Name -ieq 'aurapro-ui.exe')
+  $isAuraProWebUI = ($cmd -like '*aurapro-webui*' -or $cmd -like '*aurapro-ui*' -or $cmd -like '*open_webui*' -or $cmd -like '*open-webui*')
+  $isServerCommand = ($cmd -like '* serve*' -or $cmd -like '*uv run*' -or $_.Name -ieq 'aurapro-webui.exe' -or $_.Name -ieq 'aurapro-ui.exe')
   $isBundledPython = ($exe -and ([System.IO.Path]::GetFullPath($exe).StartsWith($pythonDir, [System.StringComparison]::OrdinalIgnoreCase)))
   return $isAuraProWebUI -and ($isServerCommand -or $isBundledPython)
 }
@@ -996,11 +1001,11 @@ foreach ($p in $targets) {
         timeout: 10000
       }).trim()
       if (killed) {
-        log.info(`Stopped stale AuraPro UI processes: ${killed}`)
-        onStatus?.('Stopped old AuraPro UI process before updating...')
+        log.info(`Stopped stale Open WebUI processes: ${killed}`)
+        onStatus?.('Stopped old Open WebUI process before updating...')
       }
     } catch (error) {
-      log.warn('Failed to scan stale AuraPro UI processes:', error)
+      log.warn('Failed to scan stale Open WebUI processes:', error)
     }
     return
   }
@@ -1019,7 +1024,8 @@ foreach ($p in $targets) {
       if (
         pid &&
         command.includes(pythonDir) &&
-        (command.includes('aurapro-ui') ||
+        (command.includes('aurapro-webui') ||
+          command.includes('aurapro-ui') ||
           command.includes('open_webui') ||
           command.includes('open-webui')) &&
         (command.includes(' serve') || command.includes('uv run'))
@@ -1031,18 +1037,18 @@ foreach ($p in $targets) {
       }
     }
     if (killed.length) {
-      log.info(`Stopped stale AuraPro UI processes: ${killed.join(', ')}`)
-      onStatus?.('Stopped old AuraPro UI process before updating...')
+      log.info(`Stopped stale Open WebUI processes: ${killed.join(', ')}`)
+      onStatus?.('Stopped old Open WebUI process before updating...')
     }
   } catch (error) {
-    log.warn('Failed to scan stale AuraPro UI processes:', error)
+    log.warn('Failed to scan stale Open WebUI processes:', error)
   }
 }
 
 const prepareOpenWebUIPackageMutation = async (
   onStatus?: (status: string) => void
 ): Promise<void> => {
-  onStatus?.('Stopping AuraPro UI before updating...')
+  onStatus?.('Stopping Open WebUI before updating...')
   await stopAllServers()
   await killStaleOpenWebUIProcesses(onStatus)
   await sleep(1000)
@@ -1114,7 +1120,7 @@ export const installPackage = (
         )
       }
       const pythonPath = getPythonPath()
-      const isAuraProUiPackage = packageName === 'aurapro-ui' || packageName === 'open-webui'
+      const isAuraProUiPackage = ['aurapro-webui', 'aurapro-ui', 'open-webui'].includes(packageName)
       const localOpenWebUISourcePath = isAuraProUiPackage ? getLocalOpenWebUISourcePath() : null
       const packageSpec = isAuraProUiPackage
         ? getOpenWebUIPackageSource(version)
@@ -1124,7 +1130,7 @@ export const installPackage = (
 
       if (localOpenWebUISourcePath) {
         log.info(`Installing local AuraPro source: ${localOpenWebUISourcePath}`)
-        onStatus?.('Installing local AuraPro WebUI...')
+        onStatus?.('Installing local Open WebUI...')
       }
 
       const commandProcess = execFile(
@@ -1179,12 +1185,12 @@ export const installPackage = (
       })
     })
 
-  const isAuraProUiPackage = packageName === 'aurapro-ui' || packageName === 'open-webui'
+  const isAuraProUiPackage = ['aurapro-webui', 'aurapro-ui', 'open-webui'].includes(packageName)
   return runInstall().catch(async (error) => {
     if (!isAuraProUiPackage || !isPackageFileLockedError(error)) {
       throw error
     }
-    log.warn('AuraPro UI package install hit a locked file; stopping WebUI and retrying', error)
+    log.warn('Open WebUI package install hit a locked file; stopping WebUI and retrying', error)
     await prepareOpenWebUIPackageMutation(onStatus)
     return runInstall()
   })
@@ -1210,16 +1216,18 @@ export const isPackageInstalled = (packageName: string): boolean => {
     })
     return info.includes(`Name: ${packageName}`)
   } catch {
-    if (packageName === 'open-webui' || packageName === 'aurapro-ui') {
-      try {
-        const info = execFileSync(pythonPath, ['-m', 'uv', 'pip', 'show', 'aurapro-ui'], {
-          encoding: 'utf-8',
-          env: pythonEnv(),
-          windowsHide: true,
-          timeout: 60000
-        })
-        return info.includes('Name: aurapro-ui')
-      } catch {}
+    if (['aurapro-webui', 'aurapro-ui', 'open-webui'].includes(packageName)) {
+      for (const candidate of ['aurapro-webui', 'aurapro-ui']) {
+        try {
+          const info = execFileSync(pythonPath, ['-m', 'uv', 'pip', 'show', candidate], {
+            encoding: 'utf-8',
+            env: pythonEnv(),
+            windowsHide: true,
+            timeout: 60000
+          })
+          if (info.includes(`Name: ${candidate}`)) return true
+        } catch {}
+      }
     }
     return false
   }
@@ -1259,17 +1267,19 @@ export const getPackageVersion = (packageName: string): string | null => {
     const match = info.match(/^Version:\s*(.+)$/m)
     return match ? match[1].trim() : null
   } catch {
-    if (packageName === 'open-webui' || packageName === 'aurapro-ui') {
-      try {
-        const info = execFileSync(pythonPath, ['-m', 'uv', 'pip', 'show', 'aurapro-ui'], {
-          encoding: 'utf-8',
-          env: pythonEnv(),
-          windowsHide: true,
-          timeout: 60000
-        })
-        const match = info.match(/^Version:\s*(.+)$/m)
-        return match ? match[1].trim() : null
-      } catch {}
+    if (['aurapro-webui', 'aurapro-ui', 'open-webui'].includes(packageName)) {
+      for (const candidate of ['aurapro-webui', 'aurapro-ui']) {
+        try {
+          const info = execFileSync(pythonPath, ['-m', 'uv', 'pip', 'show', candidate], {
+            encoding: 'utf-8',
+            env: pythonEnv(),
+            windowsHide: true,
+            timeout: 60000
+          })
+          const match = info.match(/^Version:\s*(.+)$/m)
+          if (match) return match[1].trim()
+        } catch {}
+      }
     }
     return null
   }
@@ -1282,7 +1292,7 @@ export const ensureOpenWebUIPackage = async (
 ): Promise<void> => {
   const desiredVersion = resolveOpenWebUITargetVersion(targetVersion)
   const useLatest = isLatestOpenWebUITarget(desiredVersion)
-  const version = getExactPackageVersion('aurapro-ui')
+  const version = getExactPackageVersion('aurapro-webui')
   if (!useLatest && version === desiredVersion) {
     await installTorchPackage(desiredVersion, onStatus)
     return
@@ -1292,55 +1302,72 @@ export const ensureOpenWebUIPackage = async (
     return
   }
 
-  const legacyVersion = getExactPackageVersion('open-webui')
+  const legacyAuraProVersion = getExactPackageVersion('aurapro-ui')
+  const legacyOpenWebUIVersion = getExactPackageVersion('open-webui')
   await prepareOpenWebUIPackageMutation(onStatus)
 
-  if (legacyVersion) {
+  if (legacyAuraProVersion || legacyOpenWebUIVersion) {
     const dataDir = getOpenWebUIDataPath()
     onStatus?.(
-      `Migrating Open WebUI ${legacyVersion} to AuraPro UI ${useLatest ? 'latest' : desiredVersion}...`
+      `Migrating the previous WebUI package to Open WebUI ${
+        useLatest ? 'latest' : desiredVersion
+      }...`
     )
     log.info(
-      `Migrating legacy open-webui ${legacyVersion} to aurapro-ui ${useLatest ? 'latest' : desiredVersion}. ` +
-        `Data directory will be preserved: ${dataDir}`
+      `Migrating legacy WebUI packages to aurapro-webui ${
+        useLatest ? 'latest' : desiredVersion
+      }. Data directory will be preserved: ${dataDir}`
     )
-    try {
-      await uninstallPythonPackage('open-webui', onStatus)
-      log.info('Uninstalled legacy open-webui package')
-    } catch (error) {
-      log.warn('Failed to uninstall legacy open-webui; continuing with aurapro-ui install:', error)
+
+    for (const [packageName, packageVersion] of [
+      ['aurapro-ui', legacyAuraProVersion],
+      ['open-webui', legacyOpenWebUIVersion]
+    ] as const) {
+      if (!packageVersion) continue
+      try {
+        await uninstallPythonPackage(packageName, onStatus)
+        log.info(`Uninstalled legacy ${packageName} package version ${packageVersion}`)
+      } catch (error) {
+        log.warn(
+          `Failed to uninstall legacy ${packageName}; continuing with aurapro-webui install:`,
+          error
+        )
+      }
     }
   }
 
   if (!useLatest && version && version !== desiredVersion) {
-    onStatus?.(`Updating AuraPro UI ${version} to ${desiredVersion}...`)
+    onStatus?.(`Updating Open WebUI ${version} to ${desiredVersion}...`)
     try {
-      await uninstallPythonPackage('aurapro-ui', onStatus)
-      log.info(`Uninstalled old aurapro-ui package version ${version}`)
+      await uninstallPythonPackage('aurapro-webui', onStatus)
+      log.info(`Uninstalled old aurapro-webui package version ${version}`)
     } catch (error) {
-      log.warn(`Failed to uninstall old aurapro-ui ${version}; continuing with reinstall:`, error)
+      log.warn(
+        `Failed to uninstall old aurapro-webui ${version}; continuing with reinstall:`,
+        error
+      )
     }
   }
 
   onStatus?.(
-    useLatest ? 'Installing latest AuraPro UI...' : `Installing AuraPro UI ${desiredVersion}...`
+    useLatest ? 'Installing latest Open WebUI...' : `Installing Open WebUI ${desiredVersion}...`
   )
   log.info(
     useLatest
-      ? `AuraPro UI package version ${version ?? 'missing'} will be updated to latest`
-      : `AuraPro UI package version ${version ?? 'missing'} does not match ${desiredVersion}; reinstalling`
+      ? `Open WebUI package version ${version ?? 'missing'} will be updated to latest`
+      : `Open WebUI package version ${version ?? 'missing'} does not match ${desiredVersion}; reinstalling`
   )
-  await installPackage('aurapro-ui', useLatest ? undefined : desiredVersion, onStatus)
-  const installedVersion = getExactPackageVersion('aurapro-ui')
+  await installPackage('aurapro-webui', useLatest ? undefined : desiredVersion, onStatus)
+  const installedVersion = getExactPackageVersion('aurapro-webui')
   if (useLatest) {
     if (!installedVersion) {
       throw new Error(
-        'AuraPro UI update failed: no package was installed. Please check the WebUI install log and retry.'
+        'Open WebUI update failed: no package was installed. Please check the WebUI install log and retry.'
       )
     }
   } else if (installedVersion !== desiredVersion) {
     throw new Error(
-      `AuraPro UI update failed: expected ${desiredVersion}, but installed ${installedVersion ?? 'none'}. ` +
+      `Open WebUI update failed: expected ${desiredVersion}, but installed ${installedVersion ?? 'none'}. ` +
         'Please check the WebUI install log and retry.'
     )
   }
@@ -1420,17 +1447,20 @@ export const uninstallPackage = (packageName: string): boolean => {
     log.info(`Uninstalled package: ${packageName}`)
     return true
   } catch (error) {
-    if (packageName === 'open-webui' || packageName === 'aurapro-ui') {
-      try {
-        execFileSync(pythonPath, ['-m', 'uv', 'pip', 'uninstall', 'aurapro-ui'], {
-          encoding: 'utf-8',
-          env: pythonEnv(),
-          windowsHide: true,
-          timeout: 60000
-        })
-        log.info('Uninstalled package: aurapro-ui')
-        return true
-      } catch {}
+    if (['aurapro-webui', 'aurapro-ui', 'open-webui'].includes(packageName)) {
+      for (const candidate of ['aurapro-webui', 'aurapro-ui', 'open-webui']) {
+        if (candidate === packageName) continue
+        try {
+          execFileSync(pythonPath, ['-m', 'uv', 'pip', 'uninstall', candidate], {
+            encoding: 'utf-8',
+            env: pythonEnv(),
+            windowsHide: true,
+            timeout: 60000
+          })
+          log.info(`Uninstalled package: ${candidate}`)
+          return true
+        } catch {}
+      }
     }
     log.error(`Failed to uninstall ${packageName}:`, error)
     return false
@@ -1563,6 +1593,10 @@ export const startServer = async (
       updateLatest: config.localServer?.autoUpdate !== false
     }
   )
+  const localOpenWebUISourcePath = getLocalOpenWebUISourcePath()
+  const localFrontendBuildDir = localOpenWebUISourcePath
+    ? path.join(localOpenWebUISourcePath, 'build')
+    : null
 
   // Ensure ffmpeg is available
   try {
@@ -1578,7 +1612,7 @@ export const startServer = async (
     throw new Error(`Python executable not found at: ${pythonPath}`)
   }
 
-  const commandArgs = ['-m', 'uv', 'run', 'aurapro-ui', 'serve', '--host', host]
+  const commandArgs = ['-m', 'uv', 'run', 'aurapro-webui', 'serve', '--host', host]
   if (useHttps) {
     const certDir = path.join(getUserDataPath(), 'certs')
     const lanHosts = getLocalNetworkAddresses()
@@ -1613,6 +1647,9 @@ export const startServer = async (
         DATA_DIR: dataDir,
         GLOSSARY_PATH: path.join(dataDir, 'glossaries', 'personal.json'),
         WEBUI_SECRET_KEY: secretKey,
+        ...(localFrontendBuildDir && fs.existsSync(localFrontendBuildDir)
+          ? { FRONTEND_BUILD_DIR: localFrontendBuildDir }
+          : {}),
         PYTHONUNBUFFERED: '1',
         PYTHONWARNINGS: 'ignore::SyntaxWarning',
         ENABLE_LLAMA_CPP: 'False',

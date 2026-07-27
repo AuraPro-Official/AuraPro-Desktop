@@ -2186,7 +2186,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     ipcMain.handle('status:package', async () => {
       const config = await getConfig()
       const owuiVersion = resolveOpenWebUITargetVersion(config?.localServer?.version)
-      const installedVersion = getPackageVersion('aurapro-ui')
+      const installedVersion = getPackageVersion('aurapro-webui')
       return owuiVersion === 'latest' ? installedVersion !== null : installedVersion === owuiVersion
     })
 

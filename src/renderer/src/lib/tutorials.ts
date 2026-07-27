@@ -103,8 +103,8 @@ export const tutorialSections: TutorialSection[] = [
         ),
         steps: [
           text(
-            'AuraPro UI 是本地 WebUI 服务，负责聊天界面、词典、知识库、设置和用户数据。',
-            'AuraPro UI is the local WebUI service for chat, dictionaries, knowledge bases, settings, and user data.'
+            'Open WebUI 是本地 WebUI 服务，负责聊天界面、词典、知识库、设置和用户数据。',
+            'Open WebUI is the local web service for chat, dictionaries, knowledge bases, settings, and user data.'
           ),
           text(
             'llama.cpp 是本地模型推理运行时。需要本地模型时安装；只连接远程服务器时可以不依赖它。',

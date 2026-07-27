@@ -323,7 +323,7 @@ export const diagnoseInstallationFailure = (
         'AuraPro will rerun the idempotent package installation and verify the installed version.',
       manualSteps: [
         'Check access to PyPI and the configured package source.',
-        'Close running AuraPro WebUI processes.',
+        'Close running Open WebUI processes.',
         'Allow the bundled Python directory in antivirus software.'
       ]
     })

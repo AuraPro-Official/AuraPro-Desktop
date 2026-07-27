@@ -783,7 +783,7 @@
       currentInstallStage = 'webui-start'
       const serverStarted = await window.electronAPI.startServer()
       if (!serverStarted) {
-        throw new Error('AuraPro WebUI failed to start. Check the Web-UI log for details.')
+        throw new Error('Open WebUI failed to start. Check the WebUI log for details.')
       }
       coreProgress = 42
       const info = await window.electronAPI.getServerInfo()

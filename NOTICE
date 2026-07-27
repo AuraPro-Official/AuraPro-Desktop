@@ -8,14 +8,14 @@ AuraPro builds on Open WebUI in two ways:
 
 1. Bundled web interface
    The web interface shipped and launched by this desktop app is Open WebUI,
-   distributed as the "aurapro-ui" package with AuraPro-specific features.
+   distributed as the "aurapro-webui" package with AuraPro-specific features.
 
      Open WebUI
      https://github.com/open-webui/open-webui
      Copyright (c) 2023- Open WebUI Inc.
      Created by Timothy Jaeryang Baek
 
-   The "aurapro-ui" source retains Open WebUI copyright notices, the Open WebUI
+   The "aurapro-webui" source retains Open WebUI copyright notices, the Open WebUI
    License, LICENSE_NOTICE, and LICENSE_HISTORY, and keeps the "open_webui"
    Python module namespace for compatibility with upstream code, plugins, and
    migrations.
@@ -28,7 +28,7 @@ AuraPro builds on Open WebUI in two ways:
 Licensing
 ---------
   - The AuraPro desktop application is licensed under AGPL-3.0 (see LICENSE).
-  - The bundled Open WebUI web interface ("aurapro-ui") is governed by the
+  - The bundled Open WebUI web interface ("aurapro-webui") is governed by the
     Open WebUI License, included with that package.
 
 Trademarks

@@ -20,7 +20,7 @@
     const info = await window.electronAPI.getServerInfo()
     serverStatus = info?.status ?? null
     serverPid = info?.pid ?? null
-    version = await window.electronAPI.getPackageVersion('aurapro-ui')
+    version = await window.electronAPI.getPackageVersion('aurapro-webui')
     defaultDataPath = await window.electronAPI.getDefaultDataPath()
     loaded = true
   })
@@ -83,12 +83,12 @@
       await window.electronAPI.installPackage()
       await window.electronAPI.startServer()
       serverStatus = 'running'
-      version = await window.electronAPI.getPackageVersion('aurapro-ui')
+      version = await window.electronAPI.getPackageVersion('aurapro-webui')
     } catch (error: unknown) {
       console.error('Failed to update:', error)
       errorMessage = getErrorMessage(
         error,
-        'AuraPro UI update failed. Please check the install log and retry.'
+        'Open WebUI update failed. Please check the install log and retry.'
       )
     }
     updating = false
@@ -115,12 +115,12 @@
         errorMessage = ''
         try {
           await window.electronAPI.installPackage()
-          version = await window.electronAPI.getPackageVersion('aurapro-ui')
+          version = await window.electronAPI.getPackageVersion('aurapro-webui')
         } catch (error: unknown) {
           console.error('Failed to install:', error)
           errorMessage = getErrorMessage(
             error,
-            'AuraPro UI install failed. Please check the install log and retry.'
+            'Open WebUI install failed. Please check the install log and retry.'
           )
         }
         installing = false
@@ -460,7 +460,7 @@
             uninstalling = true
             try {
               if (isRunning) await window.electronAPI.stopServer()
-              await window.electronAPI.uninstallPackage('aurapro-ui')
+              await window.electronAPI.uninstallPackage('aurapro-webui')
               version = null
             } catch (e) {
               console.error('Failed to uninstall:', e)

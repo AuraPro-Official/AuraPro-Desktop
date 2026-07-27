@@ -535,7 +535,7 @@
       installProgress = 92
       const serverStarted = await window.electronAPI.startServer()
       if (!serverStarted) {
-        throw new Error('AuraPro WebUI failed to start. Check the Web-UI log for details.')
+        throw new Error('Open WebUI failed to start. Check the WebUI log for details.')
       }
       const info = await window.electronAPI.getServerInfo()
 
@@ -980,8 +980,8 @@
       }
     })
 
-    // Check if AuraPro package is installed
-    window.electronAPI.getPackageVersion('aurapro-ui').then((v: string | null) => {
+    // Check if the Open WebUI package is installed
+    window.electronAPI.getPackageVersion('aurapro-webui').then((v: string | null) => {
       localInstalled = v !== null
     })
 
