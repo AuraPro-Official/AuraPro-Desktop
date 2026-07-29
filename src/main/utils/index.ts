@@ -128,7 +128,7 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.9.4'
+export const AURAPRO_UI_TARGET_VERSION = '3.9.5'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
 export const AURAPRO_UI_LAST_VERSION = '3.9.3'
@@ -1598,12 +1598,15 @@ const spawnHiddenServerProcess = (
   }
 }
 
+export type WebUIStartPhase = 'checking' | 'updating' | 'starting'
+
 export const startServer = async (
   expose = false,
   port: number | null = null,
-  onStatus?: (status: string) => void
+  onStatus?: (status: string, phase: WebUIStartPhase) => void
 ): Promise<{ url: string; pid: number }> => {
   await stopAllServers()
+  onStatus?.('Checking the installed WebUI version...', 'checking')
   const config = await getConfig()
   const configEnvVars = config.envVars ?? {}
   const ragHardwareAcceleration =
@@ -1652,7 +1655,7 @@ export const startServer = async (
   try {
     webUIPackageName = await ensureOpenWebUIPackage(
       resolveOpenWebUITargetVersion(config.localServer?.version),
-      onStatus,
+      (status) => onStatus?.(status, 'updating'),
       {
         updateLatest: config.localServer?.autoUpdate !== false
       }
@@ -1665,7 +1668,10 @@ export const startServer = async (
       `Open WebUI package update failed; continuing with installed ${fallbackPackage}:`,
       error
     )
-    onStatus?.('WebUI update failed. Continuing with the previously installed version...')
+    onStatus?.(
+      'WebUI update failed. Continuing with the previously installed version...',
+      'updating'
+    )
   }
   const localOpenWebUISourcePath = getLocalOpenWebUISourcePath()
   const localFrontendBuildDir = localOpenWebUISourcePath
@@ -1674,7 +1680,7 @@ export const startServer = async (
 
   // Ensure ffmpeg is available
   try {
-    await ensureFfmpeg(onStatus)
+    await ensureFfmpeg((status) => onStatus?.(status, 'updating'))
   } catch (err) {
     log.warn('Failed to ensure ffmpeg (non-fatal, but some features may not work):', err)
   }
@@ -1710,6 +1716,7 @@ export const startServer = async (
   }
   commandArgs.push('--port', availablePort.toString())
   log.info('Starting AuraPro server...', pythonPath, commandArgs.join(' '))
+  onStatus?.('Starting the WebUI service...', 'starting')
 
   let ptyProcess: ServerProcess
   try {

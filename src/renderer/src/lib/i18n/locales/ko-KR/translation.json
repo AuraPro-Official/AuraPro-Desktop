@@ -1,5 +1,12 @@
 {
   "app.name": "AuraPro",
+  "startup.webui.checking": "WebUI 버전을 확인하는 중...",
+  "startup.webui.updating": "WebUI 업데이트 중...",
+  "startup.webui.starting": "WebUI 시작 중...",
+  "startup.webui.waiting": "WebUI가 준비되기를 기다리는 중...",
+  "startup.webui.description": "처음 시작하거나 버전을 업데이트할 때 몇 분이 걸릴 수 있습니다. 소프트웨어를 닫지 마세요.",
+  "startup.webui.failed": "WebUI를 시작하지 못했습니다",
+  "startup.webui.failedDescription": "업데이트 또는 시작을 완료하지 못했습니다. 다시 시도하거나 서비스 로그를 확인하세요.",
   "startup.preparingData": "로컬 데이터를 준비하는 중…",
   "app.desktop": "AuraPro 데스크톱",
   "common.loading": "로딩 중…",

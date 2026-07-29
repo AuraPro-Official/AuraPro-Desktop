@@ -7,7 +7,8 @@
     connections,
     contentPreloadPath,
     serverInfo,
-    startupMigration
+    startupMigration,
+    webuiStartup
   } from './lib/stores'
   import Main from './lib/components/Main.svelte'
 
@@ -36,6 +37,7 @@
 
     let disposed = false
     let receivedServerEvent = false
+    let receivedWebUIStartupEvent = false
 
     disposeMainData = api.onData((data: MainDataEvent) => {
       if (data.type === 'status:server') {
@@ -53,6 +55,10 @@
       if (data.type === 'startup:migration') {
         startupMigration.set(data.data as Parameters<typeof startupMigration.set>[0])
       }
+      if (data.type === 'webui:startup') {
+        receivedWebUIStartupEvent = true
+        webuiStartup.set(data.data as Parameters<typeof webuiStartup.set>[0])
+      }
     })
 
     const initialize = async () => {
@@ -66,6 +72,9 @@
         contentPreloadPath.set(state.contentPreloadPath ?? '')
         if (!receivedServerEvent) {
           serverInfo.set(state.serverInfo)
+        }
+        if (!receivedWebUIStartupEvent && state.webuiStartup) {
+          webuiStartup.set(state.webuiStartup)
         }
 
         applyResolvedTheme(state.config?.theme ?? 'system')

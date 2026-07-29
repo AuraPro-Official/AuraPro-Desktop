@@ -1,5 +1,12 @@
 {
   "app.name": "AuraPro",
+  "startup.webui.checking": "Checking the WebUI version...",
+  "startup.webui.updating": "Updating WebUI...",
+  "startup.webui.starting": "Starting WebUI...",
+  "startup.webui.waiting": "Waiting for WebUI to be ready...",
+  "startup.webui.description": "The first launch or a version update may take a few minutes. Keep AuraPro open.",
+  "startup.webui.failed": "WebUI failed to start",
+  "startup.webui.failedDescription": "The update or startup could not finish. Retry or check the service logs.",
   "app.desktop": "AuraPro Desktop",
   "startup.preparingData": "Preparing local data…",
 

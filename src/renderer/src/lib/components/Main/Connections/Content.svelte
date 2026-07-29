@@ -7,6 +7,7 @@
     connections,
     config,
     serverInfo,
+    webuiStartup,
     appState,
     appInfo,
     contentPreloadPath as contentPreloadPathStore
@@ -76,6 +77,7 @@
     autoInstall: boolean
     onStartInstall: (options?: InstallOptions) => void
     onAddConnection: () => void
+    onRetryLocal: () => void
     onSetView: (v: string) => void
     showAddConnectionModal: boolean
   }
@@ -117,6 +119,7 @@
     autoInstall = $bindable(false),
     onStartInstall,
     onAddConnection,
+    onRetryLocal,
     onSetView,
     showAddConnectionModal = $bindable(false)
   }: Props = $props()
@@ -173,8 +176,8 @@
     $appState?.startsWith('install-failed:') ? $appState.substring('install-failed:'.length) : null
   )
 
-  // Track webview loading per connection
-  const webviewLoading = new SvelteMap<string, boolean>()
+  // Track whether each webview has completed its first load.
+  const webviewReady = new SvelteMap<string, boolean>()
 
   // Track webview load errors per connection
   const webviewErrors = new SvelteMap<string, { code: number; description: string; url: string }>()
@@ -196,12 +199,24 @@
     if (view === 'install') void loadLocalInstall()
   })
 
-  // Server is starting up (local)
-  const serverStarting = $derived(
-    localConn &&
-      localInstalled &&
-      ($serverInfo?.status === 'starting' ||
-        ($serverInfo?.status === 'running' && !$serverInfo?.reachable))
+  const webuiStartupActive = $derived(
+    ['checking', 'updating', 'starting', 'waiting'].includes($webuiStartup.phase)
+  )
+  const webuiStartupFailed = $derived($webuiStartup.phase === 'failed')
+  const webuiStartupVisible = $derived(
+    (webuiStartupActive || webuiStartupFailed) &&
+      (view !== 'connected' || activeConnectionId === localConn?.id)
+  )
+  const webuiStartupTitleKey = $derived(
+    $webuiStartup.phase === 'checking'
+      ? 'startup.webui.checking'
+      : $webuiStartup.phase === 'updating'
+        ? 'startup.webui.updating'
+        : $webuiStartup.phase === 'starting'
+          ? 'startup.webui.starting'
+          : $webuiStartup.phase === 'waiting'
+            ? 'startup.webui.waiting'
+            : 'startup.webui.failed'
   )
 
   const activeWebviewError = $derived(
@@ -212,11 +227,20 @@
 
   const isLoading = $derived(
     connectingId !== '' ||
-      (serverStarting && activeConnectionId === localConn?.id) ||
-      (view === 'connected' &&
-        !activeWebviewError &&
-        webviewLoading.get(activeConnectionId) === true)
+      (view === 'connected' && !activeWebviewError && webviewReady.get(activeConnectionId) !== true)
   )
+  let showLoadingOverlay = $state(false)
+
+  $effect(() => {
+    if (!isLoading || webuiStartupVisible) {
+      showLoadingOverlay = false
+      return
+    }
+    const timer = setTimeout(() => {
+      showLoadingOverlay = true
+    }, 180)
+    return () => clearTimeout(timer)
+  })
 
   const retryActiveWebview = () => {
     const wv = document.querySelector<Electron.WebviewTag>(
@@ -224,6 +248,7 @@
     )
     if (wv?.reload) {
       webviewErrors.delete(activeConnectionId)
+      webviewReady.set(activeConnectionId, false)
       wv.reload()
     }
   }
@@ -247,7 +272,7 @@
       }
       if (disposed) return
 
-      observer = new MutationObserver(() => {
+      const attachWebviews = () => {
         const container = document.querySelector('.content-webview-container')
         if (!container) return
         const webviews = container.querySelectorAll<Electron.WebviewTag>('webview')
@@ -256,21 +281,19 @@
           initializedWebviews.add(wv)
           const connId = wv.getAttribute('partition')?.replace('persist:connection-', '') ?? ''
           if (!connId) return
+          webviewReady.set(connId, false)
 
-          // Mark loading when navigation starts
-          wv.addEventListener('did-start-loading', () => {
-            webviewLoading.set(connId, true)
-          })
-
-          // Clear loading when done
+          // Only the first load blocks the desktop shell. Later WebUI
+          // navigations remain interactive and no longer cause full-page flashes.
           wv.addEventListener('did-stop-loading', () => {
-            webviewLoading.set(connId, false)
+            webviewReady.set(connId, true)
           })
 
           // Track load failures so we can show an error overlay
           wv.addEventListener('did-fail-load', (event: Electron.DidFailLoadEvent) => {
             // Ignore sub-resource failures and aborted navigations (-3)
             if (event.errorCode === -3 || event.isMainFrame === false) return
+            webviewReady.set(connId, false)
             webviewErrors.set(connId, {
               code: event.errorCode,
               description: event.errorDescription || 'Unknown error',
@@ -287,6 +310,7 @@
 
           // Renderer process crash
           wv.addEventListener('crashed', () => {
+            webviewReady.set(connId, false)
             webviewErrors.set(connId, {
               code: -1,
               description: 'crashed',
@@ -301,14 +325,6 @@
               console.warn(`[webview:${connId}]`, event.message)
             }
           })
-
-          // If this webview was created before the preload path resolved
-          // (race between auto-connect and async IPC), the preload didn't
-          // attach.  Force a reload now so it picks up the correct preload.
-          if (contentPreloadPath && wv.getAttribute('preload') !== contentPreloadPath) {
-            wv.setAttribute('preload', contentPreloadPath)
-            wv.reload()
-          }
 
           // Handle IPC messages from the webview guest (AuraPro → desktop)
           wv.addEventListener('ipc-message', async (event: Electron.IpcMessageEvent) => {
@@ -370,11 +386,14 @@
             }
           })
         })
-      })
+      }
+
+      observer = new MutationObserver(attachWebviews)
 
       const target = document.querySelector('.content-webview-container')
       if (target) {
         observer.observe(target, { childList: true, subtree: true })
+        attachWebviews()
       }
     }
 
@@ -393,16 +412,67 @@
     : 'border-black/[0.08] dark:border-white/[0.10]'}"
 >
   <!-- Webviews — all open connections stay alive, only active one visible -->
-  {#each [...openConnections] as [connId, connUrl] (connId)}
-    <webview
-      src={connUrl}
-      class="flex-1 min-h-0 border-none"
-      style="display: {view === 'connected' && activeConnectionId === connId ? 'flex' : 'none'}"
-      partition="persist:connection-{connId}"
-      preload={contentPreloadPath}
-      allowpopups
-    ></webview>
-  {/each}
+  {#if contentPreloadPath}
+    {#each [...openConnections] as [connId, connUrl] (connId)}
+      <webview
+        src={connUrl}
+        class="flex-1 min-h-0 border-none"
+        style="display: {view === 'connected' && activeConnectionId === connId ? 'flex' : 'none'}"
+        partition="persist:connection-{connId}"
+        preload={contentPreloadPath}
+        allowpopups
+      ></webview>
+    {/each}
+  {/if}
+
+  {#if webuiStartupVisible}
+    <div
+      class="absolute inset-0 z-30 flex items-center justify-center bg-[#eee] px-6 dark:bg-[#111]"
+      transition:fade={{ duration: 160 }}
+    >
+      <div class="flex w-full max-w-[380px] flex-col items-center text-center">
+        {#if webuiStartupActive}
+          <div
+            class="mb-5 h-7 w-7 animate-spin rounded-full border-2 border-black/10 border-t-black/55 dark:border-white/15 dark:border-t-white/60"
+          ></div>
+        {:else}
+          <div
+            class="mb-5 flex h-9 w-9 items-center justify-center rounded-full bg-red-500/10 text-red-500"
+          >
+            <span class="text-lg leading-none">!</span>
+          </div>
+        {/if}
+        <div class="text-[15px] font-medium text-[#1d1d1f] dark:text-[#fafafa]">
+          {$i18n.t(webuiStartupTitleKey)}
+        </div>
+        <div class="mt-2 text-[12px] leading-5 opacity-45">
+          {$i18n.t(
+            webuiStartupFailed ? 'startup.webui.failedDescription' : 'startup.webui.description'
+          )}
+        </div>
+        {#if webuiStartupActive}
+          <div class="mt-5 h-1.5 w-full overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+            <div
+              class="webui-startup-progress h-full w-1/3 rounded-full bg-black/45 dark:bg-white/55"
+            ></div>
+          </div>
+        {/if}
+        {#if $webuiStartup.detail}
+          <div class="mt-3 max-w-full truncate text-[10px] opacity-25">
+            {$webuiStartup.detail}
+          </div>
+        {/if}
+        {#if webuiStartupFailed}
+          <button
+            class="mt-5 border-none bg-black px-4 py-2 text-[12px] font-medium text-white transition hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-100"
+            onclick={onRetryLocal}
+          >
+            {$i18n.t('common.retry')}
+          </button>
+        {/if}
+      </div>
+    </div>
+  {/if}
 
   <!-- Error overlay when webview fails to load -->
   {#if activeWebviewError}
@@ -476,7 +546,7 @@
   {/if}
 
   <!-- Loading overlay for webview -->
-  {#if isLoading}
+  {#if showLoadingOverlay}
     <div
       class="absolute inset-0 z-10 flex items-center justify-center bg-[#eee] dark:bg-[#111]"
       transition:fade={{ duration: 200 }}
@@ -860,3 +930,24 @@
     />
   {/if}
 </div>
+
+<style>
+  @keyframes webui-startup-progress {
+    from {
+      transform: translateX(-120%);
+    }
+    to {
+      transform: translateX(420%);
+    }
+  }
+
+  .webui-startup-progress {
+    animation: webui-startup-progress 1.4s ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .webui-startup-progress {
+      animation-duration: 2.8s;
+    }
+  }
+</style>

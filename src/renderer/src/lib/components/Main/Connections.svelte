@@ -873,6 +873,8 @@
         return
       }
 
+      if (data.type === 'webui:startup') return
+
       // ── Spotlight / desktop query ─────────────────────
       if (data.type === 'query' && (payload?.query || payload?.files?.length)) {
         const connId = payload.connectionId ?? ''
@@ -1180,6 +1182,9 @@
       bind:autoInstall
       onStartInstall={startInstall}
       onAddConnection={addConnection}
+      onRetryLocal={() => {
+        if (localConn) connect(localConn.id)
+      }}
       onSetView={(v) => {
         view = v
       }}

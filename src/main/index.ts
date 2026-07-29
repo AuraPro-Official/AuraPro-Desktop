@@ -196,6 +196,24 @@ let SERVER_URL: string | null = null
 let SERVER_STATUS: string | null = null
 let SERVER_REACHABLE = false
 let SERVER_PID: number | null = null
+type WebUIStartupPhase =
+  | 'idle'
+  | 'checking'
+  | 'updating'
+  | 'starting'
+  | 'waiting'
+  | 'ready'
+  | 'failed'
+interface WebUIStartupState {
+  phase: WebUIStartupPhase
+  detail: string
+  updatedAt: number
+}
+let WEBUI_STARTUP_STATE: WebUIStartupState = {
+  phase: 'idle',
+  detail: '',
+  updatedAt: Date.now()
+}
 let AUTH_TOKEN: string | null = null
 let voiceInputRecording = false
 
@@ -705,7 +723,8 @@ function createMainWindow(show = true): void {
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
-      webviewTag: true
+      webviewTag: true,
+      backgroundThrottling: false
     }
   }
 
@@ -835,12 +854,11 @@ const connectTo = async (connection: Connection) => {
       const started = await startServerHandler()
       if (!started) return null
     }
-    url = SERVER_URL || connection.url
-
     // Wait for the server to actually be reachable before opening the view.
     // startServerHandler returns as soon as the process spawns, but the HTTP
     // endpoint might not be ready yet (especially on first launch).
     if (!SERVER_REACHABLE) {
+      updateWebUIStartupState('waiting', 'Waiting for the WebUI service to become ready...')
       const maxWait = 600_000
       const poll = 2_000
       const t0 = Date.now()
@@ -849,9 +867,12 @@ const connectTo = async (connection: Connection) => {
       }
       if (!SERVER_REACHABLE) {
         log.warn('connectTo: server did not become reachable within timeout')
+        updateWebUIStartupState('failed', 'The WebUI service did not become ready in time.')
         return null
       }
     }
+    url = SERVER_URL || connection.url
+    updateWebUIStartupState('ready')
   }
 
   // Normalize URL
@@ -865,11 +886,17 @@ const connectTo = async (connection: Connection) => {
 // ─── Server Lifecycle ───────────────────────────────────
 
 const startServerHandler = async (): Promise<boolean> => {
-  if (SERVER_STATUS === 'starting' || SERVER_STATUS === 'started') {
+  if (SERVER_STATUS === 'starting') {
     log.info('[server] Already running or starting, skipping duplicate start')
     return true
   }
-  await stopServerHandler()
+  if (SERVER_STATUS === 'started') {
+    log.info('[server] Already running, skipping duplicate start')
+    updateWebUIStartupState(SERVER_REACHABLE ? 'ready' : 'waiting')
+    return true
+  }
+  await stopServerHandler(true)
+  updateWebUIStartupState('checking', 'Preparing to check the installed WebUI version...')
   SERVER_STATUS = 'starting'
   sendToRenderer('status:server', SERVER_STATUS)
 
@@ -878,7 +905,7 @@ const startServerHandler = async (): Promise<boolean> => {
     const { url, pid } = await startServer(
       CONFIG?.localServer?.serveOnLocalNetwork ?? true,
       CONFIG?.localServer?.port ?? null,
-      (status: string) => sendToRenderer('status:server', status)
+      (status, phase) => updateWebUIStartupState(phase, status)
     )
     SERVER_URL = url
     SERVER_PID = pid
@@ -915,6 +942,7 @@ const startServerHandler = async (): Promise<boolean> => {
     SERVER_STATUS = 'started'
     log.info('Server started:', SERVER_URL, SERVER_PID)
     sendToRenderer('status:server', SERVER_STATUS)
+    updateWebUIStartupState('waiting', 'Waiting for the WebUI service to become ready...')
 
     // Handle unexpected exit
     const pty = getServerPty(pid)
@@ -925,6 +953,10 @@ const startServerHandler = async (): Promise<boolean> => {
         SERVER_REACHABLE = false
         SERVER_PID = null
         sendToRenderer('status:server', SERVER_STATUS)
+        updateWebUIStartupState(
+          'failed',
+          `The WebUI service exited before it became ready (code ${exitCode}).`
+        )
         updateTray()
       }
     })
@@ -934,8 +966,10 @@ const startServerHandler = async (): Promise<boolean> => {
     updateTray()
 
     checkUrlAndOpen(SERVER_URL, async () => {
+      if (SERVER_PID !== pid) return
       SERVER_REACHABLE = true
       sendToRenderer('server:ready', { url: SERVER_URL })
+      updateWebUIStartupState('ready')
       updateTray()
     })
 
@@ -944,6 +978,7 @@ const startServerHandler = async (): Promise<boolean> => {
     log.error('Failed to start server:', error)
     SERVER_STATUS = 'failed'
     sendToRenderer('status:server', SERVER_STATUS)
+    updateWebUIStartupState('failed', getErrorMessage(error))
     sendToRenderer('error', { message: `Failed to start server: ${getErrorMessage(error)}` })
     updateTray()
     return false
@@ -1130,8 +1165,9 @@ const connectSherpaPtyPort = (): void => {
   mainWindow.webContents.postMessage('sherpa:pty:port', null, [port2])
 }
 
-const stopServerHandler = async (): Promise<boolean> => {
+const stopServerHandler = async (preserveStartupState = false): Promise<boolean> => {
   try {
+    SERVER_PID = null
     await stopAllServers()
     if (SERVER_STATUS) {
       SERVER_STATUS = 'stopped'
@@ -1140,6 +1176,7 @@ const stopServerHandler = async (): Promise<boolean> => {
     SERVER_REACHABLE = false
     SERVER_URL = null
     sendToRenderer('status:server', SERVER_STATUS)
+    if (!preserveStartupState) updateWebUIStartupState('idle')
     return true
   } catch (error) {
     log.error('Failed to stop server:', error)
@@ -1290,6 +1327,15 @@ const sendToRenderer = (type: string, data?: unknown) => {
       data: typeof payload.data === 'string' ? payload.data : JSON.stringify(payload.data)
     })
   }
+}
+
+const updateWebUIStartupState = (phase: WebUIStartupPhase, detail = ''): void => {
+  WEBUI_STARTUP_STATE = {
+    phase,
+    detail,
+    updatedAt: Date.now()
+  }
+  sendToRenderer('webui:startup', WEBUI_STARTUP_STATE)
 }
 
 const migrateDataIfNeeded = async (): Promise<void> => {
@@ -1780,8 +1826,8 @@ if (!gotTheLock) {
   app.setAboutPanelOptions({
     applicationName: 'AuraPro',
     iconPath: icon,
-    applicationVersion: '3.9.4',
-    version: '3.9.4',
+    applicationVersion: app.getVersion(),
+    version: app.getVersion(),
     website: 'https://aurapro.site',
     copyright: `© ${new Date().getFullYear()} AuraPro`
   })
@@ -1896,6 +1942,9 @@ if (!gotTheLock) {
       })
 
       if (contents.getType() === 'webview') {
+        // Keep streaming timers and frame callbacks active inside guest pages.
+        contents.setBackgroundThrottling(false)
+
         // ── Popups (target="_blank" links) → open in default browser ──
         contents.setWindowOpenHandler(({ url }) => {
           openUrl(url)
@@ -2008,6 +2057,7 @@ if (!gotTheLock) {
       config: CONFIG,
       connections: CONFIG?.connections ?? [],
       serverInfo: getServerInfoSnapshot(),
+      webuiStartup: WEBUI_STARTUP_STATE,
       contentPreloadPath: `file://${join(__dirname, '../preload/content-preload.js')}`
     }))
     ipcMain.handle('app:info', getAppInfoSnapshot)

@@ -1,5 +1,12 @@
 {
   "app.name": "AuraPro",
+  "startup.webui.checking": "正在检查 WebUI 版本...",
+  "startup.webui.updating": "正在更新 WebUI...",
+  "startup.webui.starting": "正在启动 WebUI...",
+  "startup.webui.waiting": "正在等待 WebUI 就绪...",
+  "startup.webui.description": "首次启动或版本更新可能需要几分钟，请勿关闭软件。",
+  "startup.webui.failed": "WebUI 启动失败",
+  "startup.webui.failedDescription": "启动或更新未能完成，请重试或查看服务日志。",
   "startup.preparingData": "正在准备本地数据…",
   "app.desktop": "AuraPro 桌面版",
   "common.loading": "加载中…",
