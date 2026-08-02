@@ -11,6 +11,7 @@ import {
   getConfig,
   setConfig,
   getInstallDir,
+  getEpubConceptRuntimeFilePath,
   portInUse,
   downloadFileWithProgress,
   formatDownloadBytes,
@@ -34,6 +35,22 @@ let intentionalStop = false
 const lock = new ServiceLock('llamacpp')
 let binaryPath: string | null = null
 let runtimeAnomalyHandler: ((message: string) => void) | null = null
+
+// The EPUB concept resolver uses this compact model because it fits the
+// supported 16 GB unified-memory baseline while still following the
+// llama.cpp OpenAI-compatible chat-completions contract.
+export const EPUB_CONCEPT_MODEL_REPOSITORY = 'Qwen/Qwen2.5-3B-Instruct-GGUF'
+export const EPUB_CONCEPT_MODEL_FILENAME = 'qwen2.5-3b-instruct-q4_k_m.gguf'
+export const EPUB_CONCEPT_MODEL_ID = 'qwen2.5-3b-instruct-q4_k_m'
+const EPUB_CONCEPT_MODEL_SIZE_BYTES = Math.round(2.1 * 1024 * 1024 * 1024)
+
+type EpubConceptRuntimeDescriptor = {
+  version: 1
+  llama_cpp: {
+    endpoint: string
+    model: string
+  }
+}
 
 export const setLlamaCppRuntimeAnomalyHandler = (
   handler: ((message: string) => void) | null
@@ -123,6 +140,82 @@ export const getLlamaCppInfo = () => {
 
 export const getLlamaCppPty = (): pty.IPty | null => ptyProcess
 export const getLlamaCppLog = (): string[] => logBuffer
+
+const writeEpubConceptRuntimeDescriptor = (endpoint: string): void => {
+  const runtimeFile = getEpubConceptRuntimeFilePath()
+  const runtimeDir = path.dirname(runtimeFile)
+  const descriptor: EpubConceptRuntimeDescriptor = {
+    version: 1,
+    llama_cpp: {
+      endpoint,
+      model: EPUB_CONCEPT_MODEL_ID
+    }
+  }
+  const temporaryFile = `${runtimeFile}.${process.pid}.${Date.now()}.tmp`
+
+  try {
+    fs.mkdirSync(runtimeDir, { recursive: true, mode: 0o700 })
+    fs.writeFileSync(temporaryFile, JSON.stringify(descriptor), {
+      encoding: 'utf8',
+      mode: 0o600
+    })
+    fs.renameSync(temporaryFile, runtimeFile)
+    // chmod is best-effort on Windows, but keeps the descriptor private on
+    // POSIX installations even when an existing directory had broader bits.
+    try {
+      fs.chmodSync(runtimeFile, 0o600)
+    } catch {}
+    log.info(`Published Desktop EPUB llama.cpp runtime descriptor: ${runtimeFile}`)
+  } catch (error) {
+    try {
+      fs.unlinkSync(temporaryFile)
+    } catch {}
+    throw new Error(
+      `Failed to publish EPUB llama.cpp runtime descriptor: ${getErrorMessage(error)}`
+    )
+  }
+}
+
+const removeEpubConceptRuntimeDescriptor = (): void => {
+  const runtimeFile = getEpubConceptRuntimeFilePath()
+  try {
+    fs.unlinkSync(runtimeFile)
+    log.info(`Removed Desktop EPUB llama.cpp runtime descriptor: ${runtimeFile}`)
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code !== 'ENOENT') {
+      log.warn(`Failed to remove Desktop EPUB llama.cpp runtime descriptor: ${runtimeFile}`, error)
+    }
+  }
+}
+
+/** Ensure the Desktop-managed concept resolver model is present before start. */
+export const ensureEpubConceptModel = async (
+  onStatus?: (status: string) => void
+): Promise<string> => {
+  const modelPath = path.join(
+    getInstallDir(),
+    'models',
+    EPUB_CONCEPT_MODEL_REPOSITORY.replace(/\//g, '--'),
+    EPUB_CONCEPT_MODEL_FILENAME
+  )
+  if (fs.existsSync(modelPath) && fs.statSync(modelPath).size > 0) {
+    return modelPath
+  }
+
+  onStatus?.('Downloading local EPUB concept model...')
+  const downloaded = await downloadModel(
+    EPUB_CONCEPT_MODEL_REPOSITORY,
+    EPUB_CONCEPT_MODEL_FILENAME,
+    (progress) => {
+      const percentage = progress.totalBytes > 0 ? ` ${progress.percent.toFixed(0)}%` : ''
+      onStatus?.(`Downloading local EPUB concept model${percentage}`)
+    },
+    undefined,
+    EPUB_CONCEPT_MODEL_SIZE_BYTES
+  )
+  log.info(`Downloaded Desktop EPUB concept model: ${downloaded}`)
+  return downloaded
+}
 
 // Asset Resolution
 
@@ -1455,6 +1548,15 @@ export const startLlamaCpp = async (
   ])
   const modelsDir = path.join(getInstallDir(), 'models')
   const explicitModelsPreset = hasExplicitArg(extraArgs, '--models-preset')
+  const explicitModel = hasExplicitArg(extraArgs, '--model') || extraArgs.includes('-m')
+  const desktopOwnsEpubConceptModel = !explicitModelsPreset && !explicitModel
+  if (desktopOwnsEpubConceptModel) {
+    await ensureEpubConceptModel(onStatus)
+  } else {
+    log.info(
+      'EPUB runtime descriptor disabled because llama.cpp uses an explicit model configuration'
+    )
+  }
   const modelsPreset = explicitModelsPreset
     ? null
     : await writeModelsPreset(modelsDir, llamaConfig, extraArgs, onStatus)
@@ -1522,6 +1624,7 @@ export const startLlamaCpp = async (
     pid = null
     url = null
     status = 'stopped'
+    removeEpubConceptRuntimeDescriptor()
 
     if (!intentionalStop) {
       const error = `llama-server exited early (code=${exitCode}${signal ? ` signal=${signal}` : ''})`
@@ -1591,12 +1694,21 @@ export const startLlamaCpp = async (
 
   url = serverUrl
   status = 'started'
+  if (desktopOwnsEpubConceptModel) {
+    try {
+      writeEpubConceptRuntimeDescriptor(serverUrl)
+    } catch (error) {
+      await stopLlamaCpp()
+      throw error
+    }
+  }
   log.info(`llama-server started  - PID: ${spawnedPid}, URL: ${serverUrl}`)
 
   return { url: serverUrl, pid: spawnedPid }
 }
 
 export const stopLlamaCpp = async (): Promise<void> => {
+  removeEpubConceptRuntimeDescriptor()
   const currentPid = pid
   if (ptyProcess) {
     intentionalStop = true
@@ -1645,6 +1757,7 @@ export const validateLlamaCppProcess = (): boolean => {
   // Stale PID  - clean up
   pid = null
   status = null
+  removeEpubConceptRuntimeDescriptor()
   lock.release()
   return false
 }
