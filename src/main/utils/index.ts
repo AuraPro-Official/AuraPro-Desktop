@@ -100,6 +100,15 @@ export const getOpenWebUIDataPath = (): string => {
   return path.normalize(openWebUIDataDir)
 }
 
+/**
+ * Desktop-owned handoff for local services which need the currently selected
+ * llama.cpp endpoint.  The file contains no credentials and is kept beneath
+ * the Desktop-managed install root so it follows an explicitly configured
+ * installation location.
+ */
+export const getEpubConceptRuntimeFilePath = (): string =>
+  path.join(getInstallDir(), 'epub-concept', 'desktop-llm-runtime.json')
+
 export const getLocalOpenWebUISourcePath = (): string | null => {
   const candidates = [
     path.resolve(getAppPath(), '..', 'webui-main'),
@@ -1371,6 +1380,7 @@ export const ensureOpenWebUIPackage = async (
 
   if (targetSatisfied && !hasSupersededPackage) {
     await installTorchPackage(version ?? desiredVersion, onStatus)
+    await ensureEpubConceptRuntimePackage(onStatus)
     return desiredPackageName
   }
 
@@ -1433,7 +1443,35 @@ export const ensureOpenWebUIPackage = async (
   }
 
   await installTorchPackage(installedVersion ?? desiredVersion, onStatus)
+  await ensureEpubConceptRuntimePackage(onStatus)
   return desiredPackageName
+}
+
+/**
+ * The EPUB vector store loads sqlite-vec as a Python extension.  It is a
+ * required part of the Desktop-managed local runtime, rather than a package
+ * users must install manually after AuraPro starts.
+ */
+export const ensureEpubConceptRuntimePackage = async (
+  onStatus?: (status: string) => void
+): Promise<void> => {
+  const packageName = 'sqlite-vec'
+  const version = '0.1.9'
+  if (getExactPackageVersion(packageName) === version) {
+    log.info(`EPUB runtime dependency already installed: ${packageName}==${version}`)
+    return
+  }
+
+  onStatus?.(`Installing EPUB search runtime (${packageName} ${version})...`)
+  await installPackage(packageName, version, onStatus)
+  const installedVersion = getExactPackageVersion(packageName)
+  if (installedVersion !== version) {
+    throw new Error(
+      `EPUB runtime dependency install failed: expected ${packageName}==${version}, ` +
+        `received ${installedVersion ?? 'none'}`
+    )
+  }
+  log.info(`Installed EPUB runtime dependency: ${packageName}==${version}`)
 }
 
 export const installTorchPackage = async (
@@ -1728,6 +1766,10 @@ export const startServer = async (
         PYTHONWARNINGS: 'ignore::SyntaxWarning',
         ENABLE_LLAMA_CPP: 'False',
         ENABLE_OLLAMA: 'False',
+        // The descriptor is atomically maintained by Desktop.  The WebUI
+        // reads this server-owned path instead of asking users to edit static
+        // EPUB_CONCEPT_LOCAL_LLM_* environment variables.
+        AURAPRO_DESKTOP_LLM_RUNTIME_FILE: getEpubConceptRuntimeFilePath(),
         ...(sherpaAsrReady
           ? {
               AUDIO_STT_ENGINE: 'sherpa',
