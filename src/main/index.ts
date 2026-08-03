@@ -1537,7 +1537,9 @@ const normalizeOptionalBoolean = (value: unknown): boolean | null => {
   return null
 }
 
-const getLlamaRuntimeSettingsFromConfig = (config: any): SharedLlamaRuntimeSettings => ({
+const getLlamaRuntimeSettingsFromConfig = (
+  config: AppConfig | null | undefined
+): SharedLlamaRuntimeSettings => ({
   ctxSize: normalizeCtxSize(config?.llamaCpp?.ctxSize) ?? 16384,
   mtpEnabled: config?.llamaCpp?.mtpEnabled === true,
   multimodalEnabled: config?.llamaCpp?.multimodalEnabled !== false

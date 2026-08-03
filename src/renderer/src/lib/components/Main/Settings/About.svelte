@@ -12,13 +12,7 @@
 
   // Update state
   type UpdateStatus =
-    | 'idle'
-    | 'checking'
-    | 'available'
-    | 'downloading'
-    | 'downloaded'
-    | 'up-to-date'
-    | 'error'
+    'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'up-to-date' | 'error'
   let updateStatus = $state<UpdateStatus>('idle')
   let updateVersion = $state<string | null>(null)
   let downloadPercent = $state(0)
