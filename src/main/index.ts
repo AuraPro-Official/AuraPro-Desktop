@@ -196,8 +196,8 @@ let SERVER_URL: string | null = null
 let SERVER_STATUS: string | null = null
 let SERVER_REACHABLE = false
 let SERVER_PID: number | null = null
-type WebUIStartupPhase =
-  'idle' | 'checking' | 'updating' | 'starting' | 'waiting' | 'ready' | 'failed'
+type WebUIStartupBusyPhase = 'checking' | 'updating' | 'starting' | 'waiting'
+type WebUIStartupPhase = 'idle' | WebUIStartupBusyPhase | 'ready' | 'failed'
 interface WebUIStartupState {
   phase: WebUIStartupPhase
   detail: string

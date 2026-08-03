@@ -11,8 +11,8 @@
   let sherpaVersion = $state<string | null>(null)
 
   // Update state
-  type UpdateStatus =
-    'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'up-to-date' | 'error'
+  type UpdateProgressStatus = 'checking' | 'available' | 'downloading' | 'downloaded'
+  type UpdateStatus = 'idle' | UpdateProgressStatus | 'up-to-date' | 'error'
   let updateStatus = $state<UpdateStatus>('idle')
   let updateVersion = $state<string | null>(null)
   let downloadPercent = $state(0)
