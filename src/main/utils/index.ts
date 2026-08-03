@@ -1144,7 +1144,10 @@ export const installPackage = (
           'pip',
           'install',
           ...(localOpenWebUISourcePath ? ['-e', localOpenWebUISourcePath] : [packageSpec]),
-          ...(localOpenWebUISourcePath || version ? [] : ['-U'])
+          ...(localOpenWebUISourcePath || version ? [] : ['-U']),
+          ...(isAuraProUiPackage && !localOpenWebUISourcePath
+            ? ['--refresh-package', packageName]
+            : [])
         ],
         {
           env: pythonEnv(),
