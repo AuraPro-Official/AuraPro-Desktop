@@ -252,13 +252,6 @@
     return coreBytes + modelBytes + sherpaBytes + ragCudaBytes
   }
 
-  const shouldEnableMtpForModel = (model?: AuraModel) => {
-    const name = String(model?.name ?? '').toLowerCase()
-    if (!name) return false
-    if (name === 'lowest.gguf' || name.startsWith('low_') || name.startsWith('low-')) return false
-    return name.startsWith('medium') || name.startsWith('high')
-  }
-
   const showToast = (message: string) => {
     installError = message
     toastVisible = true
@@ -396,7 +389,8 @@
         configUpdates.llamaCpp = {
           ...(currentConfig.llamaCpp || {}),
           ...(configUpdates.llamaCpp || {}),
-          mtpEnabled: shouldEnableMtpForModel(resolvedOptions.selectedModel)
+          mtpEnabled: false,
+          multimodalEnabled: true
         }
       }
 
@@ -423,19 +417,6 @@
       if (resolvedOptions?.selectedModel) {
         installStatus = `Downloading model: ${resolvedOptions.selectedModel.name}...`
         try {
-          if (resolvedOptions.selectedModel.name === 'low_EQ4_MAC_8G.gguf') {
-            const current = await window.electronAPI.getConfig()
-            const llamaCpp = {
-              ...(current.llamaCpp || {}),
-              mtpEnabled: shouldEnableMtpForModel(resolvedOptions.selectedModel),
-              ctxSize: 8192,
-              parallel: 1,
-              extraArgs: ['-b', '512', '--ubatch-size', '256']
-            }
-            await window.electronAPI.setConfig({ llamaCpp })
-            config.set(await window.electronAPI.getConfig())
-          }
-
           if (resolvedOptions?.installLlamaCpp) {
             currentInstallStage = 'llama-runtime'
             installStatus = 'Preparing local model runtime...'

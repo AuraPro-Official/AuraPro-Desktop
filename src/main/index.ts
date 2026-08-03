@@ -197,13 +197,7 @@ let SERVER_STATUS: string | null = null
 let SERVER_REACHABLE = false
 let SERVER_PID: number | null = null
 type WebUIStartupPhase =
-  | 'idle'
-  | 'checking'
-  | 'updating'
-  | 'starting'
-  | 'waiting'
-  | 'ready'
-  | 'failed'
+  'idle' | 'checking' | 'updating' | 'starting' | 'waiting' | 'ready' | 'failed'
 interface WebUIStartupState {
   phase: WebUIStartupPhase
   detail: string
@@ -1515,8 +1509,20 @@ setLlamaCppRuntimeAnomalyHandler((message) => {
 
 let glossarySettingsSyncing = false
 let glossarySettingsWatcherStarted = false
-let lastGlossaryCtxSize: number | null = null
-let glossaryCtxRestartTimer: NodeJS.Timeout | null = null
+let lastGlossaryLlamaSettings: SharedLlamaRuntimeSettings | null = null
+let glossaryLlamaRestartTimer: NodeJS.Timeout | null = null
+
+interface SharedLlamaRuntimeSettings {
+  ctxSize: number
+  mtpEnabled: boolean
+  multimodalEnabled: boolean
+}
+
+interface StoredGlossaryLlamaRuntimeSettings {
+  ctxSize: number | null
+  mtpEnabled: boolean | null
+  multimodalEnabled: boolean | null
+}
 
 const normalizeCtxSize = (value: unknown): number | null => {
   const parsed = Number(value)
@@ -1524,43 +1530,86 @@ const normalizeCtxSize = (value: unknown): number | null => {
   return Math.max(1, Math.floor(parsed))
 }
 
+const normalizeOptionalBoolean = (value: unknown): boolean | null => {
+  if (typeof value === 'boolean') return value
+  if (value === 'true' || value === 1 || value === '1') return true
+  if (value === 'false' || value === 0 || value === '0') return false
+  return null
+}
+
+const getLlamaRuntimeSettingsFromConfig = (config: any): SharedLlamaRuntimeSettings => ({
+  ctxSize: normalizeCtxSize(config?.llamaCpp?.ctxSize) ?? 16384,
+  mtpEnabled: config?.llamaCpp?.mtpEnabled === true,
+  multimodalEnabled: config?.llamaCpp?.multimodalEnabled !== false
+})
+
+const sameLlamaRuntimeSettings = (
+  left: SharedLlamaRuntimeSettings | null,
+  right: SharedLlamaRuntimeSettings
+): boolean =>
+  Boolean(
+    left &&
+    left.ctxSize === right.ctxSize &&
+    left.mtpEnabled === right.mtpEnabled &&
+    left.multimodalEnabled === right.multimodalEnabled
+  )
+
 const getGlossarySettingsPath = () => join(getOpenWebUIDataPath(), 'glossary.settings.json')
 
-const readGlossaryCtxSize = (): number | null => {
+const readGlossaryLlamaRuntimeSettings = (): StoredGlossaryLlamaRuntimeSettings => {
+  const empty = { ctxSize: null, mtpEnabled: null, multimodalEnabled: null }
   const settingsPath = getGlossarySettingsPath()
-  if (!existsSync(settingsPath)) return null
+  if (!existsSync(settingsPath)) return empty
 
   try {
     const raw = readFileSync(settingsPath, 'utf-8')
     const settings = JSON.parse(raw)
-    return normalizeCtxSize(settings?.token_limit)
+    return {
+      ctxSize: normalizeCtxSize(settings?.token_limit),
+      mtpEnabled: normalizeOptionalBoolean(settings?.mtp_enabled),
+      multimodalEnabled: normalizeOptionalBoolean(settings?.multimodal_enabled)
+    }
   } catch (error) {
-    log.warn('Failed to read glossary context size:', error)
-    return null
+    log.warn('Failed to read shared llama.cpp settings:', error)
+    return empty
   }
 }
 
-const writeGlossaryCtxSize = async (ctxSize: number) => {
+const writeGlossaryLlamaRuntimeSettings = async (runtime: SharedLlamaRuntimeSettings) => {
   const settingsPath = getGlossarySettingsPath()
   mkdirSync(path.dirname(settingsPath), { recursive: true })
 
   let settings: Record<string, unknown> = {}
   if (existsSync(settingsPath)) {
     try {
-      settings = JSON.parse(readFileSync(settingsPath, 'utf-8'))
+      const parsed = JSON.parse(readFileSync(settingsPath, 'utf-8'))
+      settings = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
     } catch (error) {
-      log.warn('Failed to parse glossary settings before syncing context size:', error)
-      settings = {}
+      log.warn('Failed to parse glossary settings before syncing llama.cpp settings:', error)
     }
   }
 
-  if (normalizeCtxSize(settings.token_limit) === ctxSize) return
+  const current: SharedLlamaRuntimeSettings = {
+    ctxSize: normalizeCtxSize(settings.token_limit) ?? 16384,
+    mtpEnabled: normalizeOptionalBoolean(settings.mtp_enabled) ?? false,
+    multimodalEnabled: normalizeOptionalBoolean(settings.multimodal_enabled) ?? true
+  }
+  const hasAllFields =
+    normalizeCtxSize(settings.token_limit) !== null &&
+    normalizeOptionalBoolean(settings.mtp_enabled) !== null &&
+    normalizeOptionalBoolean(settings.multimodal_enabled) !== null
+  if (hasAllFields && sameLlamaRuntimeSettings(current, runtime)) {
+    lastGlossaryLlamaSettings = runtime
+    return
+  }
 
   glossarySettingsSyncing = true
   try {
-    settings.token_limit = ctxSize
+    settings.token_limit = runtime.ctxSize
+    settings.mtp_enabled = runtime.mtpEnabled
+    settings.multimodal_enabled = runtime.multimodalEnabled
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8')
-    lastGlossaryCtxSize = ctxSize
+    lastGlossaryLlamaSettings = runtime
   } finally {
     setTimeout(() => {
       glossarySettingsSyncing = false
@@ -1568,29 +1617,19 @@ const writeGlossaryCtxSize = async (ctxSize: number) => {
   }
 }
 
-const syncGlossaryCtxSizeFromLlamaConfig = async () => {
+const syncGlossaryLlamaSettingsFromConfig = async () => {
   const config = await getConfig()
-  const ctxSize = normalizeCtxSize(config?.llamaCpp?.ctxSize) ?? 16384
-  await writeGlossaryCtxSize(ctxSize)
+  await writeGlossaryLlamaRuntimeSettings(getLlamaRuntimeSettingsFromConfig(config))
 }
 
-const syncLlamaCtxSizeFromGlossarySettings = async (ctxSize: number) => {
-  const config = await getConfig()
-  const currentCtxSize = normalizeCtxSize(config?.llamaCpp?.ctxSize) ?? 16384
-  if (currentCtxSize === ctxSize) return
-
-  await setConfig({ llamaCpp: { ...config.llamaCpp, ctxSize } })
-  CONFIG = await getConfig()
-}
-
-const restartLlamaCppAfterCtxSizeChange = async (ctxSize: number) => {
+const restartLlamaCppAfterRuntimeSettingsChange = async (reason: string) => {
   const info = getLlamaCppInfo()
   const config = await getConfig()
   const shouldRestart = config?.llamaCpp?.enabled || info.status === 'started'
   if (!shouldRestart) return
 
   try {
-    log.info(`Restarting llama.cpp after glossary context size changed to ${ctxSize}`)
+    log.info(`Restarting llama.cpp after runtime settings changed: ${reason}`)
     if (info.url) {
       sendToRenderer('connections:openai', {
         action: 'remove',
@@ -1599,7 +1638,7 @@ const restartLlamaCppAfterCtxSizeChange = async (ctxSize: number) => {
     }
 
     sendToRenderer('status:llamacpp', 'starting')
-    sendToRenderer('status:llamacpp-setup', `Applying context size ${ctxSize}...`)
+    sendToRenderer('status:llamacpp-setup', 'Applying llama.cpp settings...')
     const result = await startLlamaCppWithFallback((status) => {
       sendToRenderer('status:llamacpp-setup', status)
     })
@@ -1620,55 +1659,91 @@ const restartLlamaCppAfterCtxSizeChange = async (ctxSize: number) => {
     await setConfig({ llamaCpp: { ...latestConfig.llamaCpp, enabled: true } })
     CONFIG = await getConfig()
   } catch (error) {
-    log.error('Failed to restart llama.cpp after glossary context size change:', error)
+    log.error('Failed to restart llama.cpp after runtime settings changed:', error)
     sendToRenderer('status:llamacpp', 'failed')
     sendToRenderer('error', {
-      message: `llama.cpp context size restart failed: ${getErrorMessage(error)}`
+      message: `llama.cpp settings restart failed: ${getErrorMessage(error)}`
     })
   }
 }
 
-const applyGlossaryCtxSizeToLlamaConfig = async (ctxSize: number) => {
-  const config = await getConfig()
-  const currentCtxSize = normalizeCtxSize(config?.llamaCpp?.ctxSize) ?? 16384
-  if (currentCtxSize === ctxSize) return
-
-  await setConfig({ llamaCpp: { ...config.llamaCpp, ctxSize } })
-  CONFIG = await getConfig()
-  sendToRenderer('config:updated', CONFIG)
-
-  if (glossaryCtxRestartTimer) {
-    clearTimeout(glossaryCtxRestartTimer)
-  }
-  glossaryCtxRestartTimer = setTimeout(() => {
-    restartLlamaCppAfterCtxSizeChange(ctxSize).catch((error) => {
-      log.error('Failed to apply glossary context size to llama.cpp:', error)
+const scheduleLlamaCppRuntimeSettingsRestart = (reason: string) => {
+  if (glossaryLlamaRestartTimer) clearTimeout(glossaryLlamaRestartTimer)
+  glossaryLlamaRestartTimer = setTimeout(() => {
+    restartLlamaCppAfterRuntimeSettingsChange(reason).catch((error) => {
+      log.error('Failed to apply shared llama.cpp settings:', error)
     })
   }, 500)
+}
+
+const applyGlossaryLlamaSettingsToConfig = async (runtime: SharedLlamaRuntimeSettings) => {
+  const config = await getConfig()
+  const current = getLlamaRuntimeSettingsFromConfig(config)
+  if (sameLlamaRuntimeSettings(current, runtime)) return
+
+  await setConfig({
+    llamaCpp: {
+      ...config.llamaCpp,
+      ctxSize: runtime.ctxSize,
+      mtpEnabled: runtime.mtpEnabled,
+      multimodalEnabled: runtime.multimodalEnabled
+    }
+  })
+  CONFIG = await getConfig()
+  sendToRenderer('config:updated', CONFIG)
+  scheduleLlamaCppRuntimeSettingsRestart('shared settings changed')
 }
 
 const startGlossaryCtxSizeSync = async () => {
   if (glossarySettingsWatcherStarted) return
   glossarySettingsWatcherStarted = true
 
-  const existingGlossaryCtxSize = readGlossaryCtxSize()
-  if (existingGlossaryCtxSize) {
-    await syncLlamaCtxSizeFromGlossarySettings(existingGlossaryCtxSize)
-    lastGlossaryCtxSize = existingGlossaryCtxSize
-  } else {
-    await syncGlossaryCtxSizeFromLlamaConfig()
-    lastGlossaryCtxSize = readGlossaryCtxSize()
+  const config = await getConfig()
+  const desktopSettings = getLlamaRuntimeSettingsFromConfig(config)
+  const stored = readGlossaryLlamaRuntimeSettings()
+  const resolved: SharedLlamaRuntimeSettings = {
+    ctxSize: stored.ctxSize ?? desktopSettings.ctxSize,
+    mtpEnabled: stored.mtpEnabled ?? desktopSettings.mtpEnabled,
+    multimodalEnabled: stored.multimodalEnabled ?? desktopSettings.multimodalEnabled
   }
+
+  if (!sameLlamaRuntimeSettings(desktopSettings, resolved)) {
+    await setConfig({
+      llamaCpp: {
+        ...config.llamaCpp,
+        ctxSize: resolved.ctxSize,
+        mtpEnabled: resolved.mtpEnabled,
+        multimodalEnabled: resolved.multimodalEnabled
+      }
+    })
+    CONFIG = await getConfig()
+  }
+  lastGlossaryLlamaSettings = resolved
+  await writeGlossaryLlamaRuntimeSettings(resolved)
 
   const settingsPath = getGlossarySettingsPath()
   watchFile(settingsPath, { interval: 1000 }, async () => {
     if (glossarySettingsSyncing) return
 
-    const nextCtxSize = readGlossaryCtxSize()
-    if (!nextCtxSize || nextCtxSize === lastGlossaryCtxSize) return
+    const nextStored = readGlossaryLlamaRuntimeSettings()
+    if (
+      nextStored.ctxSize === null &&
+      nextStored.mtpEnabled === null &&
+      nextStored.multimodalEnabled === null
+    )
+      return
 
-    lastGlossaryCtxSize = nextCtxSize
-    await applyGlossaryCtxSizeToLlamaConfig(nextCtxSize)
+    const currentConfig = await getConfig()
+    const current = getLlamaRuntimeSettingsFromConfig(currentConfig)
+    const next: SharedLlamaRuntimeSettings = {
+      ctxSize: nextStored.ctxSize ?? current.ctxSize,
+      mtpEnabled: nextStored.mtpEnabled ?? current.mtpEnabled,
+      multimodalEnabled: nextStored.multimodalEnabled ?? current.multimodalEnabled
+    }
+    if (sameLlamaRuntimeSettings(lastGlossaryLlamaSettings, next)) return
+
+    lastGlossaryLlamaSettings = next
+    await applyGlossaryLlamaSettingsToConfig(next)
   })
 }
 
@@ -2182,10 +2257,13 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
         voice: CONFIG?.voiceInputShortcut,
         call: CONFIG?.callShortcut
       }
+      const previousLlamaRuntimeSettings = getLlamaRuntimeSettingsFromConfig(CONFIG)
       await setConfig(config)
       CONFIG = await getConfig()
-      if (normalizeCtxSize(config?.llamaCpp?.ctxSize)) {
-        await syncGlossaryCtxSizeFromLlamaConfig()
+      const nextLlamaRuntimeSettings = getLlamaRuntimeSettingsFromConfig(CONFIG)
+      if (!sameLlamaRuntimeSettings(previousLlamaRuntimeSettings, nextLlamaRuntimeSettings)) {
+        await syncGlossaryLlamaSettingsFromConfig()
+        scheduleLlamaCppRuntimeSettingsRestart('desktop settings changed')
       }
       updateTray()
       voiceInputRecording = false

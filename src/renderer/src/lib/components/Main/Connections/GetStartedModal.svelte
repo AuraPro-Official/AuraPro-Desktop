@@ -46,37 +46,29 @@
   const AURA_MODELS: AuraModel[] = [
     {
       name: 'lowest.gguf',
-      sizeStr: '~4GB',
+      sizeStr: '~3GB',
       repo: 'AuraPro',
-      hfRepo: 'unsloth/gemma-4-E2B-it-GGUF',
-      filename: 'gemma-4-E2B-it-UD-Q4_K_XL.gguf',
-      mmprojRepo: 'unsloth/gemma-4-E2B-it-GGUF',
+      hfRepo: 'unsloth/gemma-4-E2B-it-qat-GGUF',
+      filename: 'gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf',
+      mmprojRepo: 'unsloth/gemma-4-E2B-it-qat-GGUF',
       mmprojFilename: 'mmproj-F16.gguf',
-      sizeBytes: 4 * 1024 * 1024 * 1024,
+      mtpRepo: 'unsloth/gemma-4-E2B-it-qat-GGUF',
+      mtpFilename: 'mtp-gemma-4-E2B-it.gguf',
+      sizeBytes: 3 * 1024 * 1024 * 1024,
       ramInfo: 'RAM 8G+'
-    },
-    {
-      name: 'low_EQ4_MAC_8G.gguf',
-      sizeStr: '~4.7GB',
-      repo: 'AuraPro',
-      hfRepo: 'unsloth/gemma-4-E4B-it-GGUF',
-      filename: 'gemma-4-E4B-it-IQ4_XS.gguf',
-      mmprojRepo: 'unsloth/gemma-4-E4B-it-GGUF',
-      mmprojFilename: 'mmproj-F16.gguf',
-      sizeBytes: 4.72 * 1024 * 1024 * 1024,
-      ramInfo: 'UMA 8G',
-      macOnly: true
     },
     {
       name: 'low_E4.gguf',
       sizeStr: '~5GB',
       repo: 'AuraPro',
-      hfRepo: 'unsloth/gemma-4-E4B-it-GGUF',
-      filename: 'gemma-4-E4B-it-UD-Q4_K_XL.gguf',
-      mmprojRepo: 'unsloth/gemma-4-E4B-it-GGUF',
+      hfRepo: 'unsloth/gemma-4-E4B-it-qat-GGUF',
+      filename: 'gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf',
+      mmprojRepo: 'unsloth/gemma-4-E4B-it-qat-GGUF',
       mmprojFilename: 'mmproj-F16.gguf',
+      mtpRepo: 'unsloth/gemma-4-E4B-it-qat-GGUF',
+      mtpFilename: 'mtp-gemma-4-E4B-it.gguf',
       sizeBytes: 5 * 1024 * 1024 * 1024,
-      ramInfo: 'RAM+VRAM 16G+0G / UMA 10G'
+      ramInfo: 'RAM+VRAM 16G+0G / UMA 8G'
     },
     {
       name: 'medium_IQ2.gguf',
@@ -93,55 +85,29 @@
     },
     {
       name: 'medium_Q4.gguf',
-      sizeStr: '~8GB',
+      sizeStr: '~7GB',
       repo: 'AuraPro',
-      hfRepo: 'unsloth/gemma-4-12b-it-GGUF',
-      filename: 'gemma-4-12b-it-UD-Q4_K_XL.gguf',
-      mmprojRepo: 'unsloth/gemma-4-12b-it-GGUF',
+      hfRepo: 'unsloth/gemma-4-12B-it-qat-GGUF',
+      filename: 'gemma-4-12B-it-qat-UD-Q4_K_XL.gguf',
+      mmprojRepo: 'unsloth/gemma-4-12B-it-qat-GGUF',
       mmprojFilename: 'mmproj-F16.gguf',
-      mtpRepo: 'unsloth/gemma-4-12b-it-GGUF',
-      mtpFilename: 'mtp-gemma-4-12b-it.gguf',
-      sizeBytes: 8 * 1024 * 1024 * 1024,
-      ramInfo: 'RAM+VRAM 16G+8G / UMA 12G'
-    },
-    {
-      name: 'high_IQ4.gguf',
-      sizeStr: '~14GB',
-      repo: 'AuraPro',
-      hfRepo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
-      filename: 'gemma-4-26B-A4B-it-UD-IQ4_XS.gguf',
-      mmprojRepo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
-      mmprojFilename: 'mmproj-F16.gguf',
-      mtpRepo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
-      mtpFilename: 'mtp-gemma-4-26B-A4B-it.gguf',
-      sizeBytes: 14 * 1024 * 1024 * 1024,
-      ramInfo: 'RAM+VRAM 31G+6G / UMA 24G'
+      mtpRepo: 'unsloth/gemma-4-12B-it-qat-GGUF',
+      mtpFilename: 'mtp-gemma-4-12B-it.gguf',
+      sizeBytes: 7 * 1024 * 1024 * 1024,
+      ramInfo: 'RAM+VRAM 16G+8G / UMA 10G'
     },
     {
       name: 'high_Q4.gguf',
-      sizeStr: '~17GB',
+      sizeStr: '~15GB',
       repo: 'AuraPro',
-      hfRepo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
-      filename: 'gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf',
-      mmprojRepo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
+      hfRepo: 'unsloth/gemma-4-26B-A4B-it-qat-GGUF',
+      filename: 'gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf',
+      mmprojRepo: 'unsloth/gemma-4-26B-A4B-it-qat-GGUF',
       mmprojFilename: 'mmproj-F16.gguf',
-      mtpRepo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
+      mtpRepo: 'unsloth/gemma-4-26B-A4B-it-qat-GGUF',
       mtpFilename: 'mtp-gemma-4-26B-A4B-it.gguf',
-      sizeBytes: 17 * 1024 * 1024 * 1024,
-      ramInfo: 'RAM+VRAM 48G+6G / UMA 28G'
-    },
-    {
-      name: 'high_Q5.gguf',
-      sizeStr: '~22GB',
-      repo: 'AuraPro',
-      hfRepo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
-      filename: 'gemma-4-26B-A4B-it-UD-Q5_K_XL.gguf',
-      mmprojRepo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
-      mmprojFilename: 'mmproj-F16.gguf',
-      mtpRepo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
-      mtpFilename: 'mtp-gemma-4-26B-A4B-it.gguf',
-      sizeBytes: 22 * 1024 * 1024 * 1024,
-      ramInfo: 'RAM+VRAM 64G+8G / UMA 32G'
+      sizeBytes: 15 * 1024 * 1024 * 1024,
+      ramInfo: 'RAM+VRAM 32G+4G / UMA 24G'
     },
     {
       name: 'high-code_IQ4.gguf',
@@ -183,14 +149,21 @@
   )
 
   const modelByName = (name: string) =>
-    AURA_MODELS.find((model) => model.name === name) ?? AURA_MODELS[2]
+    AURA_MODELS.find((model) => model.name === name) ??
+    AURA_MODELS.find((model) => model.name === 'low_E4.gguf') ??
+    AURA_MODELS[0]
   const isHighOrAboveModel = (model: AuraModel) =>
     model.name.startsWith('high_') || model.name.startsWith('high-')
   const visibleModels = () =>
     AURA_MODELS.filter((model) => {
       if (platform !== 'darwin' && model.macOnly) return false
-      if (platform !== 'darwin' && (systemMemGB ?? 0) < 24 && isHighOrAboveModel(model))
-        return false
+      if (platform !== 'darwin' && (systemMemGB ?? 0) < 24 && isHighOrAboveModel(model)) {
+        const speedOverride =
+          modelPreference === 'speed' &&
+          ((model.name === 'high_Q4.gguf' && dedicatedVramGB >= 12) ||
+            (model.name === 'medium_Q4.gguf' && dedicatedVramGB >= 8))
+        if (!speedOverride) return false
+      }
       return true
     })
   const isAppleSiliconMac = () => platform === 'darwin' && systemArchitecture === 'arm64'
@@ -199,16 +172,15 @@
     const mem = systemMemGB ?? 8
     if (platform === 'darwin') {
       if (!isAppleSiliconMac())
-        return mem >= 32 ? modelByName('low_E4.gguf') : modelByName('lowest.gguf')
-      if (mem >= 31) return modelByName('high_Q5.gguf')
-      if (mem >= 23) return modelByName('high_IQ4.gguf')
+        return mem >= 16 ? modelByName('low_E4.gguf') : modelByName('lowest.gguf')
+      if (mem >= 20) return modelByName('high_Q4.gguf')
       if (mem >= 10) return modelByName('medium_Q4.gguf')
-      return modelByName('low_EQ4_MAC_8G.gguf')
+      return modelByName('low_E4.gguf')
     }
 
     if (mem < 15) return modelByName('lowest.gguf')
-    if (mem >= 48 && dedicatedVramGB >= 8) return modelByName('high_Q5.gguf')
-    if (mem > 31 && dedicatedVramGB >= 6) return modelByName('high_Q4.gguf')
+    if (mem > 48) return modelByName('high_Q4.gguf')
+    if (mem > 31 && dedicatedVramGB >= 4) return modelByName('high_Q4.gguf')
     if (mem >= 24 && dedicatedVramGB >= 4) return modelByName('medium_IQ2.gguf')
     return modelByName('low_E4.gguf')
   }
@@ -216,21 +188,24 @@
   const recommendedModel = () => {
     const mem = systemMemGB ?? 8
     if (platform === 'darwin') {
-      if (isAppleSiliconMac() && mem <= 8) return modelByName('low_EQ4_MAC_8G.gguf')
-      if (!isAppleSiliconMac()) return qualityRecommendation()
+      if (!isAppleSiliconMac()) {
+        if (modelPreference === 'speed')
+          return mem >= 24 ? modelByName('low_E4.gguf') : modelByName('lowest.gguf')
+        return qualityRecommendation()
+      }
       if (modelPreference === 'speed') {
-        if (mem >= 23) return modelByName('high_Q4.gguf')
+        if (mem >= 20) return modelByName('high_Q4.gguf')
         if (mem >= 18) return modelByName('medium_IQ2.gguf')
-        if (mem >= 10) return modelByName('low_E4.gguf')
+        return modelByName('low_E4.gguf')
       }
       return qualityRecommendation()
     }
 
     if (modelPreference === 'speed') {
-      if (dedicatedVramGB >= 16) return modelByName('high_IQ4.gguf')
+      if (dedicatedVramGB >= 12) return modelByName('high_Q4.gguf')
       if (dedicatedVramGB >= 8) return modelByName('medium_Q4.gguf')
       if (mem < 15) return modelByName('lowest.gguf')
-      if (mem >= 31 && mem < 47 && dedicatedVramGB >= 6) return modelByName('high_IQ4.gguf')
+      if (mem > 31 && dedicatedVramGB >= 4) return modelByName('high_Q4.gguf')
       if (mem >= 24 && dedicatedVramGB >= 4) return modelByName('medium_IQ2.gguf')
       return modelByName('low_E4.gguf')
     }

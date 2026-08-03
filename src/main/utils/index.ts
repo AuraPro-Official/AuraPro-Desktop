@@ -137,7 +137,7 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.9.5'
+export const AURAPRO_UI_TARGET_VERSION = '3.9.6'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
 export const AURAPRO_UI_LAST_VERSION = '3.9.3'
@@ -2040,6 +2040,7 @@ export interface AppConfig {
     variant: string
     parallel?: number
     mtpEnabled?: boolean
+    multimodalEnabled?: boolean
     ctxSize?: number
     extraArgs: string[]
   }
@@ -2128,6 +2129,7 @@ const DEFAULT_CONFIG: AppConfig = {
     badVersions: [],
     variant: 'auto',
     mtpEnabled: false,
+    multimodalEnabled: true,
     extraArgs: []
   },
   sherpa: {

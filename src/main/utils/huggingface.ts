@@ -20,6 +20,8 @@ export interface HfModel {
   filepath: string
   size: number // bytes
   downloadedAt: string // ISO date
+  sourceRepo?: string
+  sourceFilename?: string
   category?: 'llm' | 'vision-projector' | 'mtp-draft' | 'sherpa-asr' | 'sherpa-tts' | 'other'
 }
 
@@ -404,6 +406,8 @@ const downloadModelInner = async (
       filepath: relativePath,
       size: fs.statSync(destPath).size,
       downloadedAt: new Date().toISOString(),
+      sourceRepo: repo,
+      sourceFilename: filename,
       category: safeSubDir.startsWith(`sherpa${path.sep}asr`)
         ? 'sherpa-asr'
         : safeSubDir.startsWith(`sherpa${path.sep}tts`)

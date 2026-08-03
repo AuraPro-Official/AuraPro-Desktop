@@ -644,6 +644,21 @@
       />
     </div>
 
+    <!-- Multimodal -->
+    <div class="py-4 flex items-center justify-between gap-4">
+      <div>
+        <div class="text-[13px] opacity-70">{$i18n.t('settings.inference.multimodal')}</div>
+        <div class="text-[11px] opacity-25 mt-0.5">
+          {$i18n.t('settings.inference.multimodalDesc')}
+        </div>
+      </div>
+      <Switch
+        checked={$config?.llamaCpp?.multimodalEnabled ?? true}
+        label={$i18n.t('settings.inference.multimodal')}
+        onchange={(value) => updateConfig('multimodalEnabled', value)}
+      />
+    </div>
+
     <!-- Port -->
     <div class="py-4 flex items-center justify-between">
       <div>

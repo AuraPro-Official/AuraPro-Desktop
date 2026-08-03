@@ -122,20 +122,14 @@ const GB = 1024 * 1024 * 1024
 
 const OFFICIAL_MODEL_SOURCES: Record<string, OfficialModelSource> = {
   'lowest.gguf': {
-    repo: 'unsloth/gemma-4-E2B-it-GGUF',
-    filename: 'gemma-4-E2B-it-UD-Q4_K_XL.gguf',
+    repo: 'unsloth/gemma-4-E2B-it-qat-GGUF',
+    filename: 'gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf',
     saveAs: 'lowest.gguf',
-    expectedSize: 4 * GB
-  },
-  'low_EQ4_MAC_8G.gguf': {
-    repo: 'unsloth/gemma-4-E4B-it-GGUF',
-    filename: 'gemma-4-E4B-it-IQ4_XS.gguf',
-    saveAs: 'low_EQ4_MAC_8G.gguf',
-    expectedSize: 4.72 * GB
+    expectedSize: 3 * GB
   },
   'low_E4.gguf': {
-    repo: 'unsloth/gemma-4-E4B-it-GGUF',
-    filename: 'gemma-4-E4B-it-UD-Q4_K_XL.gguf',
+    repo: 'unsloth/gemma-4-E4B-it-qat-GGUF',
+    filename: 'gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf',
     saveAs: 'low_E4.gguf',
     expectedSize: 5 * GB
   },
@@ -146,28 +140,16 @@ const OFFICIAL_MODEL_SOURCES: Record<string, OfficialModelSource> = {
     expectedSize: 11 * GB
   },
   'medium_Q4.gguf': {
-    repo: 'unsloth/gemma-4-12b-it-GGUF',
-    filename: 'gemma-4-12b-it-UD-Q4_K_XL.gguf',
+    repo: 'unsloth/gemma-4-12B-it-qat-GGUF',
+    filename: 'gemma-4-12B-it-qat-UD-Q4_K_XL.gguf',
     saveAs: 'medium_Q4.gguf',
-    expectedSize: 8 * GB
-  },
-  'high_IQ4.gguf': {
-    repo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
-    filename: 'gemma-4-26B-A4B-it-UD-IQ4_XS.gguf',
-    saveAs: 'high_IQ4.gguf',
-    expectedSize: 14 * GB
+    expectedSize: 7 * GB
   },
   'high_Q4.gguf': {
-    repo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
-    filename: 'gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf',
+    repo: 'unsloth/gemma-4-26B-A4B-it-qat-GGUF',
+    filename: 'gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf',
     saveAs: 'high_Q4.gguf',
-    expectedSize: 17 * GB
-  },
-  'high_Q5.gguf': {
-    repo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
-    filename: 'gemma-4-26B-A4B-it-UD-Q5_K_XL.gguf',
-    saveAs: 'high_Q5.gguf',
-    expectedSize: 22 * GB
+    expectedSize: 15 * GB
   },
   'high-code_IQ4.gguf': {
     repo: 'unsloth/Qwen3.6-35B-A3B-MTP-GGUF',
@@ -178,39 +160,35 @@ const OFFICIAL_MODEL_SOURCES: Record<string, OfficialModelSource> = {
 }
 
 const MTP_SOURCES: Record<string, { repo: string; filename: string }> = {
+  'lowest.gguf': {
+    repo: 'unsloth/gemma-4-E2B-it-qat-GGUF',
+    filename: 'mtp-gemma-4-E2B-it.gguf'
+  },
+  'low_E4.gguf': {
+    repo: 'unsloth/gemma-4-E4B-it-qat-GGUF',
+    filename: 'mtp-gemma-4-E4B-it.gguf'
+  },
   'medium_IQ2.gguf': {
     repo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
     filename: 'mtp-gemma-4-26B-A4B-it.gguf'
   },
   'medium_Q4.gguf': {
-    repo: 'unsloth/gemma-4-12b-it-GGUF',
-    filename: 'mtp-gemma-4-12b-it.gguf'
-  },
-  'high_IQ4.gguf': {
-    repo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
-    filename: 'mtp-gemma-4-26B-A4B-it.gguf'
+    repo: 'unsloth/gemma-4-12B-it-qat-GGUF',
+    filename: 'mtp-gemma-4-12B-it.gguf'
   },
   'high_Q4.gguf': {
-    repo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
-    filename: 'mtp-gemma-4-26B-A4B-it.gguf'
-  },
-  'high_Q5.gguf': {
-    repo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
+    repo: 'unsloth/gemma-4-26B-A4B-it-qat-GGUF',
     filename: 'mtp-gemma-4-26B-A4B-it.gguf'
   }
 }
 
 const MMPROJ_SOURCES: Record<string, CompanionModelSource> = {
   'lowest.gguf': {
-    repo: 'unsloth/gemma-4-E2B-it-GGUF',
-    filename: 'mmproj-F16.gguf'
-  },
-  'low_EQ4_MAC_8G.gguf': {
-    repo: 'unsloth/gemma-4-E4B-it-GGUF',
+    repo: 'unsloth/gemma-4-E2B-it-qat-GGUF',
     filename: 'mmproj-F16.gguf'
   },
   'low_E4.gguf': {
-    repo: 'unsloth/gemma-4-E4B-it-GGUF',
+    repo: 'unsloth/gemma-4-E4B-it-qat-GGUF',
     filename: 'mmproj-F16.gguf'
   },
   'medium_IQ2.gguf': {
@@ -218,19 +196,11 @@ const MMPROJ_SOURCES: Record<string, CompanionModelSource> = {
     filename: 'mmproj-F16.gguf'
   },
   'medium_Q4.gguf': {
-    repo: 'unsloth/gemma-4-12b-it-GGUF',
-    filename: 'mmproj-F16.gguf'
-  },
-  'high_IQ4.gguf': {
-    repo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
+    repo: 'unsloth/gemma-4-12B-it-qat-GGUF',
     filename: 'mmproj-F16.gguf'
   },
   'high_Q4.gguf': {
-    repo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
-    filename: 'mmproj-F16.gguf'
-  },
-  'high_Q5.gguf': {
-    repo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
+    repo: 'unsloth/gemma-4-26B-A4B-it-qat-GGUF',
     filename: 'mmproj-F16.gguf'
   },
   'high-code_IQ4.gguf': {

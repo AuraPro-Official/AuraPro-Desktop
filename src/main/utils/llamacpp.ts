@@ -234,6 +234,7 @@ interface LlamaConfig {
   ctxSize?: number
   extraArgs?: string[]
   mtpEnabled?: boolean
+  multimodalEnabled?: boolean
   parallel?: number
   port?: number
   variant?: string
@@ -700,45 +701,44 @@ const getMmprojPrefixForModel = (modelName: string): string => {
   if (base.startsWith('lowest')) return 'lowest'
   if (base.startsWith('low')) return 'low'
   if (base.startsWith('medium_q4')) return 'medium-12b'
-  if (base.startsWith('medium') || base.startsWith('high')) return 'high'
+  if (base.startsWith('medium_iq2')) return 'medium-26b'
+  if (base.startsWith('high')) return 'high'
   return base
 }
 
 const getMmprojRepoForPrefix = (prefix: string): string | null => {
   if (prefix === 'high-code') return 'unsloth/Qwen3.6-35B-A3B-GGUF'
-  if (prefix === 'lowest') return 'unsloth/gemma-4-E2B-it-GGUF'
-  if (prefix === 'low') return 'unsloth/gemma-4-E4B-it-GGUF'
-  if (prefix === 'medium-12b') return 'unsloth/gemma-4-12b-it-GGUF'
-  if (prefix === 'high') return 'unsloth/gemma-4-26B-A4B-it-GGUF'
+  if (prefix === 'lowest') return 'unsloth/gemma-4-E2B-it-qat-GGUF'
+  if (prefix === 'low') return 'unsloth/gemma-4-E4B-it-qat-GGUF'
+  if (prefix === 'medium-12b') return 'unsloth/gemma-4-12B-it-qat-GGUF'
+  if (prefix === 'medium-26b') return 'unsloth/gemma-4-26B-A4B-it-GGUF'
+  if (prefix === 'high') return 'unsloth/gemma-4-26B-A4B-it-qat-GGUF'
   return null
 }
 
 const getMtpRepoForPrefix = (prefix: string): string | null => {
-  if (prefix === 'medium-12b') return 'unsloth/gemma-4-12b-it-GGUF'
-  if (prefix === 'high') return 'unsloth/gemma-4-26B-A4B-it-GGUF'
+  if (prefix === 'lowest') return 'unsloth/gemma-4-E2B-it-qat-GGUF'
+  if (prefix === 'low') return 'unsloth/gemma-4-E4B-it-qat-GGUF'
+  if (prefix === 'medium-12b') return 'unsloth/gemma-4-12B-it-qat-GGUF'
+  if (prefix === 'medium-26b') return 'unsloth/gemma-4-26B-A4B-it-GGUF'
+  if (prefix === 'high') return 'unsloth/gemma-4-26B-A4B-it-qat-GGUF'
   return null
 }
 
 const getMtpFilenameForPrefix = (prefix: string): string | null => {
-  if (prefix === 'medium-12b') return 'mtp-gemma-4-12b-it.gguf'
-  if (prefix === 'high') return 'mtp-gemma-4-26B-A4B-it.gguf'
+  if (prefix === 'lowest') return 'mtp-gemma-4-E2B-it.gguf'
+  if (prefix === 'low') return 'mtp-gemma-4-E4B-it.gguf'
+  if (prefix === 'medium-12b') return 'mtp-gemma-4-12B-it.gguf'
+  if (prefix === 'medium-26b' || prefix === 'high') return 'mtp-gemma-4-26B-A4B-it.gguf'
   return null
-}
-
-const isMtpBlockedModel = (modelPathOrName: string): boolean => {
-  const name = path.basename(modelPathOrName).toLowerCase()
-  return name === 'lowest.gguf' || name.startsWith('low_') || name.startsWith('low-')
 }
 
 const AURA_MODEL_FILENAMES = [
   'lowest.gguf',
-  'low_EQ4_MAC_8G.gguf',
   'low_E4.gguf',
   'medium_IQ2.gguf',
   'medium_Q4.gguf',
-  'high_IQ4.gguf',
   'high_Q4.gguf',
-  'high_Q5.gguf',
   'high-code_IQ4.gguf'
 ]
 
@@ -872,8 +872,6 @@ const findModelMmproj = (modelPath: string): string | null => {
 }
 
 const findModelDraft = (modelPath: string): string | null => {
-  if (isMtpBlockedModel(modelPath)) return null
-
   const dir = path.dirname(modelPath)
   const mtpPrefix = getMmprojPrefixForModel(path.basename(modelPath))
   const mtpFilename = getMtpFilenameForPrefix(mtpPrefix)
@@ -910,7 +908,10 @@ const getPresetModelOverrides = (modelPath: string): Record<string, string> => {
     }
   }
 
-  if (filename === 'low_EQ4_MAC_8G.gguf') {
+  const totalMemGB = Math.round(os.totalmem() / (1024 * 1024 * 1024))
+  const lowMemoryAppleSilicon =
+    process.platform === 'darwin' && process.arch === 'arm64' && totalMemGB <= 8
+  if (filename === 'low_EQ4_MAC_8G.gguf' || (filename === 'low_E4.gguf' && lowMemoryAppleSilicon)) {
     return {
       'ctx-size': '8192',
       b: '512',
@@ -964,10 +965,9 @@ const writeModelsPreset = async (
 ): Promise<string> => {
   migrateOfficialRootModels(modelsDir)
   await ensureAutoMmproj(modelsDir, extraArgs, onStatus)
+  await ensureAutoMtp(modelsDir, extraArgs, onStatus)
   const mtpEnabled = llamaConfig.mtpEnabled === true
-  if (mtpEnabled) {
-    await ensureAutoMtp(modelsDir, extraArgs, onStatus)
-  }
+  const multimodalEnabled = llamaConfig.multimodalEnabled !== false
 
   const ctxSize = llamaConfig.ctxSize || 16384
   const parallel = normalizePositiveInteger(llamaConfig.parallel) ?? getDefaultParallel()
@@ -987,16 +987,16 @@ const writeModelsPreset = async (
     'min-p = 0.05',
     'jinja = true',
     'chat-template-kwargs = {"enable_thinking":false}',
+    'reasoning-budget = 0',
     'load-on-startup = false',
     'stop-timeout = 10'
   ]
 
   for (const model of models) {
     const modelId = getPresetModelId(model, modelsDir, usedIds)
-    const mmproj = findModelMmproj(model.filepath)
-    const mtpAllowed = mtpEnabled && !isMtpBlockedModel(model.filepath)
-    const draftModel = mtpAllowed ? findModelDraft(model.filepath) : null
-    const mtpActive = mtpAllowed && (Boolean(draftModel) || hasInternalMtpSupport(model.filepath))
+    const mmproj = multimodalEnabled ? findModelMmproj(model.filepath) : null
+    const draftModel = mtpEnabled ? findModelDraft(model.filepath) : null
+    const mtpActive = mtpEnabled && (Boolean(draftModel) || hasInternalMtpSupport(model.filepath))
     const overrides = getPresetModelOverrides(model.filepath)
 
     lines.push('', `[${escapeIniSection(modelId)}]`)
@@ -1095,8 +1095,6 @@ const ensureAutoMtp = async (
   migrateOfficialRootModels(modelsDir)
   const modelFiles = listLocalLlmModels(modelsDir)
   for (const model of modelFiles) {
-    if (isMtpBlockedModel(model.filepath)) continue
-
     const dir = path.dirname(model.filepath)
     if (findModelDraft(model.filepath)) continue
 

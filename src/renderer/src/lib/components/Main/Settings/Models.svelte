@@ -9,6 +9,8 @@
     filepath: string
     size: number
     downloadedAt: string
+    sourceRepo?: string
+    sourceFilename?: string
   }
 
   interface HfDownloadEvent {
@@ -39,37 +41,29 @@
   const AURA_MODELS: AuraModel[] = [
     {
       name: 'lowest.gguf',
-      sizeStr: '~4GB',
+      sizeStr: '~3GB',
       repo: 'AuraPro',
-      hfRepo: 'unsloth/gemma-4-E2B-it-GGUF',
-      filename: 'gemma-4-E2B-it-UD-Q4_K_XL.gguf',
-      mmprojRepo: 'unsloth/gemma-4-E2B-it-GGUF',
+      hfRepo: 'unsloth/gemma-4-E2B-it-qat-GGUF',
+      filename: 'gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf',
+      mmprojRepo: 'unsloth/gemma-4-E2B-it-qat-GGUF',
       mmprojFilename: 'mmproj-F16.gguf',
-      sizeBytes: 4 * 1024 * 1024 * 1024,
+      mtpRepo: 'unsloth/gemma-4-E2B-it-qat-GGUF',
+      mtpFilename: 'mtp-gemma-4-E2B-it.gguf',
+      sizeBytes: 3 * 1024 * 1024 * 1024,
       ramInfo: 'RAM 8G+'
-    },
-    {
-      name: 'low_EQ4_MAC_8G.gguf',
-      sizeStr: '~4.7GB',
-      repo: 'AuraPro',
-      hfRepo: 'unsloth/gemma-4-E4B-it-GGUF',
-      filename: 'gemma-4-E4B-it-IQ4_XS.gguf',
-      mmprojRepo: 'unsloth/gemma-4-E4B-it-GGUF',
-      mmprojFilename: 'mmproj-F16.gguf',
-      sizeBytes: 4.72 * 1024 * 1024 * 1024,
-      ramInfo: 'UMA 8G',
-      macOnly: true
     },
     {
       name: 'low_E4.gguf',
       sizeStr: '~5GB',
       repo: 'AuraPro',
-      hfRepo: 'unsloth/gemma-4-E4B-it-GGUF',
-      filename: 'gemma-4-E4B-it-UD-Q4_K_XL.gguf',
-      mmprojRepo: 'unsloth/gemma-4-E4B-it-GGUF',
+      hfRepo: 'unsloth/gemma-4-E4B-it-qat-GGUF',
+      filename: 'gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf',
+      mmprojRepo: 'unsloth/gemma-4-E4B-it-qat-GGUF',
       mmprojFilename: 'mmproj-F16.gguf',
+      mtpRepo: 'unsloth/gemma-4-E4B-it-qat-GGUF',
+      mtpFilename: 'mtp-gemma-4-E4B-it.gguf',
       sizeBytes: 5 * 1024 * 1024 * 1024,
-      ramInfo: 'RAM+VRAM 16G+0G / UMA 10G'
+      ramInfo: 'RAM+VRAM 16G+0G / UMA 8G'
     },
     {
       name: 'medium_IQ2.gguf',
@@ -86,55 +80,29 @@
     },
     {
       name: 'medium_Q4.gguf',
-      sizeStr: '~8GB',
+      sizeStr: '~7GB',
       repo: 'AuraPro',
-      hfRepo: 'unsloth/gemma-4-12b-it-GGUF',
-      filename: 'gemma-4-12b-it-UD-Q4_K_XL.gguf',
-      mmprojRepo: 'unsloth/gemma-4-12b-it-GGUF',
+      hfRepo: 'unsloth/gemma-4-12B-it-qat-GGUF',
+      filename: 'gemma-4-12B-it-qat-UD-Q4_K_XL.gguf',
+      mmprojRepo: 'unsloth/gemma-4-12B-it-qat-GGUF',
       mmprojFilename: 'mmproj-F16.gguf',
-      mtpRepo: 'unsloth/gemma-4-12b-it-GGUF',
-      mtpFilename: 'mtp-gemma-4-12b-it.gguf',
-      sizeBytes: 8 * 1024 * 1024 * 1024,
-      ramInfo: 'RAM+VRAM 16G+8G / UMA 12G'
-    },
-    {
-      name: 'high_IQ4.gguf',
-      sizeStr: '~14GB',
-      repo: 'AuraPro',
-      hfRepo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
-      filename: 'gemma-4-26B-A4B-it-UD-IQ4_XS.gguf',
-      mmprojRepo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
-      mmprojFilename: 'mmproj-F16.gguf',
-      mtpRepo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
-      mtpFilename: 'mtp-gemma-4-26B-A4B-it.gguf',
-      sizeBytes: 14 * 1024 * 1024 * 1024,
-      ramInfo: 'RAM+VRAM 31G+6G / UMA 24G'
+      mtpRepo: 'unsloth/gemma-4-12B-it-qat-GGUF',
+      mtpFilename: 'mtp-gemma-4-12B-it.gguf',
+      sizeBytes: 7 * 1024 * 1024 * 1024,
+      ramInfo: 'RAM+VRAM 16G+8G / UMA 10G'
     },
     {
       name: 'high_Q4.gguf',
-      sizeStr: '~17GB',
+      sizeStr: '~15GB',
       repo: 'AuraPro',
-      hfRepo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
-      filename: 'gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf',
-      mmprojRepo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
+      hfRepo: 'unsloth/gemma-4-26B-A4B-it-qat-GGUF',
+      filename: 'gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf',
+      mmprojRepo: 'unsloth/gemma-4-26B-A4B-it-qat-GGUF',
       mmprojFilename: 'mmproj-F16.gguf',
-      mtpRepo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
+      mtpRepo: 'unsloth/gemma-4-26B-A4B-it-qat-GGUF',
       mtpFilename: 'mtp-gemma-4-26B-A4B-it.gguf',
-      sizeBytes: 17 * 1024 * 1024 * 1024,
-      ramInfo: 'RAM+VRAM 48G+6G / UMA 28G'
-    },
-    {
-      name: 'high_Q5.gguf',
-      sizeStr: '~22GB',
-      repo: 'AuraPro',
-      hfRepo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
-      filename: 'gemma-4-26B-A4B-it-UD-Q5_K_XL.gguf',
-      mmprojRepo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
-      mmprojFilename: 'mmproj-F16.gguf',
-      mtpRepo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
-      mtpFilename: 'mtp-gemma-4-26B-A4B-it.gguf',
-      sizeBytes: 22 * 1024 * 1024 * 1024,
-      ramInfo: 'RAM+VRAM 64G+8G / UMA 32G'
+      sizeBytes: 15 * 1024 * 1024 * 1024,
+      ramInfo: 'RAM+VRAM 32G+4G / UMA 24G'
     },
     {
       name: 'high-code_IQ4.gguf',
@@ -148,6 +116,13 @@
       ramInfo: 'RAM+VRAM 32G+6G / UMA 28G'
     }
   ]
+
+  const SOURCE_MIGRATED_MODELS = new Set([
+    'lowest.gguf',
+    'low_E4.gguf',
+    'medium_Q4.gguf',
+    'high_Q4.gguf'
+  ])
 
   const platform = $derived(
     (() => {
@@ -339,6 +314,14 @@
     return models.some((m) => m.repo === repo && m.filename === filename)
   }
 
+  const isAuraModelCurrent = (model: AuraModel): boolean => {
+    const modelKey = model.name.replace('.gguf', '')
+    const installed = models.find((m) => m.repo === modelKey && m.filename === model.name)
+    if (!installed) return false
+    if (!SOURCE_MIGRATED_MODELS.has(model.name)) return true
+    return installed.sourceRepo === model.hfRepo && installed.sourceFilename === model.filename
+  }
+
   const isDownloading = (repo: string, filename: string): boolean => {
     return activeDownloads.has(dlKey(repo, filename))
   }
@@ -495,7 +478,8 @@
       <div class="flex flex-col mt-2">
         {#each visibleAuraModels() as model (model.filename)}
           {@const modelKey = model.name.replace('.gguf', '')}
-          {@const downloaded = isDownloaded(modelKey, model.name)}
+          {@const installed = isDownloaded(modelKey, model.name)}
+          {@const downloaded = isAuraModelCurrent(model)}
           {@const dlActive = isDownloading(modelKey, model.name)}
           <div class="flex items-center gap-3 py-2 group">
             <div class="min-w-0 flex-1">
@@ -543,10 +527,12 @@
               </div>
             {:else}
               <button
-                class="opacity-0 group-hover:opacity-40 hover:!opacity-70 transition bg-transparent border-none text-[#1d1d1f] dark:text-[#fafafa] p-1 shrink-0"
+                class="{installed
+                  ? 'opacity-50'
+                  : 'opacity-0 group-hover:opacity-40'} hover:!opacity-70 transition bg-transparent border-none text-[#1d1d1f] dark:text-[#fafafa] p-1 shrink-0"
                 onclick={() =>
                   startDownload(model.hfRepo, model.filename, model.name, model.sizeBytes, model)}
-                title={$i18n.t('common.download')}
+                title={installed ? '更新模型' : $i18n.t('common.download')}
               >
                 <svg
                   class="w-3.5 h-3.5"
