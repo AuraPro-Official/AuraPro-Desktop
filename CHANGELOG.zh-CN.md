@@ -7,6 +7,17 @@ AuraPro Desktop 的重要变更均记录在此文件中。
 本文档遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，
 项目版本遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [3.9.8] - 2026-08-03
+
+### Changed
+
+- 桌面端默认安装的 AuraPro WebUI 更新到 3.9.8。
+
+### Fixed
+
+- 修复 Windows 安装目录被杀毒软件或系统短暂占用时，安装向导可能误报“没有写入权限”的问题。
+- 安装目录权限检测增加有限次数重试，并改进临时检测文件清理。
+
 ## [3.6.5] - 2026-06-19
 
 ### Added

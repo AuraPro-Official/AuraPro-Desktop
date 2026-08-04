@@ -117,6 +117,10 @@ import {
   uninstallOfficialGlossaries
 } from './utils/official-glossaries'
 import { redactConfigForLog } from './utils/redact'
+import {
+  probeInstallDirectoryWritable,
+  type InstallDirectoryWriteProbe
+} from './utils/install-preflight'
 
 import log from 'electron-log'
 log.transports.file.resolvePathFn = () => getLogFilePath('main')
@@ -3111,20 +3115,11 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
       async (_event, targetPath?: string, requiredBytes = 0) => {
         const installPath = path.resolve(targetPath || getInstallDir())
         const pathSupported = process.platform !== 'win32' || !/[^\x20-\x7e]/.test(installPath)
-        let writable = false
-        let writeError: string | null = null
+        let writeProbe: InstallDirectoryWriteProbe | null = null
         if (pathSupported) {
-          try {
-            mkdirSync(installPath, { recursive: true })
-            const probeFile = path.join(
-              installPath,
-              `.aurapro-install-check-${process.pid}-${Date.now()}`
-            )
-            writeFileSync(probeFile, 'ok', 'utf8')
-            unlinkSync(probeFile)
-            writable = true
-          } catch (error) {
-            writeError = getErrorMessage(error)
+          writeProbe = await probeInstallDirectoryWritable(installPath)
+          if (writeProbe.cleanupError) {
+            log.warn('Install preflight probe cleanup was delayed:', writeProbe.cleanupError)
           }
         }
 
@@ -3142,8 +3137,10 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
           path: installPath,
           pathSupported,
           diskPath,
-          writable,
-          writeError,
+          writable: writeProbe?.writable ?? false,
+          writeError: writeProbe?.writeError ?? null,
+          writeErrorCode: writeProbe?.writeErrorCode ?? null,
+          writeAttempts: writeProbe?.writeAttempts ?? 0,
           free,
           requiredBytes,
           enoughSpace: free < 0 || free >= Math.max(0, Number(requiredBytes) || 0)
