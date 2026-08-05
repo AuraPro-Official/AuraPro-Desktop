@@ -137,7 +137,7 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.9.8'
+export const AURAPRO_UI_TARGET_VERSION = '3.9.12'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
 export const AURAPRO_UI_LAST_VERSION = '3.9.3'
@@ -1340,7 +1340,7 @@ const removeSupersededOpenWebUIDistribution = (
 export const ensureOpenWebUIPackage = async (
   targetVersion = AURAPRO_UI_TARGET_VERSION,
   onStatus?: (status: string) => void,
-  options: { updateLatest?: boolean } = {}
+  options: { forceLatest?: boolean } = {}
 ): Promise<OpenWebUIPackageName> => {
   const desiredVersion = resolveOpenWebUITargetVersion(targetVersion)
   const useLatest = isLatestOpenWebUITarget(desiredVersion)
@@ -1367,7 +1367,7 @@ export const ensureOpenWebUIPackage = async (
     Boolean(packageVersion)
   )
   const targetSatisfied = useLatest
-    ? Boolean(version) && options.updateLatest === false
+    ? Boolean(version) && options.forceLatest !== true
     : version === desiredVersion
 
   if (
@@ -1696,10 +1696,7 @@ export const startServer = async (
   try {
     webUIPackageName = await ensureOpenWebUIPackage(
       resolveOpenWebUITargetVersion(config.localServer?.version),
-      (status) => onStatus?.(status, 'updating'),
-      {
-        updateLatest: config.localServer?.autoUpdate !== false
-      }
+      (status) => onStatus?.(status, 'updating')
     )
   } catch (error) {
     const fallbackPackage = getInstalledOpenWebUIPackageName()
@@ -2022,7 +2019,6 @@ export interface AppConfig {
     port: number
     serveOnLocalNetwork: boolean
     httpsEnabled: boolean
-    autoUpdate: boolean
     ragHardwareAcceleration: boolean
     version?: string
     packageSource?: string
@@ -2115,7 +2111,6 @@ const DEFAULT_CONFIG: AppConfig = {
     port: 8080,
     serveOnLocalNetwork: true,
     httpsEnabled: true,
-    autoUpdate: true,
     ragHardwareAcceleration: false
   },
   openTerminal: {
@@ -2199,34 +2194,88 @@ const normalizeLocalConnectionUrl = (url: string, config: AppConfig): string => 
   return url
 }
 
-const normalizeConfig = (config: AppConfig): AppConfig => ({
-  ...config,
-  localServer: {
+const isLoopbackConnectionUrl = (url: string): boolean => {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase()
+    return (
+      hostname === 'localhost' ||
+      hostname === '0.0.0.0' ||
+      hostname === '::1' ||
+      hostname === '[::1]' ||
+      hostname.startsWith('127.')
+    )
+  } catch {
+    return false
+  }
+}
+
+const normalizeConfig = (config: AppConfig): AppConfig => {
+  const localServer = {
     ...DEFAULT_CONFIG.localServer,
     ...(config.localServer ?? {})
-  },
-  openTerminal: {
-    ...DEFAULT_CONFIG.openTerminal,
-    ...(config.openTerminal ?? {})
-  },
-  llamaCpp: {
-    ...DEFAULT_CONFIG.llamaCpp,
-    ...(config.llamaCpp ?? {})
-  },
-  sherpa: {
-    ...DEFAULT_CONFIG.sherpa,
-    ...(config.sherpa ?? {})
-  },
-  shortcutActions: {
-    ...DEFAULT_CONFIG.shortcutActions,
-    ...(config.shortcutActions ?? {})
-  },
-  connections: (config.connections ?? []).map((connection) =>
-    connection.type === 'local'
-      ? { ...connection, url: normalizeLocalConnectionUrl(connection.url, config) }
-      : connection
-  )
-})
+  } as AppConfig['localServer'] & { autoUpdate?: boolean }
+  delete localServer.autoUpdate
+
+  const normalized: AppConfig = {
+    ...config,
+    localServer,
+    openTerminal: {
+      ...DEFAULT_CONFIG.openTerminal,
+      ...(config.openTerminal ?? {})
+    },
+    llamaCpp: {
+      ...DEFAULT_CONFIG.llamaCpp,
+      ...(config.llamaCpp ?? {})
+    },
+    sherpa: {
+      ...DEFAULT_CONFIG.sherpa,
+      ...(config.sherpa ?? {})
+    },
+    shortcutActions: {
+      ...DEFAULT_CONFIG.shortcutActions,
+      ...(config.shortcutActions ?? {})
+    },
+    connections: []
+  }
+
+  const localConnectionIds = new Set<string>()
+  let localConnection: Connection | null = null
+  const remoteConnections: Connection[] = []
+
+  for (const connection of config.connections ?? []) {
+    const isLocal =
+      connection.id === 'local' ||
+      connection.type === 'local' ||
+      isLoopbackConnectionUrl(connection.url)
+
+    if (!isLocal) {
+      remoteConnections.push(connection)
+      continue
+    }
+
+    localConnectionIds.add(connection.id)
+    const candidate: Connection = {
+      ...connection,
+      id: 'local',
+      name: 'Local',
+      type: 'local',
+      url: normalizeLocalConnectionUrl(connection.url, normalized)
+    }
+
+    if (!localConnection || connection.id === 'local' || connection.type === 'local') {
+      localConnection = candidate
+    }
+  }
+
+  normalized.connections = localConnection
+    ? [localConnection, ...remoteConnections]
+    : remoteConnections
+  if (config.defaultConnectionId && localConnectionIds.has(config.defaultConnectionId)) {
+    normalized.defaultConnectionId = 'local'
+  }
+
+  return normalized
+}
 
 export const getConfig = async (): Promise<AppConfig> => {
   const configPath = path.join(getUserDataPath(), 'config.json')

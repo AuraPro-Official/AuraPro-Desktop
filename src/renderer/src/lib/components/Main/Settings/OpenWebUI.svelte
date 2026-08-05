@@ -367,29 +367,17 @@
 
     <div class="py-4 flex items-center justify-between">
       <div>
-        <div class="text-[13px] opacity-70">Secure LAN voice access</div>
+        <div class="text-[13px] opacity-70">
+          {$i18n.t('settings.openwebui.secureLanVoiceAccess')}
+        </div>
         <div class="text-[11px] opacity-25 mt-0.5">
-          Share HTTPS links so browsers can grant microphone permission on other devices.
+          {$i18n.t('settings.openwebui.secureLanVoiceAccessDesc')}
         </div>
       </div>
       <Switch
         checked={$config?.localServer?.httpsEnabled !== false}
-        label="Toggle secure LAN voice access"
+        label={$i18n.t('settings.openwebui.toggleSecureLanVoiceAccess')}
         onchange={(value) => updateConfig('httpsEnabled', value)}
-      />
-    </div>
-
-    <div class="py-4 flex items-center justify-between">
-      <div>
-        <div class="text-[13px] opacity-70">{$i18n.t('settings.openwebui.autoUpdate')}</div>
-        <div class="text-[11px] opacity-25 mt-0.5">
-          {$i18n.t('settings.openwebui.autoUpdateDesc')}
-        </div>
-      </div>
-      <Switch
-        checked={$config?.localServer?.autoUpdate !== false}
-        label={$i18n.t('settings.openwebui.toggleAutoUpdate')}
-        onchange={(value) => updateConfig('autoUpdate', value)}
       />
     </div>
 

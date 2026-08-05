@@ -200,14 +200,19 @@ let SERVER_URL: string | null = null
 let SERVER_STATUS: string | null = null
 let SERVER_REACHABLE = false
 let SERVER_PID: number | null = null
-type WebUIStartupBusyPhase = 'checking' | 'updating' | 'starting' | 'waiting'
-type WebUIStartupPhase = 'idle' | WebUIStartupBusyPhase | 'ready' | 'failed'
-interface WebUIStartupState {
-  phase: WebUIStartupPhase
+type RuntimeStartupBusyPhase = 'checking' | 'updating' | 'starting' | 'waiting'
+type RuntimeStartupPhase = 'idle' | RuntimeStartupBusyPhase | 'ready' | 'failed'
+interface RuntimeStartupState {
+  phase: RuntimeStartupPhase
   detail: string
   updatedAt: number
 }
-let WEBUI_STARTUP_STATE: WebUIStartupState = {
+let WEBUI_STARTUP_STATE: RuntimeStartupState = {
+  phase: 'idle',
+  detail: '',
+  updatedAt: Date.now()
+}
+let LLAMACPP_STARTUP_STATE: RuntimeStartupState = {
   phase: 'idle',
   detail: '',
   updatedAt: Date.now()
@@ -1327,13 +1332,47 @@ const sendToRenderer = (type: string, data?: unknown) => {
   }
 }
 
-const updateWebUIStartupState = (phase: WebUIStartupPhase, detail = ''): void => {
+const updateWebUIStartupState = (phase: RuntimeStartupPhase, detail = ''): void => {
   WEBUI_STARTUP_STATE = {
     phase,
     detail,
     updatedAt: Date.now()
   }
   sendToRenderer('webui:startup', WEBUI_STARTUP_STATE)
+}
+
+const updateLlamaCppStartupState = (phase: RuntimeStartupPhase, detail = ''): void => {
+  LLAMACPP_STARTUP_STATE = {
+    phase,
+    detail,
+    updatedAt: Date.now()
+  }
+  sendToRenderer('llamacpp:startup', LLAMACPP_STARTUP_STATE)
+}
+
+const updateLlamaCppStartupProgress = (
+  status: string,
+  fallbackPhase: RuntimeStartupBusyPhase = 'starting'
+): void => {
+  const detail = String(status ?? '')
+  const phase =
+    /download|updat|install|extract|fetch|remove|reinstall|release|fallback|unavailable|trying/i.test(
+      detail
+    )
+      ? 'updating'
+      : fallbackPhase
+  updateLlamaCppStartupState(phase, detail)
+}
+
+const preferLocalConnectionOnStartup = async (config: AppConfig): Promise<AppConfig> => {
+  const localConnection = config.connections.find((connection) => connection.type === 'local')
+  if (!localConnection || config.defaultConnectionId === localConnection.id) return config
+
+  log.info(
+    `[startup] Local loopback connection detected; switching default connection from ${config.defaultConnectionId ?? 'none'} to ${localConnection.id}`
+  )
+  await setConfig({ defaultConnectionId: localConnection.id })
+  return getConfig()
 }
 
 const migrateDataIfNeeded = async (): Promise<void> => {
@@ -1645,12 +1684,15 @@ const restartLlamaCppAfterRuntimeSettingsChange = async (reason: string) => {
 
     sendToRenderer('status:llamacpp', 'starting')
     sendToRenderer('status:llamacpp-setup', 'Applying llama.cpp settings...')
+    updateLlamaCppStartupState('starting', 'Applying llama.cpp settings...')
     const result = await startLlamaCppWithFallback((status) => {
       sendToRenderer('status:llamacpp-setup', status)
+      updateLlamaCppStartupProgress(status)
     })
 
     sendToRenderer('status:llamacpp', 'started')
     sendToRenderer('llamacpp:ready', result)
+    updateLlamaCppStartupState('ready')
     sendToRenderer('status:llamacpp-setup', '')
 
     if (result.url) {
@@ -1667,6 +1709,7 @@ const restartLlamaCppAfterRuntimeSettingsChange = async (reason: string) => {
   } catch (error) {
     log.error('Failed to restart llama.cpp after runtime settings changed:', error)
     sendToRenderer('status:llamacpp', 'failed')
+    updateLlamaCppStartupState('failed', getErrorMessage(error))
     sendToRenderer('error', {
       message: `llama.cpp settings restart failed: ${getErrorMessage(error)}`
     })
@@ -1847,15 +1890,19 @@ const startConfiguredServices = async (defaultConnection?: Connection): Promise<
       (async () => {
         try {
           sendToRenderer('status:llamacpp', 'starting')
+          updateLlamaCppStartupState('checking', 'Preparing the llama.cpp runtime...')
           const result = await startLlamaCppWithFallback((status) => {
             sendToRenderer('status:llamacpp-setup', status)
+            updateLlamaCppStartupProgress(status)
           })
           sendToRenderer('status:llamacpp', 'started')
           sendToRenderer('llamacpp:ready', result)
+          updateLlamaCppStartupState('ready')
           scheduleAutomaticLlamaDiagnostic('startup-check', undefined, 4000)
         } catch (error) {
           log.error('Auto-start llama.cpp failed:', error)
           sendToRenderer('status:llamacpp', 'failed')
+          updateLlamaCppStartupState('failed', getErrorMessage(error))
           scheduleAutomaticLlamaDiagnostic('startup-failed', getErrorMessage(error))
         }
       })()
@@ -1915,6 +1962,7 @@ if (!gotTheLock) {
 
   app.whenReady().then(async () => {
     CONFIG = await getConfig()
+    CONFIG = await preferLocalConnectionOnStartup(CONFIG)
 
     loadSpotlightPosition()
     log.info('Config:', redactConfigForLog(CONFIG))
@@ -2139,6 +2187,7 @@ if (!gotTheLock) {
       connections: CONFIG?.connections ?? [],
       serverInfo: getServerInfoSnapshot(),
       webuiStartup: WEBUI_STARTUP_STATE,
+      llamaCppStartup: LLAMACPP_STARTUP_STATE,
       contentPreloadPath: `file://${join(__dirname, '../preload/content-preload.js')}`
     }))
     ipcMain.handle('app:info', getAppInfoSnapshot)
@@ -2322,9 +2371,13 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
         const otVersion = CONFIG?.openTerminal?.version || undefined
 
         sendToRenderer('status:install', 'Installing AuraPro…')
-        await ensureOpenWebUIPackage(owuiVersion, (status: string) => {
-          sendToRenderer('status:install', status)
-        })
+        await ensureOpenWebUIPackage(
+          owuiVersion,
+          (status: string) => {
+            sendToRenderer('status:install', status)
+          },
+          { forceLatest: true }
+        )
         sendToRenderer('status:install', 'Installing Open Terminal…')
         await installPackage('open-terminal', otVersion, (status: string) => {
           sendToRenderer('status:install', status)
@@ -2437,9 +2490,9 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
         config.defaultConnectionId = connection.id
       }
       await setConfig(config)
-      CONFIG = config
+      CONFIG = await getConfig()
       updateTray()
-      return config.connections
+      return CONFIG.connections
     })
 
     ipcMain.handle('connections:remove', async (_event, id: string) => {
@@ -2449,9 +2502,9 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
         config.defaultConnectionId = config.connections[0]?.id || null
       }
       await setConfig(config)
-      CONFIG = config
+      CONFIG = await getConfig()
       updateTray()
-      return config.connections
+      return CONFIG.connections
     })
 
     ipcMain.handle(
@@ -2462,10 +2515,10 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
         if (idx !== -1) {
           config.connections[idx] = { ...config.connections[idx], ...updates }
           await setConfig(config)
-          CONFIG = config
+          CONFIG = await getConfig()
           updateTray()
         }
-        return config.connections
+        return CONFIG?.connections ?? config.connections
       }
     )
 
@@ -2992,14 +3045,18 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     ipcMain.handle('llamacpp:setup', async () => {
       try {
         sendToRenderer('status:llamacpp', 'setting-up')
+        updateLlamaCppStartupState('checking', 'Checking the llama.cpp runtime...')
         const binary = await setupLlamaCpp((status) => {
           sendToRenderer('status:llamacpp-setup', status)
+          updateLlamaCppStartupProgress(status, 'updating')
         })
         sendToRenderer('status:llamacpp', 'ready')
+        updateLlamaCppStartupState('ready')
         return binary
       } catch (error) {
         log.error('Failed to setup llamacpp:', error)
         sendToRenderer('status:llamacpp', 'failed')
+        updateLlamaCppStartupState('failed', getErrorMessage(error))
         sendToRenderer('error', { message: `llamacpp setup failed: ${getErrorMessage(error)}` })
         scheduleAutomaticLlamaDiagnostic('setup-failed', getErrorMessage(error))
         throw error
@@ -3009,11 +3066,14 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     ipcMain.handle('llamacpp:start', async () => {
       try {
         sendToRenderer('status:llamacpp', 'starting')
+        updateLlamaCppStartupState('checking', 'Preparing the llama.cpp runtime...')
         const result = await startLlamaCppWithFallback((status) => {
           sendToRenderer('status:llamacpp-setup', status)
+          updateLlamaCppStartupProgress(status)
         })
         sendToRenderer('status:llamacpp', 'started')
         sendToRenderer('llamacpp:ready', result)
+        updateLlamaCppStartupState('ready')
         // Notify webview to register llama-server as OpenAI endpoint
         if (result.url) {
           sendToRenderer('connections:openai', {
@@ -3030,6 +3090,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
       } catch (error) {
         log.error('Failed to start llamacpp:', error)
         sendToRenderer('status:llamacpp', 'failed')
+        updateLlamaCppStartupState('failed', getErrorMessage(error))
         sendToRenderer('error', { message: `llamacpp failed: ${getErrorMessage(error)}` })
         scheduleAutomaticLlamaDiagnostic('startup-failed', getErrorMessage(error))
         throw error
@@ -3041,6 +3102,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
         const info = getLlamaCppInfo()
         await stopLlamaCpp()
         sendToRenderer('status:llamacpp', 'stopped')
+        updateLlamaCppStartupState('idle')
         // Notify webview to unregister llama-server
         if (info.url) {
           sendToRenderer('connections:openai', {
@@ -3078,6 +3140,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
         if (info.status === 'started' && info.url) {
           sendToRenderer('status:llamacpp', 'started')
           sendToRenderer('llamacpp:ready', info)
+          updateLlamaCppStartupState('ready')
           sendToRenderer('connections:openai', {
             action: 'add',
             url: `${info.url}/v1`
@@ -3085,6 +3148,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
           setTimeout(() => sendToRenderer('models:refresh'), 1000)
         } else {
           sendToRenderer('status:llamacpp', 'failed')
+          updateLlamaCppStartupState('failed', 'The repair did not start llama.cpp.')
         }
         CONFIG = await getConfig()
         sendToRenderer('config:updated', CONFIG)
@@ -3105,6 +3169,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
           log.warn('Failed to refresh config after llama.cpp repair error:', configError)
         }
         sendToRenderer('llamacpp:repair-progress', '')
+        updateLlamaCppStartupState('failed', message)
         sendToRenderer('llamacpp:repair-failed', { message })
         throw new Error(message)
       }
@@ -3290,6 +3355,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
         const info = getLlamaCppInfo()
         await uninstallLlamaCpp()
         sendToRenderer('status:llamacpp', null)
+        updateLlamaCppStartupState('idle')
         // Unregister OpenAI endpoint if it was running
         if (info.url) {
           sendToRenderer('connections:openai', {
@@ -3445,15 +3511,19 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     ipcMain.handle('llamacpp:update', async () => {
       try {
         sendToRenderer('status:llamacpp', 'setting-up')
+        updateLlamaCppStartupState('updating', 'Checking for llama.cpp updates...')
         const result = await updateLlamaCpp((status) => {
           sendToRenderer('status:llamacpp-setup', status)
+          updateLlamaCppStartupProgress(status, 'updating')
         })
         sendToRenderer('status:llamacpp', 'ready')
+        updateLlamaCppStartupState('ready')
         return result
       } catch (error) {
         const message = getErrorMessage(error)
         log.error('Failed to update llamacpp:', error)
         sendToRenderer('status:llamacpp', 'failed')
+        updateLlamaCppStartupState('failed', message)
         sendToRenderer('error', { message: `llamacpp update failed: ${message}` })
         throw error
       }

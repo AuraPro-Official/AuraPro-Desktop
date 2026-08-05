@@ -6,6 +6,7 @@
     config,
     connections,
     contentPreloadPath,
+    llamaCppStartup,
     serverInfo,
     startupMigration,
     webuiStartup
@@ -38,6 +39,7 @@
     let disposed = false
     let receivedServerEvent = false
     let receivedWebUIStartupEvent = false
+    let receivedLlamaCppStartupEvent = false
 
     disposeMainData = api.onData((data: MainDataEvent) => {
       if (data.type === 'status:server') {
@@ -59,6 +61,10 @@
         receivedWebUIStartupEvent = true
         webuiStartup.set(data.data as Parameters<typeof webuiStartup.set>[0])
       }
+      if (data.type === 'llamacpp:startup') {
+        receivedLlamaCppStartupEvent = true
+        llamaCppStartup.set(data.data as Parameters<typeof llamaCppStartup.set>[0])
+      }
     })
 
     const initialize = async () => {
@@ -75,6 +81,9 @@
         }
         if (!receivedWebUIStartupEvent && state.webuiStartup) {
           webuiStartup.set(state.webuiStartup)
+        }
+        if (!receivedLlamaCppStartupEvent && state.llamaCppStartup) {
+          llamaCppStartup.set(state.llamaCppStartup)
         }
 
         applyResolvedTheme(state.config?.theme ?? 'system')

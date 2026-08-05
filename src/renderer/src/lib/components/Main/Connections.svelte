@@ -854,7 +854,7 @@
         return
       }
 
-      if (data.type === 'webui:startup') return
+      if (data.type === 'webui:startup' || data.type === 'llamacpp:startup') return
 
       // ── Spotlight / desktop query ─────────────────────
       if (data.type === 'query' && (payload?.query || payload?.files?.length)) {

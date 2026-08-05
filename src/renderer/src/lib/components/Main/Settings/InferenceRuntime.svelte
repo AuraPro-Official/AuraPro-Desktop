@@ -595,9 +595,9 @@
     <!-- Context Size -->
     <div class="py-4 flex items-center justify-between">
       <div>
-        <div class="text-[13px] opacity-70">Context Size (上下文长度)</div>
+        <div class="text-[13px] opacity-70">{$i18n.t('settings.inference.contextSize')}</div>
         <div class="text-[11px] opacity-25 mt-0.5">
-          Set the maximum context length for models (default: 16384).
+          {$i18n.t('settings.inference.contextSizeDesc')}
         </div>
       </div>
       <input
@@ -612,9 +612,9 @@
     <!-- Parallel Slots -->
     <div class="py-4 flex items-center justify-between">
       <div>
-        <div class="text-[13px] opacity-70">Parallel Slots (并发槽位)</div>
+        <div class="text-[13px] opacity-70">{$i18n.t('settings.inference.parallelSlots')}</div>
         <div class="text-[11px] opacity-25 mt-0.5">
-          Set llama.cpp server slots. Lower values reduce memory usage.
+          {$i18n.t('settings.inference.parallelSlotsDesc')}
         </div>
       </div>
       <input

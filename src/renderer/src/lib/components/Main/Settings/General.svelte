@@ -694,14 +694,14 @@
 
   <div class="py-4 flex items-center justify-between">
     <div>
-      <div class="text-[13px] opacity-70">Clipboard Auto-Paste</div>
+      <div class="text-[13px] opacity-70">{$i18n.t('settings.general.clipboardAutoPaste')}</div>
       <div class="text-[11px] opacity-25 mt-0.5">
-        Automatically paste clipboard contents into Spotlight
+        {$i18n.t('settings.general.clipboardAutoPasteDesc')}
       </div>
     </div>
     <Switch
       checked={spotlightClipboardPaste}
-      label="Toggle clipboard auto-paste"
+      label={$i18n.t('settings.general.toggleClipboardAutoPaste')}
       onchange={async (value) => {
         spotlightClipboardPaste = value
         await window.electronAPI.setConfig({ spotlightClipboardPaste: value })
@@ -712,14 +712,14 @@
 
   <div class="py-4 flex items-center justify-between">
     <div>
-      <div class="text-[13px] opacity-70">Voice Input</div>
+      <div class="text-[13px] opacity-70">{$i18n.t('settings.general.voiceInput')}</div>
       <div class="text-[11px] opacity-25 mt-0.5">
-        Enable global push-to-talk voice transcription
+        {$i18n.t('settings.general.voiceInputDesc')}
       </div>
     </div>
     <Switch
       checked={voiceInputEnabled}
-      label="Toggle voice input"
+      label={$i18n.t('settings.general.toggleVoiceInput')}
       onchange={async (value) => {
         voiceInputEnabled = value
         await window.electronAPI.setConfig({ voiceInputEnabled: value })
@@ -731,12 +731,12 @@
   {#if voiceInputEnabled}
     <div class="py-4 flex items-center justify-between">
       <div>
-        <div class="text-[13px] opacity-70">Voice Input Shortcut</div>
+        <div class="text-[13px] opacity-70">{$i18n.t('settings.general.voiceInputShortcut')}</div>
         <div class="text-[11px] opacity-25 mt-0.5">
           {#if voiceInputRecording}
-            Press a key combination…
+            {$i18n.t('settings.general.globalShortcutRecording')}
           {:else}
-            Toggle microphone recording from anywhere
+            {$i18n.t('settings.general.voiceInputShortcutDesc')}
           {/if}
         </div>
       </div>
@@ -759,11 +759,11 @@
           }}
         >
           {#if voiceInputRecording}
-            <span class="text-[11px]">Press keys…</span>
+            <span class="text-[11px]">{$i18n.t('settings.general.pressShortcut')}</span>
           {:else if voiceInputShortcutValue}
             {displayShortcut(voiceInputShortcutValue)}
           {:else}
-            <span class="opacity-40">Disabled</span>
+            <span class="opacity-40">{$i18n.t('common.disabled')}</span>
           {/if}
         </button>
         {#if voiceInputShortcutValue && !voiceInputRecording}
@@ -815,14 +815,14 @@
 
   <div class="py-4 flex items-center justify-between">
     <div>
-      <div class="text-[13px] opacity-70">Call</div>
+      <div class="text-[13px] opacity-70">{$i18n.t('settings.general.call')}</div>
       <div class="text-[11px] opacity-25 mt-0.5">
-        Enable global shortcut to start a voice/video call
+        {$i18n.t('settings.general.callDesc')}
       </div>
     </div>
     <Switch
       checked={callEnabled}
-      label="Toggle call shortcut"
+      label={$i18n.t('settings.general.toggleCall')}
       onchange={async (value) => {
         callEnabled = value
         await window.electronAPI.setConfig({ callEnabled: value })
@@ -834,12 +834,12 @@
   {#if callEnabled}
     <div class="py-4 flex items-center justify-between">
       <div>
-        <div class="text-[13px] opacity-70">Call Shortcut</div>
+        <div class="text-[13px] opacity-70">{$i18n.t('settings.general.callShortcut')}</div>
         <div class="text-[11px] opacity-25 mt-0.5">
           {#if callRecording}
-            Press a key combination…
+            {$i18n.t('settings.general.globalShortcutRecording')}
           {:else}
-            Start a call from anywhere
+            {$i18n.t('settings.general.callShortcutDesc')}
           {/if}
         </div>
       </div>
@@ -862,11 +862,11 @@
           }}
         >
           {#if callRecording}
-            <span class="text-[11px]">Press keys…</span>
+            <span class="text-[11px]">{$i18n.t('settings.general.pressShortcut')}</span>
           {:else if callShortcutValue}
             {displayShortcut(callShortcutValue)}
           {:else}
-            <span class="opacity-40">Disabled</span>
+            <span class="opacity-40">{$i18n.t('common.disabled')}</span>
           {/if}
         </button>
         {#if callShortcutValue && !callRecording}

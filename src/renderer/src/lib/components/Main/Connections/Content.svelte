@@ -6,6 +6,7 @@
   import {
     connections,
     config,
+    llamaCppStartup,
     serverInfo,
     webuiStartup,
     appState,
@@ -199,25 +200,56 @@
     if (view === 'install') void loadLocalInstall()
   })
 
-  const webuiStartupActive = $derived(
-    ['checking', 'updating', 'starting', 'waiting'].includes($webuiStartup.phase)
-  )
+  const isRuntimeStartupActive = (phase: string) =>
+    ['checking', 'updating', 'starting', 'waiting'].includes(phase)
+  const webuiStartupActive = $derived(isRuntimeStartupActive($webuiStartup.phase))
   const webuiStartupFailed = $derived($webuiStartup.phase === 'failed')
-  const webuiStartupVisible = $derived(
-    (webuiStartupActive || webuiStartupFailed) &&
+  const llamaCppStartupActive = $derived(isRuntimeStartupActive($llamaCppStartup.phase))
+  const llamaCppStartupFailed = $derived($llamaCppStartup.phase === 'failed')
+  const runtimeStartupComponent = $derived(
+    webuiStartupActive || webuiStartupFailed
+      ? 'webui'
+      : llamaCppStartupActive || llamaCppStartupFailed
+        ? 'llamacpp'
+        : null
+  )
+  const runtimeStartupState = $derived(
+    runtimeStartupComponent === 'llamacpp' ? $llamaCppStartup : $webuiStartup
+  )
+  const runtimeStartupActive = $derived(
+    runtimeStartupComponent === 'llamacpp' ? llamaCppStartupActive : webuiStartupActive
+  )
+  const runtimeStartupFailed = $derived(
+    runtimeStartupComponent === 'llamacpp' ? llamaCppStartupFailed : webuiStartupFailed
+  )
+  const runtimeStartupVisible = $derived(
+    runtimeStartupComponent !== null &&
       (view !== 'connected' || activeConnectionId === localConn?.id)
   )
-  const webuiStartupTitleKey = $derived(
-    $webuiStartup.phase === 'checking'
-      ? 'startup.webui.checking'
-      : $webuiStartup.phase === 'updating'
-        ? 'startup.webui.updating'
-        : $webuiStartup.phase === 'starting'
-          ? 'startup.webui.starting'
-          : $webuiStartup.phase === 'waiting'
-            ? 'startup.webui.waiting'
-            : 'startup.webui.failed'
+  const runtimeStartupTitleKey = $derived(
+    runtimeStartupState.phase === 'checking'
+      ? `startup.${runtimeStartupComponent}.checking`
+      : runtimeStartupState.phase === 'updating'
+        ? `startup.${runtimeStartupComponent}.updating`
+        : runtimeStartupState.phase === 'starting'
+          ? `startup.${runtimeStartupComponent}.starting`
+          : runtimeStartupState.phase === 'waiting'
+            ? `startup.${runtimeStartupComponent}.waiting`
+            : `startup.${runtimeStartupComponent}.failed`
   )
+  const runtimeStartupDescriptionKey = $derived(
+    runtimeStartupFailed
+      ? `startup.${runtimeStartupComponent}.failedDescription`
+      : `startup.${runtimeStartupComponent}.description`
+  )
+
+  const retryRuntimeStartup = (): void => {
+    if (runtimeStartupComponent === 'llamacpp') {
+      void window.electronAPI.startLlamaCpp().catch(() => undefined)
+      return
+    }
+    onRetryLocal()
+  }
 
   const activeWebviewError = $derived(
     view === 'connected' && activeConnectionId
@@ -232,7 +264,7 @@
   let showLoadingOverlay = $state(false)
 
   $effect(() => {
-    if (!isLoading || webuiStartupVisible) {
+    if (!isLoading || runtimeStartupVisible) {
       showLoadingOverlay = false
       return
     }
@@ -425,13 +457,13 @@
     {/each}
   {/if}
 
-  {#if webuiStartupVisible}
+  {#if runtimeStartupVisible}
     <div
       class="absolute inset-0 z-30 flex items-center justify-center bg-[#eee] px-6 dark:bg-[#111]"
       transition:fade={{ duration: 160 }}
     >
       <div class="flex w-full max-w-[380px] flex-col items-center text-center">
-        {#if webuiStartupActive}
+        {#if runtimeStartupActive}
           <div
             class="mb-5 h-7 w-7 animate-spin rounded-full border-2 border-black/10 border-t-black/55 dark:border-white/15 dark:border-t-white/60"
           ></div>
@@ -443,29 +475,27 @@
           </div>
         {/if}
         <div class="text-[15px] font-medium text-[#1d1d1f] dark:text-[#fafafa]">
-          {$i18n.t(webuiStartupTitleKey)}
+          {$i18n.t(runtimeStartupTitleKey)}
         </div>
         <div class="mt-2 text-[12px] leading-5 opacity-45">
-          {$i18n.t(
-            webuiStartupFailed ? 'startup.webui.failedDescription' : 'startup.webui.description'
-          )}
+          {$i18n.t(runtimeStartupDescriptionKey)}
         </div>
-        {#if webuiStartupActive}
+        {#if runtimeStartupActive}
           <div class="mt-5 h-1.5 w-full overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
             <div
               class="webui-startup-progress h-full w-1/3 rounded-full bg-black/45 dark:bg-white/55"
             ></div>
           </div>
         {/if}
-        {#if $webuiStartup.detail}
+        {#if runtimeStartupState.detail}
           <div class="mt-3 max-w-full truncate text-[10px] opacity-25">
-            {$webuiStartup.detail}
+            {runtimeStartupState.detail}
           </div>
         {/if}
-        {#if webuiStartupFailed}
+        {#if runtimeStartupFailed}
           <button
             class="mt-5 border-none bg-black px-4 py-2 text-[12px] font-medium text-white transition hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-100"
-            onclick={onRetryLocal}
+            onclick={retryRuntimeStartup}
           >
             {$i18n.t('common.retry')}
           </button>
