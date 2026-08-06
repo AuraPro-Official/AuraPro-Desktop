@@ -23,6 +23,8 @@
     }
   }
 
+  type ModelCapability = 'image' | 'video' | 'audio'
+
   interface AuraModel {
     name: string
     sizeStr: string
@@ -116,6 +118,13 @@
       ramInfo: 'RAM+VRAM 32G+6G / UMA 28G'
     }
   ]
+
+  const AUDIO_CAPABLE_MODELS = new Set(['lowest.gguf', 'low_E4.gguf', 'medium_Q4.gguf'])
+  const modelCapabilities = (modelName: string): ModelCapability[] => {
+    const capabilities: ModelCapability[] = ['image', 'video']
+    if (AUDIO_CAPABLE_MODELS.has(modelName)) capabilities.push('audio')
+    return capabilities
+  }
 
   const SOURCE_MIGRATED_MODELS = new Set([
     'lowest.gguf',
@@ -488,6 +497,15 @@
               </div>
               <div class="text-[10px] opacity-20 mt-0.5">
                 {model.sizeStr} · {model.ramInfo}{model.macOnly ? ' · Mac only' : ''}
+              </div>
+              <div class="mt-1 flex flex-wrap gap-1">
+                {#each modelCapabilities(model.name) as capability (capability)}
+                  <span
+                    class="rounded border border-black/[0.06] px-1.5 py-px text-[9px] opacity-30 dark:border-white/[0.08]"
+                  >
+                    {$i18n.t('settings.models.capability.' + capability)}
+                  </span>
+                {/each}
               </div>
               {#if dlActive}
                 <div

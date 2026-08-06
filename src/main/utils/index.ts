@@ -137,7 +137,7 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.9.12'
+export const AURAPRO_UI_TARGET_VERSION = '3.9.13'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
 export const AURAPRO_UI_LAST_VERSION = '3.9.3'
@@ -244,11 +244,17 @@ export const getFfmpegPath = (): string => {
   return path.join(getFfmpegDir(), `ffmpeg${ext}`)
 }
 
+export const getFfprobePath = (): string => {
+  const ext = process.platform === 'win32' ? '.exe' : ''
+  return path.join(getFfmpegDir(), `ffprobe${ext}`)
+}
+
 export const isFfmpegInstalled = (): boolean => {
   // 1. Check in our custom install directory first (preferred)
-  if (fs.existsSync(getFfmpegPath())) {
+  if (fs.existsSync(getFfmpegPath()) && fs.existsSync(getFfprobePath())) {
     try {
       execSync(`"${getFfmpegPath()}" -version`, { stdio: 'ignore' })
+      execSync(`"${getFfprobePath()}" -version`, { stdio: 'ignore' })
       return true
     } catch {}
   }
@@ -257,6 +263,7 @@ export const isFfmpegInstalled = (): boolean => {
   try {
     const cmd = process.platform === 'win32' ? 'where' : 'which'
     execSync(`${cmd} ffmpeg`, { stdio: 'ignore' })
+    execSync(`${cmd} ffprobe`, { stdio: 'ignore' })
     return true
   } catch {
     return false
@@ -278,53 +285,70 @@ export const installFfmpeg = async (onStatus?: (status: string) => void): Promis
     throw new Error(`Unsupported platform for ffmpeg auto-install: ${platform}`)
   }
 
-  const url = `https://github.com/eugeneware/ffmpeg-static/releases/download/b5.0.1/${binaryName}.gz`
-  const downloadPath = path.join(os.tmpdir(), `ffmpeg-${binaryName}.gz`)
-  const targetPath = getFfmpegPath()
+  const releaseUrl = 'https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1'
+  const binaries = [
+    {
+      name: 'ffmpeg',
+      url: `${releaseUrl}/ffmpeg-${binaryName}.gz`,
+      downloadPath: path.join(os.tmpdir(), `ffmpeg-${binaryName}.gz`),
+      targetPath: getFfmpegPath()
+    },
+    {
+      name: 'ffprobe',
+      url: `${releaseUrl}/ffprobe-${binaryName}.gz`,
+      downloadPath: path.join(os.tmpdir(), `ffprobe-${binaryName}.gz`),
+      targetPath: getFfprobePath()
+    }
+  ]
 
   try {
-    onStatus?.('Downloading ffmpeg...')
-    log.info(`Downloading ffmpeg from ${url}`)
-    await downloadFileWithProgress(
-      url,
-      downloadPath,
-      (progress, downloaded, total, bytesPerSecond, etaSeconds) => {
-        onStatus?.(
-          `Downloading ffmpeg... ${Math.floor(progress)}% ` +
-            `(${formatDownloadBytes(downloaded)}/${formatDownloadBytes(total)} · ${formatDownloadSpeed(bytesPerSecond)} · ETA ${formatDownloadEta(etaSeconds)})`
-        )
-      }
-    )
-
-    onStatus?.('Extracting ffmpeg...')
-    log.info(`Extracting ffmpeg to ${targetPath}`)
-
     const ffmpegDir = getFfmpegDir()
     if (!fs.existsSync(ffmpegDir)) {
       fs.mkdirSync(ffmpegDir, { recursive: true })
     }
 
-    await pipeline(
-      fs.createReadStream(downloadPath),
-      createGunzip(),
-      fs.createWriteStream(targetPath)
-    )
+    for (const binary of binaries) {
+      onStatus?.(`Downloading ${binary.name}...`)
+      log.info(`Downloading ${binary.name} from ${binary.url}`)
+      await downloadFileWithProgress(
+        binary.url,
+        binary.downloadPath,
+        (progress, downloaded, total, bytesPerSecond, etaSeconds) => {
+          onStatus?.(
+            `Downloading ${binary.name}... ${Math.floor(progress)}% ` +
+              `(${formatDownloadBytes(downloaded)}/${formatDownloadBytes(total)} | ${formatDownloadSpeed(bytesPerSecond)} | ETA ${formatDownloadEta(etaSeconds)})`
+          )
+        }
+      )
 
-    if (platform !== 'win32') {
-      fs.chmodSync(targetPath, 0o755)
+      onStatus?.(`Extracting ${binary.name}...`)
+      log.info(`Extracting ${binary.name} to ${binary.targetPath}`)
+      await pipeline(
+        fs.createReadStream(binary.downloadPath),
+        createGunzip(),
+        fs.createWriteStream(binary.targetPath)
+      )
+
+      if (platform !== 'win32') {
+        fs.chmodSync(binary.targetPath, 0o755)
+      }
     }
 
-    log.info('ffmpeg installed successfully')
-    try {
-      fs.unlinkSync(downloadPath)
-    } catch {}
+    log.info('ffmpeg and ffprobe installed successfully')
+    for (const binary of binaries) {
+      try {
+        fs.unlinkSync(binary.downloadPath)
+      } catch {}
+    }
     return true
   } catch (error: unknown) {
-    log.error('ffmpeg installation failed:', error)
-    try {
-      if (fs.existsSync(downloadPath)) fs.unlinkSync(downloadPath)
-    } catch {}
-    throw new Error(`Failed to install ffmpeg: ${getErrorMessage(error)}`)
+    log.error('ffmpeg/ffprobe installation failed:', error)
+    for (const binary of binaries) {
+      try {
+        if (fs.existsSync(binary.downloadPath)) fs.unlinkSync(binary.downloadPath)
+      } catch {}
+    }
+    throw new Error(`Failed to install ffmpeg/ffprobe: ${getErrorMessage(error)}`)
   }
 }
 
@@ -1033,7 +1057,7 @@ foreach ($p in $targets) {
       }).trim()
       if (killed) {
         log.info(`Stopped stale Open WebUI processes: ${killed}`)
-        onStatus?.('Stopped old Open WebUI process before updating...')
+        onStatus?.('Stopped an old WebUI process...')
       }
     } catch (error) {
       log.warn('Failed to scan stale Open WebUI processes:', error)
@@ -1069,7 +1093,7 @@ foreach ($p in $targets) {
     }
     if (killed.length) {
       log.info(`Stopped stale Open WebUI processes: ${killed.join(', ')}`)
-      onStatus?.('Stopped old Open WebUI process before updating...')
+      onStatus?.('Stopped an old WebUI process...')
     }
   } catch (error) {
     log.warn('Failed to scan stale Open WebUI processes:', error)
@@ -1598,7 +1622,8 @@ const spawnHiddenServerProcess = (
   const child = spawn(command, args, {
     env,
     stdio: ['pipe', 'pipe', 'pipe'],
-    windowsHide: true
+    windowsHide: true,
+    detached: process.platform !== 'win32'
   })
 
   if (!child.pid) {
@@ -1647,6 +1672,7 @@ export const startServer = async (
   onStatus?: (status: string, phase: WebUIStartPhase) => void
 ): Promise<{ url: string; pid: number }> => {
   await stopAllServers()
+  await killStaleOpenWebUIProcesses((status) => onStatus?.(status, 'checking'))
   onStatus?.('Checking the installed WebUI version...', 'checking')
   const config = await getConfig()
   const configEnvVars = config.envVars ?? {}
@@ -1744,7 +1770,7 @@ export const startServer = async (
   }
 
   // Find available port
-  const desiredPort = port || 8080
+  const desiredPort = port || 8081
   let availablePort = desiredPort
   while (await portInUse(availablePort, host)) {
     availablePort++
@@ -1835,19 +1861,10 @@ export async function stopAllServers(): Promise<void> {
   const pidsToStop = Array.from(serverPIDs)
   if (pidsToStop.length === 0) return
 
-  // Kill PTY processes directly — cleaner than process tree termination
+  // The WebUI command may spawn a Python child through uv. Always terminate
+  // the complete process tree so the child cannot keep the old port occupied.
   for (const pid of pidsToStop) {
-    const ptyProc = serverPtyProcesses.get(pid)
-    if (ptyProc) {
-      try {
-        ptyProc.kill()
-      } catch (e) {
-        log.warn(`Failed to kill PTY process ${pid}:`, e)
-      }
-    } else {
-      // Fallback for any non-PTY processes
-      await terminateProcessTree(pid, false)
-    }
+    await terminateProcessTree(pid, false)
   }
 
   await sleep(2000)
@@ -2108,7 +2125,7 @@ const DEFAULT_CONFIG: AppConfig = {
   installDir: '',
   dataDir: '',
   localServer: {
-    port: 8080,
+    port: 8081,
     serveOnLocalNetwork: true,
     httpsEnabled: true,
     ragHardwareAcceleration: false
@@ -2175,18 +2192,32 @@ const DEFAULT_CONFIG: AppConfig = {
 }
 
 const normalizeLocalConnectionUrl = (url: string, config: AppConfig): string => {
-  if (!url || config.localServer?.httpsEnabled === false) return url
+  if (!url) return url
 
   try {
     const parsed = new URL(url)
     const hostname = parsed.hostname.toLowerCase()
     const isLoopbackHost =
-      hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '0.0.0.0'
+      hostname === '127.0.0.1' ||
+      hostname === 'localhost' ||
+      hostname === '0.0.0.0' ||
+      hostname === '::1' ||
+      hostname === '[::1]'
 
-    if (parsed.protocol === 'http:' && isLoopbackHost) {
-      parsed.protocol = 'https:'
-      return parsed.toString().replace(/\/$/, '')
+    let changed = false
+    if (isLoopbackHost && parsed.port === '8080') {
+      parsed.port = '8081'
+      changed = true
     }
+    if (
+      config.localServer?.httpsEnabled !== false &&
+      parsed.protocol === 'http:' &&
+      isLoopbackHost
+    ) {
+      parsed.protocol = 'https:'
+      changed = true
+    }
+    if (changed) return parsed.toString().replace(/\/$/, '')
   } catch {
     return url
   }
@@ -2215,6 +2246,10 @@ const normalizeConfig = (config: AppConfig): AppConfig => {
     ...(config.localServer ?? {})
   } as AppConfig['localServer'] & { autoUpdate?: boolean }
   delete localServer.autoUpdate
+
+  if (localServer.port === 8080) {
+    localServer.port = 8081
+  }
 
   const normalized: AppConfig = {
     ...config,

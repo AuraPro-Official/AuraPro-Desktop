@@ -305,8 +305,8 @@
             <span class="text-[11px] opacity-30">URL</span>
             <button
               class="text-[12px] opacity-50 font-mono hover:opacity-80 transition bg-transparent border-none text-[#1d1d1f] dark:text-[#fafafa] p-0 underline decoration-dotted underline-offset-2 cursor-pointer"
-              onclick={() => window.open($serverInfo?.url ?? 'https://127.0.0.1:8080')}
-              >{$serverInfo?.url ?? 'https://127.0.0.1:8080'}</button
+              onclick={() => window.open($serverInfo?.url ?? 'https://127.0.0.1:8081')}
+              >{$serverInfo?.url ?? 'https://127.0.0.1:8081'}</button
             >
           </div>
           {#if serverPid}
@@ -343,9 +343,9 @@
       <input
         type="number"
         class="bg-black/[0.04] dark:bg-white/[0.06] text-[12px] text-[#1d1d1f] dark:text-[#fafafa] px-3 py-1.5 border-none outline-none rounded-xl opacity-60 w-20 text-right"
-        value={$config?.localServer?.port ?? 8080}
+        value={$config?.localServer?.port ?? 8081}
         onchange={(e) =>
-          updateConfig('port', parseInt((e.target as HTMLInputElement).value) || 8080)}
+          updateConfig('port', parseInt((e.target as HTMLInputElement).value) || 8081)}
       />
     </div>
 

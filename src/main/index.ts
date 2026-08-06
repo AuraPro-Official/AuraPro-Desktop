@@ -2434,7 +2434,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     ipcMain.handle('server:info', getServerInfoSnapshot)
     ipcMain.handle('server:share-local', async () => {
       const config = await getConfig()
-      const port = config.localServer?.port ?? 8080
+      const port = config.localServer?.port ?? 8081
       const needsLanRestart = config.localServer?.serveOnLocalNetwork !== true
       const useHttps = config.localServer?.httpsEnabled !== false
       const needsProtocolRestart = Boolean(

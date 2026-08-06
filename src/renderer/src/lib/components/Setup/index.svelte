@@ -118,7 +118,7 @@
                 <input
                   type="text"
                   bind:value={url}
-                  placeholder="http://192.168.1.10:8080"
+                  placeholder="http://192.168.1.10:8081"
                   class="flex-1 px-4 py-2.5 bg-black/[0.04] dark:bg-white/[0.06] text-[13px] text-[#1d1d1f] dark:text-[#fafafa] placeholder:opacity-20 outline-none focus:bg-white/[0.1] transition no-drag border-none"
                   onkeydown={(e) => e.key === 'Enter' && connect()}
                 />

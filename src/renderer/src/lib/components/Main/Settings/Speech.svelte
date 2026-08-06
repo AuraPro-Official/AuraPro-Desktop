@@ -185,6 +185,58 @@
   let audioOutputDevices = $state<MediaDeviceInfo[]>([])
   let cleanup: (() => void) | null = null
 
+  const localizeSherpaStatus = (status: string): string => {
+    const normalized = status.trim()
+    const asrProgress = normalized.match(/^Downloading Sherpa ASR (\d+)%\.\.\.$/)
+    if (asrProgress) {
+      return $i18n.t('settings.speech.status.downloadAsrProgress', { percent: asrProgress[1] })
+    }
+    const ttsProgress = normalized.match(/^Downloading Sherpa TTS (\d+)%\.\.\.$/)
+    if (ttsProgress) {
+      return $i18n.t('settings.speech.status.downloadTtsProgress', { percent: ttsProgress[1] })
+    }
+    const espeakProgress = normalized.match(/^Downloading espeak-ng-data ([\d.]+)%\.\.\.$/)
+    if (espeakProgress) {
+      return $i18n.t('settings.speech.status.downloadEspeakProgress', {
+        percent: espeakProgress[1]
+      })
+    }
+
+    const statusKeys: Record<string, string> = {
+      'Deleting old ASR models...': 'settings.speech.status.deletingOldAsr',
+      'Downloading recommended Sherpa ASR models...':
+        'settings.speech.status.downloadingRecommendedAsr',
+      'Sherpa ASR model is ready': 'settings.speech.status.asrReady',
+      'Downloading shared espeak-ng-data (only once)...':
+        'settings.speech.status.downloadingEspeak',
+      'Extracting espeak-ng-data...': 'settings.speech.status.extractingEspeak',
+      'espeak-ng-data ready': 'settings.speech.status.espeakReady',
+      'Deleting old TTS models...': 'settings.speech.status.deletingOldTts',
+      'Downloading recommended Sherpa TTS models...':
+        'settings.speech.status.downloadingRecommendedTts',
+      'Sherpa TTS models are ready': 'settings.speech.status.ttsReady',
+      'Installing Python...': 'settings.speech.status.installingPython',
+      'Updating sherpa-onnx...': 'settings.speech.status.updatingSherpaPackage',
+      'Updating faster-whisper...': 'settings.speech.status.updatingWhisper'
+    }
+    const key = statusKeys[normalized]
+    if (key) return $i18n.t(key)
+
+    const downloadingPreset = normalized.match(/^Downloading (.+)\.\.\.$/)
+    if (downloadingPreset) {
+      return $i18n.t('settings.speech.status.downloadingModel', {
+        model: downloadingPreset[1]
+      })
+    }
+    const installingPackage = normalized.match(/^Installing (.+)\.\.\.$/)
+    if (installingPackage) {
+      return $i18n.t('settings.speech.status.installingPackage', {
+        package: installingPackage[1]
+      })
+    }
+
+    return status
+  }
   const installed = $derived(sherpaVersion !== null)
   const selectedAsrLanguage = $derived(sherpaConfig.asrLanguage ?? 'Chinese')
   const selectedTtsLanguage = $derived(sherpaConfig.ttsLanguage ?? 'Chinese (Mandarin, 普通话)')
@@ -739,8 +791,8 @@
     const preset = kind === 'asr' ? selectedAsrPreset : selectedTtsPreset
     downloading = preset.id
     setupStatus = isDelete
-      ? `Deleting and refreshing ${preset.label}...`
-      : `Inspecting ${preset.repo}...`
+      ? $i18n.t('settings.speech.status.deletingAndRefreshing', { model: preset.label })
+      : $i18n.t('settings.speech.status.inspectingRepository', { repo: preset.repo })
     let files = preset.files ?? []
     if (!files.length) {
       const repoFiles = await window.electronAPI.getHfRepoFiles(preset.repo)
@@ -748,12 +800,11 @@
     }
 
     if (!files.length) {
-      setupStatus =
-        'This model repository is listed, but AuraPro could not infer the required Sherpa files automatically yet.'
+      setupStatus = $i18n.t('settings.speech.status.unsupportedRepository')
       downloading = null
       return
     }
-    setupStatus = `Downloading ${preset.label}...`
+    setupStatus = $i18n.t('settings.speech.status.downloadingModel', { model: preset.label })
     downloadProgress = {}
 
     try {
@@ -794,7 +845,12 @@
           `sherpa-${preset.id}`,
           `sherpa/${kind}/${cleanId(preset.id)}`
         )
-        if (!filepath) throw new Error(`Download failed: ${file.filename}`)
+        if (!filepath)
+          throw new Error(
+            $i18n.t('settings.speech.status.downloadFileFailed', {
+              file: file.filename
+            })
+          )
         updates[file.field] = filepath
       }
 
@@ -829,17 +885,17 @@
       await refreshSherpaModels()
 
       if (shouldReload) {
-        setupStatus = 'Reloading Sherpa...'
+        setupStatus = $i18n.t('settings.speech.status.reloadingService')
         await window.electronAPI.stopSherpa()
         const result = await window.electronAPI.startSherpa()
         sherpaInfo = { ...result, status: 'started' }
         await saveSherpaConfig({ enabled: true })
-        setupStatus = 'Model is ready and Sherpa has been reloaded'
+        setupStatus = $i18n.t('settings.speech.status.modelReadyAndReloaded')
       } else {
-        setupStatus = 'Model is ready'
+        setupStatus = $i18n.t('settings.speech.status.modelReady')
       }
     } catch (error: unknown) {
-      setupStatus = getErrorMessage(error, 'Download failed')
+      setupStatus = getErrorMessage(error, $i18n.t('settings.speech.status.downloadFailed'))
     } finally {
       downloading = null
     }
@@ -847,40 +903,36 @@
 
   const installSherpa = async () => {
     installing = true
-    setupStatus = 'Installing Sherpa...'
+    setupStatus = $i18n.t('settings.speech.status.installingService')
     try {
       await window.electronAPI.reinitSherpaServerScript?.()
       const result = await window.electronAPI.startSherpa()
       sherpaInfo = { ...result, status: 'started' }
       sherpaVersion = await window.electronAPI.getPackageVersion('sherpa-onnx')
       await saveSherpaConfig({ enabled: true })
-      setupStatus = 'Sherpa installed and started'
+      setupStatus = $i18n.t('settings.speech.status.installedAndStarted')
     } catch (error: unknown) {
-      setupStatus = getErrorMessage(error, 'Install failed')
+      setupStatus = getErrorMessage(error, $i18n.t('settings.speech.status.installFailed'))
     } finally {
       installing = false
     }
   }
 
   const uninstallSherpa = async () => {
-    if (
-      !confirm(
-        $i18n.t('settings.sherpa.uninstallConfirm') || '确定要卸载 Sherpa 吗？此操作不可逆。'
-      )
-    ) {
+    if (!confirm($i18n.t('settings.speech.uninstallConfirm'))) {
       return
     }
 
     uninstalling = true
-    setupStatus = 'Uninstalling Sherpa...'
+    setupStatus = $i18n.t('settings.speech.status.uninstallingService')
     try {
       await window.electronAPI.stopSherpa()
       await window.electronAPI.uninstallPackage?.('sherpa-onnx') // 需要后端支持此 API
       sherpaInfo = null
       sherpaVersion = null
-      setupStatus = 'Sherpa has been uninstalled'
+      setupStatus = $i18n.t('settings.speech.status.uninstalled')
     } catch (error: unknown) {
-      setupStatus = getErrorMessage(error, 'Uninstall failed')
+      setupStatus = getErrorMessage(error, $i18n.t('settings.speech.status.uninstallFailed'))
     } finally {
       uninstalling = false
     }
@@ -894,7 +946,7 @@
       sherpaInfo = { ...result, status: 'started' }
       await saveSherpaConfig({ enabled: true })
     } catch (error: unknown) {
-      setupStatus = getErrorMessage(error, 'Failed to start sherpa')
+      setupStatus = getErrorMessage(error, $i18n.t('settings.speech.status.startFailed'))
     } finally {
       starting = false
     }
@@ -902,15 +954,15 @@
 
   const restartSherpa = async () => {
     restarting = true
-    setupStatus = 'Restarting Sherpa...'
+    setupStatus = $i18n.t('settings.speech.status.restartingService')
     try {
       await window.electronAPI.stopSherpa()
       const result = await window.electronAPI.startSherpa()
       sherpaInfo = { ...result, status: 'started' }
       await saveSherpaConfig({ enabled: true })
-      setupStatus = 'Sherpa restarted'
+      setupStatus = $i18n.t('settings.speech.status.restarted')
     } catch (error: unknown) {
-      setupStatus = getErrorMessage(error, 'Failed to restart sherpa')
+      setupStatus = getErrorMessage(error, $i18n.t('settings.speech.status.restartFailed'))
     } finally {
       restarting = false
     }
@@ -918,16 +970,16 @@
 
   const updateSherpa = async () => {
     updating = true
-    setupStatus = 'Updating Sherpa...'
+    setupStatus = $i18n.t('settings.speech.status.updatingService')
     try {
       await window.electronAPI.updateSherpa?.()
       await window.electronAPI.reinitSherpaServerScript?.()
       sherpaInfo = await window.electronAPI.getSherpaInfo()
       sherpaVersion =
         sherpaInfo?.version ?? (await window.electronAPI.getPackageVersion('sherpa-onnx'))
-      setupStatus = 'Sherpa updated'
+      setupStatus = $i18n.t('settings.speech.status.updated')
     } catch (error: unknown) {
-      setupStatus = getErrorMessage(error, 'Failed to update sherpa')
+      setupStatus = getErrorMessage(error, $i18n.t('settings.speech.status.updateFailed'))
     } finally {
       updating = false
     }
@@ -956,7 +1008,7 @@
         sherpaInfo = { ...sherpaInfo, status: data.data }
       }
       if (data.type === 'status:sherpa-setup') {
-        setupStatus = typeof data.data === 'string' ? data.data : ''
+        setupStatus = typeof data.data === 'string' ? localizeSherpaStatus(data.data) : ''
       }
       if (data.type === 'sherpa:ready' && data.data && typeof data.data !== 'string') {
         sherpaInfo = { ...data.data, status: 'started' }
@@ -984,14 +1036,16 @@
 <div class="space-y-5">
   <div class="flex items-center justify-between">
     <div>
-      <div class="text-[13px] opacity-70">Sherpa speech service</div>
+      <div class="text-[13px] opacity-70">{$i18n.t('settings.speech.serviceTitle')}</div>
       <div class="text-[11px] opacity-30 mt-0.5">
         {#if installed}
-          {serviceRunning ? (sherpaInfo?.url ?? 'Running') : 'Voice input and TTS'}
+          {serviceRunning
+            ? (sherpaInfo?.url ?? $i18n.t('settings.speech.running'))
+            : $i18n.t('settings.speech.transcriptionAndSynthesis')}
           {#if sherpaVersion}
             - sherpa-onnx {sherpaVersion}{/if}
         {:else}
-          Not installed
+          {$i18n.t('settings.speech.notInstalled')}
         {/if}
       </div>
     </div>
@@ -1004,14 +1058,14 @@
             disabled={restarting || stopping}
             onclick={restartSherpa}
           >
-            {restarting ? '重启中...' : '重启'}
+            {restarting ? $i18n.t('common.restarting') : $i18n.t('common.restart')}
           </button>
           <button
             class="text-[12px] opacity-50 hover:opacity-80 px-3 py-1.5 bg-black/[0.04] dark:bg-white/[0.06] rounded-xl border-none"
             disabled={stopping}
             onclick={stopSherpa}
           >
-            {stopping ? '停止中...' : '停止'}
+            {stopping ? $i18n.t('common.stopping') : $i18n.t('common.stop')}
           </button>
         {:else}
           <button
@@ -1019,7 +1073,7 @@
             disabled={starting || !asrReady || !ttsReady}
             onclick={startSherpa}
           >
-            {starting ? '启动中...' : '启动'}
+            {starting ? $i18n.t('common.starting') : $i18n.t('common.start')}
           </button>
         {/if}
         <button
@@ -1027,14 +1081,14 @@
           disabled={updating}
           onclick={updateSherpa}
         >
-          {updating ? '更新中...' : '更新'}
+          {updating ? $i18n.t('common.updating') : $i18n.t('common.update')}
         </button>
         <button
           class="text-[12px] opacity-50 hover:opacity-80 px-3 py-1.5 bg-black/[0.04] dark:bg-white/[0.06] rounded-xl border-none"
           disabled={uninstalling}
           onclick={uninstallSherpa}
         >
-          {uninstalling ? '卸载中...' : '卸载'}
+          {uninstalling ? $i18n.t('common.uninstalling') : $i18n.t('common.uninstall')}
         </button>
       </div>
     {:else}
@@ -1047,9 +1101,9 @@
           <div
             class="w-3.5 h-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin"
           ></div>
-          安装中...
+          {$i18n.t('common.installing')}
         {:else}
-          安装 Sherpa
+          {$i18n.t('settings.speech.installService')}
         {/if}
       </button>
     {/if}
@@ -1110,9 +1164,11 @@
       <div class="py-4 border-t border-black/[0.04] dark:border-white/[0.04]">
         <div class="flex items-center justify-between gap-4">
           <div class="min-w-0">
-            <div class="text-[13px] opacity-70">Automatic voice input</div>
+            <div class="text-[13px] opacity-70">
+              {$i18n.t('settings.speech.automaticTranscription')}
+            </div>
             <div class="text-[11px] opacity-30 mt-0.5 truncate">
-              Detects language with faster-whisper and switches Sherpa ASR automatically
+              {$i18n.t('settings.speech.automaticTranscriptionDesc')}
             </div>
           </div>
           <button
@@ -1121,37 +1177,41 @@
             onclick={() => downloadAsrModel(true)}
           >
             {downloading === selectedAsrPreset.id
-              ? 'Downloading...'
+              ? $i18n.t('common.downloading')
               : selectedAsrDownloadable
                 ? asrReady
-                  ? 'Update base ASR'
-                  : 'Download base ASR'
-                : 'Download'}
+                  ? $i18n.t('settings.speech.updateRecognitionModel')
+                  : $i18n.t('settings.speech.downloadRecognitionModel')
+                : $i18n.t('common.download')}
           </button>
         </div>
         <div class="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
           <div class="rounded-xl bg-black/[0.03] dark:bg-white/[0.04] px-3 py-2">
-            <div class="opacity-35">Language detection</div>
+            <div class="opacity-35">{$i18n.t('settings.speech.languageDetection')}</div>
             <div class="opacity-60 truncate">
               {sherpaConfig.asrLanguageDetectorModel ?? 'large-v3-turbo'} / CPU int8
             </div>
           </div>
           <div class="rounded-xl bg-black/[0.03] dark:bg-white/[0.04] px-3 py-2">
-            <div class="opacity-35">Routing profiles</div>
+            <div class="opacity-35">{$i18n.t('settings.speech.routingProfiles')}</div>
             <div class="opacity-60 truncate">
-              {Object.keys(sherpaConfig.asrProfiles ?? {}).length || (asrReady ? 1 : 0)} ready
+              {$i18n.t('settings.speech.readyCount', {
+                count: Object.keys(sherpaConfig.asrProfiles ?? {}).length || (asrReady ? 1 : 0)
+              })}
             </div>
           </div>
           <div class="rounded-xl bg-black/[0.03] dark:bg-white/[0.04] px-3 py-2">
-            <div class="opacity-35">Fallback ASR</div>
+            <div class="opacity-35">{$i18n.t('settings.speech.fallbackRecognitionModel')}</div>
             <div class="opacity-60 truncate">
-              {asrReady ? selectedAsrPreset.label : 'Not downloaded'}
+              {asrReady ? selectedAsrPreset.label : $i18n.t('settings.speech.notDownloaded')}
             </div>
           </div>
         </div>
         {#if downloadedAsrModels.length > 0}
           <div class="mt-3 rounded-xl bg-black/[0.03] dark:bg-white/[0.04] px-3 py-2">
-            <div class="text-[11px] opacity-40 mb-1">Downloaded voice input model pool</div>
+            <div class="text-[11px] opacity-40 mb-1">
+              {$i18n.t('settings.speech.downloadedRecognitionModels')}
+            </div>
             {#each downloadedAsrModels.slice(0, 8) as model (model.filename)}
               <div class="text-[11px] opacity-55 truncate">{model.filename}</div>
             {/each}
@@ -1162,13 +1222,13 @@
       <div class="py-4 border-t border-black/[0.04] dark:border-white/[0.04]">
         <div class="flex items-center justify-between gap-4">
           <div class="min-w-0">
-            <div class="text-[13px] opacity-70">TTS model</div>
+            <div class="text-[13px] opacity-70">{$i18n.t('settings.speech.synthesisModel')}</div>
             <div class="text-[11px] opacity-30 mt-0.5 truncate">
               {ttsReady
                 ? sherpaConfig.ttsModel
                 : selectedTtsDownloadable
-                  ? 'Select and download to configure automatically'
-                  : 'Listed from k2-fsa Space; loader pending'}
+                  ? $i18n.t('settings.speech.selectAndDownload')
+                  : $i18n.t('settings.speech.loaderPending')}
             </div>
           </div>
           <button
@@ -1177,31 +1237,35 @@
             onclick={() => downloadTTSModel(true)}
           >
             {downloading === selectedTtsPreset.id
-              ? 'Downloading...'
+              ? $i18n.t('common.downloading')
               : selectedTtsDownloadable
                 ? ttsReady
-                  ? 'Update'
-                  : 'Download'
-                : 'Select'}
+                  ? $i18n.t('common.update')
+                  : $i18n.t('common.download')
+                : $i18n.t('settings.speech.select')}
           </button>
         </div>
         <div class="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
           <div class="rounded-xl bg-black/[0.03] dark:bg-white/[0.04] px-3 py-2">
-            <div class="opacity-35">Routing profiles</div>
+            <div class="opacity-35">{$i18n.t('settings.speech.routingProfiles')}</div>
             <div class="opacity-60 truncate">
-              {Object.keys(sherpaConfig.ttsProfiles ?? {}).length || (ttsReady ? 1 : 0)} ready
+              {$i18n.t('settings.speech.readyCount', {
+                count: Object.keys(sherpaConfig.ttsProfiles ?? {}).length || (ttsReady ? 1 : 0)
+              })}
             </div>
           </div>
           <div class="rounded-xl bg-black/[0.03] dark:bg-white/[0.04] px-3 py-2">
-            <div class="opacity-35">Fallback TTS</div>
+            <div class="opacity-35">{$i18n.t('settings.speech.fallbackSynthesisModel')}</div>
             <div class="opacity-60 truncate">
-              {ttsReady ? selectedTtsPreset.label : 'Not downloaded'}
+              {ttsReady ? selectedTtsPreset.label : $i18n.t('settings.speech.notDownloaded')}
             </div>
           </div>
         </div>
         {#if downloadedTtsModels.length > 0}
           <div class="mt-3 rounded-xl bg-black/[0.03] dark:bg-white/[0.04] px-3 py-2">
-            <div class="text-[11px] opacity-40 mb-1">Downloaded TTS models</div>
+            <div class="text-[11px] opacity-40 mb-1">
+              {$i18n.t('settings.speech.downloadedSynthesisModels')}
+            </div>
             {#each downloadedTtsModels.slice(0, 8) as model (model.filename)}
               <div class="text-[11px] opacity-55 truncate">{model.filename}</div>
             {/each}

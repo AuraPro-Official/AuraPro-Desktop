@@ -38,6 +38,8 @@
 
   let { onBack, onComplete, autoStart = false } = $props()
 
+  type ModelCapability = 'image' | 'video' | 'audio'
+
   interface AuraModel {
     name: string
     sizeStr: string
@@ -154,6 +156,13 @@
       ramInfo: 'RAM+VRAM 32G+6G / UMA 28G'
     }
   ]
+
+  const AUDIO_CAPABLE_MODELS = new Set(['lowest.gguf', 'low_E4.gguf', 'medium_Q4.gguf'])
+  const modelCapabilities = (modelName: string): ModelCapability[] => {
+    const capabilities: ModelCapability[] = ['image', 'video']
+    if (AUDIO_CAPABLE_MODELS.has(modelName)) capabilities.push('audio')
+    return capabilities
+  }
 
   let selectedModel = $state<AuraModel>(AURA_MODELS[0])
   let downloadProgress = $state<number | null>(null)
@@ -322,9 +331,9 @@
 
     if (modelPreference === 'speed') {
       if (dedicatedVramGB >= 12) return modelByName('high_Q4.gguf')
+      if (mem > 31 && dedicatedVramGB >= 4) return modelByName('high_Q4.gguf')
       if (dedicatedVramGB >= 8) return modelByName('medium_Q4.gguf')
       if (mem < 15) return modelByName('lowest.gguf')
-      if (mem > 31 && dedicatedVramGB >= 4) return modelByName('high_Q4.gguf')
       if (mem >= 24 && dedicatedVramGB >= 4) return modelByName('medium_IQ2.gguf')
       return modelByName('low_E4.gguf')
     }
@@ -763,7 +772,7 @@
         id: 'local',
         name: 'Local',
         type: 'local',
-        url: info?.url || 'https://127.0.0.1:8080'
+        url: info?.url || 'https://127.0.0.1:8081'
       })
       await window.electronAPI.setDefaultConnection('local')
       connections.set(await window.electronAPI.getConnections())
@@ -1273,6 +1282,15 @@
                 <span class="text-[10px] opacity-30">
                   {model.sizeStr} · {model.ramInfo}{model.macOnly ? ' · Mac only' : ''}
                 </span>
+                <div class="mt-1 flex flex-wrap gap-1">
+                  {#each modelCapabilities(model.name) as capability (capability)}
+                    <span
+                      class="rounded border border-black/[0.06] px-1.5 py-px text-[9px] opacity-30 dark:border-white/[0.08]"
+                    >
+                      {$i18n.t('settings.models.capability.' + capability)}
+                    </span>
+                  {/each}
+                </div>
               </div>
               {#if selectedModel.name === model.name}
                 <div class="size-2 rounded-full bg-emerald-400"></div>

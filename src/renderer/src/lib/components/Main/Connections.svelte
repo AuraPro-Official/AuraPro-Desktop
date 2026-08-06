@@ -527,7 +527,7 @@
         id: 'local',
         name: 'Local',
         type: 'local',
-        url: info?.url || 'https://127.0.0.1:8080'
+        url: info?.url || 'https://127.0.0.1:8081'
       })
       await window.electronAPI.setDefaultConnection('local')
       connections.set(await window.electronAPI.getConnections())

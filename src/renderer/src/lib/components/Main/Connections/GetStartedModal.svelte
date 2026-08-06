@@ -19,6 +19,8 @@
     onCancel: () => void
   }
 
+  type ModelCapability = 'image' | 'video' | 'audio'
+
   interface AuraModel {
     name: string
     sizeStr: string
@@ -122,6 +124,13 @@
     }
   ]
 
+  const AUDIO_CAPABLE_MODELS = new Set(['lowest.gguf', 'low_E4.gguf', 'medium_Q4.gguf'])
+  const modelCapabilities = (modelName: string): ModelCapability[] => {
+    const capabilities: ModelCapability[] = ['image', 'video']
+    if (AUDIO_CAPABLE_MODELS.has(modelName)) capabilities.push('audio')
+    return capabilities
+  }
+
   let installOpenTerminal = $state(false)
   let installSherpa = $state(true)
   let installDir = $state('')
@@ -203,9 +212,9 @@
 
     if (modelPreference === 'speed') {
       if (dedicatedVramGB >= 12) return modelByName('high_Q4.gguf')
+      if (mem > 31 && dedicatedVramGB >= 4) return modelByName('high_Q4.gguf')
       if (dedicatedVramGB >= 8) return modelByName('medium_Q4.gguf')
       if (mem < 15) return modelByName('lowest.gguf')
-      if (mem > 31 && dedicatedVramGB >= 4) return modelByName('high_Q4.gguf')
       if (mem >= 24 && dedicatedVramGB >= 4) return modelByName('medium_IQ2.gguf')
       return modelByName('low_E4.gguf')
     }
@@ -535,6 +544,15 @@
               </div>
               <div class="text-[9px] text-gray-400 dark:text-gray-500">
                 {model.sizeStr} · {model.ramInfo}{model.macOnly ? ' · Mac only' : ''}
+              </div>
+              <div class="mt-1 flex flex-wrap gap-1">
+                {#each modelCapabilities(model.name) as capability (capability)}
+                  <span
+                    class="rounded border border-gray-200/70 px-1.5 py-px text-[9px] text-gray-400 dark:border-gray-700/70 dark:text-gray-500"
+                  >
+                    {$i18n.t('settings.models.capability.' + capability)}
+                  </span>
+                {/each}
               </div>
             </div>
           {/each}

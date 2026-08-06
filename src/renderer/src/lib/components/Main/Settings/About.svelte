@@ -308,7 +308,7 @@
       class="w-full py-4 flex items-center justify-between bg-transparent border-none cursor-pointer group"
       onclick={() => openRelease('AuraPro-Official/AuraPro-WebUI', openWebuiVersion!)}
     >
-      <div>
+      <div class="text-left">
         <div class="text-[13px] opacity-70">{$i18n.t('settings.about.openWebuiVersion')}</div>
         <div class="text-[11px] opacity-25 mt-0.5">
           {$i18n.t('settings.about.basedOnOpenWebui')}
