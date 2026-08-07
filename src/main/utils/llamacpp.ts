@@ -31,6 +31,8 @@ let url: string | null = null
 let status: string | null = null // null | setting-up | starting | started | stopped | failed
 let logBuffer: string[] = []
 let intentionalStop = false
+type LlamaStartResult = { url: string; pid: number }
+let startPromise: Promise<LlamaStartResult> | null = null
 
 const lock = new ServiceLock('llamacpp')
 let binaryPath: string | null = null
@@ -99,6 +101,95 @@ const terminateProcessTree = async (targetPid: number, force = false): Promise<v
     await sleep(500)
     if (!isPidRunning(targetPid)) return
   }
+}
+
+const findStaleInstalledLlamaServerPids = (port: number): number[] => {
+  const runtimeRoot = path.resolve(getInstallDir(), 'llama.cpp')
+  if (!fs.existsSync(runtimeRoot)) return []
+
+  try {
+    if (process.platform === 'win32') {
+      const runtimeRootLiteral = JSON.stringify(`${runtimeRoot.replace(/[\\/]+$/, '')}${path.sep}`)
+      const script = `
+$runtimeRoot = [System.IO.Path]::GetFullPath(${runtimeRootLiteral})
+$ownerPids = @(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique)
+Get-CimInstance Win32_Process | Where-Object {
+  $exe = $_.ExecutablePath
+  $ownerPids -contains $_.ProcessId -and $exe -and $_.Name -ieq 'llama-server.exe' -and
+    [System.IO.Path]::GetFullPath($exe).StartsWith($runtimeRoot, [System.StringComparison]::OrdinalIgnoreCase)
+} | Select-Object -ExpandProperty ProcessId
+`
+      const output = execFileSync('powershell', ['-NoProfile', '-Command', script], {
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 10000
+      })
+      return [
+        ...new Set(
+          output
+            .split(/\r?\n/)
+            .map(Number)
+            .filter((value) => value > 0)
+        )
+      ]
+    }
+
+    const output = execFileSync('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], {
+      encoding: 'utf8',
+      timeout: 10000
+    })
+    const ownerPids = [
+      ...new Set(
+        output
+          .split(/\r?\n/)
+          .map(Number)
+          .filter((value) => value > 0)
+      )
+    ]
+    return ownerPids.filter((ownerPid) => {
+      try {
+        const command = execFileSync('ps', ['-p', String(ownerPid), '-o', 'command='], {
+          encoding: 'utf8',
+          timeout: 5000
+        })
+        return command.includes(runtimeRoot) && /llama-server(?:\s|$)/.test(command)
+      } catch {
+        return false
+      }
+    })
+  } catch (error) {
+    log.warn('Failed to inspect stale installed llama-server processes:', error)
+    return []
+  }
+}
+
+const releaseStaleInstalledLlamaServerPort = async (
+  port: number,
+  host: string
+): Promise<boolean> => {
+  if (!(await portInUse(port, host))) return true
+
+  const stalePids = findStaleInstalledLlamaServerPids(port).filter(
+    (targetPid) => targetPid !== process.pid && targetPid !== pid
+  )
+  if (stalePids.length === 0) return false
+
+  log.warn(
+    `Port ${port} is held by stale AuraPro llama-server process(es): ${stalePids.join(', ')}`
+  )
+  for (const targetPid of stalePids) {
+    await terminateProcessTree(targetPid, false)
+    if (isPidRunning(targetPid)) await terminateProcessTree(targetPid, true)
+  }
+
+  for (let attempt = 0; attempt < 10; attempt++) {
+    if (!(await portInUse(port, host))) {
+      log.info(`Released stale AuraPro llama-server port ${port}`)
+      return true
+    }
+    await sleep(200)
+  }
+  return false
 }
 
 // Public Getters
@@ -1502,15 +1593,10 @@ class LlamaStartError extends Error {
   }
 }
 
-export const startLlamaCpp = async (
+const startLlamaCppAttempt = async (
   onStatus?: (status: string) => void
-): Promise<{ url: string; pid: number }> => {
-  if (!lock.acquire()) {
-    if (url && pid) return { url, pid }
-    throw new Error('llama.cpp is already starting')
-  }
-
-  await stopLlamaCpp()
+): Promise<LlamaStartResult> => {
+  await stopLlamaCpp({ preserveLock: true })
 
   status = 'setting-up'
   onStatus?.('Setting up llama.cpp...')
@@ -1528,6 +1614,9 @@ export const startLlamaCpp = async (
   log.info(`startLlamaCpp: using variant=${variant}`)
 
   const availablePort = llamaConfig.port || 18881
+  if (await portInUse(availablePort, host)) {
+    await releaseStaleInstalledLlamaServerPort(availablePort, host)
+  }
   if (await portInUse(availablePort, host)) {
     status = 'failed'
     throw new LlamaStartError(
@@ -1616,6 +1705,14 @@ export const startLlamaCpp = async (
 
   spawned.onExit(({ exitCode, signal }) => {
     log.info(`[llamacpp:${spawnedPid}] Exited code=${exitCode} signal=${signal}`)
+    const isCurrentProcess = pid === spawnedPid && ptyProcess === spawned
+    if (!isCurrentProcess) {
+      log.info(
+        `[llamacpp:${spawnedPid}] Ignoring stale exit event; another llama-server instance is active`
+      )
+      return
+    }
+
     const exitMsg = `\r\n[Process exited with code ${exitCode}${signal ? ` signal ${signal}` : ''}]\r\n`
     logBuffer.push(exitMsg)
     ptyProcess = null
@@ -1623,6 +1720,7 @@ export const startLlamaCpp = async (
     url = null
     status = 'stopped'
     removeEpubConceptRuntimeDescriptor()
+    if (!startPromise) lock.release()
 
     if (!intentionalStop) {
       const error = `llama-server exited early (code=${exitCode}${signal ? ` signal=${signal}` : ''})`
@@ -1705,7 +1803,37 @@ export const startLlamaCpp = async (
   return { url: serverUrl, pid: spawnedPid }
 }
 
-export const stopLlamaCpp = async (): Promise<void> => {
+export const startLlamaCpp = async (
+  onStatus?: (status: string) => void
+): Promise<LlamaStartResult> => {
+  if (startPromise) {
+    log.info('llama.cpp startup already in progress; reusing the active startup task')
+    return await startPromise
+  }
+
+  if (status === 'started' && url && pid && isPidRunning(pid)) return { url, pid }
+
+  if (lock.isLocked() && (!pid || !isPidRunning(pid))) lock.release()
+  if (!lock.acquire()) {
+    if (url && pid && isPidRunning(pid)) return { url, pid }
+    throw new Error('llama.cpp is already starting')
+  }
+
+  const attempt = startLlamaCppAttempt(onStatus)
+  startPromise = attempt
+  try {
+    return await attempt
+  } finally {
+    if (startPromise === attempt) startPromise = null
+    if (status !== 'started') lock.release()
+  }
+}
+
+type StopLlamaCppOptions = {
+  preserveLock?: boolean
+}
+
+export const stopLlamaCpp = async (options: StopLlamaCppOptions = {}): Promise<void> => {
   removeEpubConceptRuntimeDescriptor()
   const currentPid = pid
   if (ptyProcess) {
@@ -1741,7 +1869,7 @@ export const stopLlamaCpp = async (): Promise<void> => {
   url = null
   status = null
   logBuffer = []
-  lock.release()
+  if (!options.preserveLock) lock.release()
   intentionalStop = false
 }
 

@@ -1685,6 +1685,7 @@ const restartLlamaCppAfterRuntimeSettingsChange = async (reason: string) => {
     sendToRenderer('status:llamacpp', 'starting')
     sendToRenderer('status:llamacpp-setup', 'Applying llama.cpp settings...')
     updateLlamaCppStartupState('starting', 'Applying llama.cpp settings...')
+    await stopLlamaCpp()
     const result = await startLlamaCppWithFallback((status) => {
       sendToRenderer('status:llamacpp-setup', status)
       updateLlamaCppStartupProgress(status)
@@ -1815,6 +1816,7 @@ const reloadLlamaCppModelsAfterDownload = async (filepath: string | null | undef
 
     sendToRenderer('status:llamacpp', 'starting')
     sendToRenderer('status:llamacpp-setup', 'Reloading models...')
+    await stopLlamaCpp()
     const result = await startLlamaCppWithFallback((status) => {
       sendToRenderer('status:llamacpp-setup', status)
     })
