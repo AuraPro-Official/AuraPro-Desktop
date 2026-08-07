@@ -1527,13 +1527,13 @@ export const startLlamaCpp = async (
   const variant = resolveVariant(llamaConfig.variant)
   log.info(`startLlamaCpp: using variant=${variant}`)
 
-  const desiredPort = llamaConfig.port || 18881
-  let availablePort = desiredPort
-  while (await portInUse(availablePort, host)) {
-    availablePort++
-    if (availablePort > desiredPort + 100) {
-      throw new Error('No available port found for llama-server')
-    }
+  const availablePort = llamaConfig.port || 18881
+  if (await portInUse(availablePort, host)) {
+    status = 'failed'
+    throw new LlamaStartError(
+      `llama.cpp cannot start because port ${availablePort} is already in use. Close the program using this port, then restart llama.cpp.`,
+      false
+    )
   }
 
   const extraArgs = stripArgsWithValue(llamaConfig.extraArgs ?? [], [

@@ -1898,6 +1898,13 @@ const startConfiguredServices = async (defaultConnection?: Connection): Promise<
           sendToRenderer('status:llamacpp', 'started')
           sendToRenderer('llamacpp:ready', result)
           updateLlamaCppStartupState('ready')
+          if (result.url) {
+            sendToRenderer('connections:openai', {
+              action: 'add',
+              url: `${result.url}/v1`
+            })
+            setTimeout(() => sendToRenderer('models:refresh'), 1000)
+          }
           scheduleAutomaticLlamaDiagnostic('startup-check', undefined, 4000)
         } catch (error) {
           log.error('Auto-start llama.cpp failed:', error)

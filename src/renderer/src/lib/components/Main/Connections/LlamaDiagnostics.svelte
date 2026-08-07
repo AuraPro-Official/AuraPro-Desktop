@@ -109,6 +109,8 @@
       'multimodal-load-failed': '多模态模型加载失败',
       'mtp-incomplete': 'MTP 草稿模型不完整',
       'mtp-runtime-error': 'MTP 运行异常',
+      'llamacpp-port-mismatch': 'llama.cpp 运行端口不一致',
+      'llamacpp-port-conflict': 'llama.cpp 端口被占用',
       'startup-failed': 'llama.cpp 启动失败'
     }
     return titles[baseIssueId(issue.id)] ?? issue.title
@@ -144,6 +146,10 @@
       'mtp-incomplete': 'MTP 草稿模型缺失、损坏或仍在下载中。',
       'mtp-runtime-error':
         'MTP 草稿模型加载失败、版本不支持或内存不足。可以关闭 MTP，主模型仍可正常使用。',
+      'llamacpp-port-mismatch':
+        'llama.cpp 当前运行端口与 AuraPro、WebUI 保存的端口不一致。重启 llama.cpp 后会重新同步连接。',
+      'llamacpp-port-conflict':
+        '固定端口 18881 正被其他程序占用，因此 llama.cpp 无法启动，WebUI 也无法显示本地模型。请关闭占用该端口的程序，或重启电脑后再启动 llama.cpp。',
       'startup-failed': 'llama.cpp 未能正常启动，请查看下方检测结果。'
     }
     return details[baseIssueId(issue.id)] ?? issue.detail

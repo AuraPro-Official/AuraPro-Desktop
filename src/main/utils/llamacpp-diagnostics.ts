@@ -6,7 +6,7 @@ import { execFileSync, execSync } from 'child_process'
 
 import log from 'electron-log'
 
-import { getConfig, getInstallDir, setConfig } from './index'
+import { getConfig, getInstallDir, portInUse, setConfig } from './index'
 import { downloadModel, getModelsDir, listModels, type HfModel } from './huggingface'
 import {
   getLlamaCppInfo,
@@ -737,6 +737,37 @@ export const diagnoseLlamaCpp = async (
 
   const runtimeActive =
     ['setting-up', 'starting', 'started'].includes(info.status ?? '') && Boolean(info.pid)
+  const configuredPort = config.llamaCpp?.port || 18881
+  let runtimePort: number | null = null
+  if (info.url) {
+    try {
+      runtimePort = Number(new URL(info.url).port)
+    } catch {
+      runtimePort = null
+    }
+  }
+  const configuredPortInUse = await portInUse(configuredPort, '127.0.0.1')
+  evidence.push(`llama.cpp configured endpoint: http://127.0.0.1:${configuredPort}`)
+  if (info.url) evidence.push(`llama.cpp runtime endpoint: ${info.url}`)
+
+  if (runtimeActive && runtimePort !== null && runtimePort !== configuredPort) {
+    addIssue(issues, {
+      id: 'llamacpp-port-mismatch',
+      severity: 'error',
+      title: 'llama.cpp is running on the wrong port',
+      detail: `llama.cpp is running on port ${runtimePort}, but AuraPro and WebUI expect port ${configuredPort}. Restart llama.cpp to synchronize the connection.`,
+      repairable: true,
+      action: 'restart'
+    })
+  } else if (!runtimeActive && configuredPortInUse) {
+    addIssue(issues, {
+      id: 'llamacpp-port-conflict',
+      severity: 'error',
+      title: 'llama.cpp port is occupied',
+      detail: `Port ${configuredPort} is being used by another process, so llama.cpp cannot start and WebUI cannot load local models. Close the program using this port, or restart the computer, then start llama.cpp again.`,
+      repairable: false
+    })
+  }
   const startupContext = runtimeActive ? '' : (startupError ?? '')
   const logs = stripAnsi(`${getLlamaCppLog().join('\n')}\n${binaryProbeOutput}\n${startupContext}`)
   const gpuLog = inspectLlamaCppGpuLog(logs)
