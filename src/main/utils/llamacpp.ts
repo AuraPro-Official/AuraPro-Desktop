@@ -1878,9 +1878,12 @@ export const stopLlamaCpp = async (options: StopLlamaCppOptions = {}): Promise<v
  * Used for crash recovery on app startup.
  */
 export const validateLlamaCppProcess = (): boolean => {
-  if (!pid) return false
-  if (isProcessAlive(pid)) return true
-  // Stale PID  - clean up
+  if (pid && isProcessAlive(pid)) return true
+
+  // Desktop state is in-memory, so a cold start has no PID even if a prior
+  // process left its handoff descriptor behind.  Treat both a missing and a
+  // dead PID as stale state.  This deliberately does not signal any PID: the
+  // descriptor is only valid while this process is actively tracking it.
   pid = null
   status = null
   removeEpubConceptRuntimeDescriptor()
