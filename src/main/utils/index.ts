@@ -137,11 +137,12 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.9.16'
+export const AURAPRO_UI_TARGET_VERSION = '3.9.18'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
 export const AURAPRO_UI_LAST_VERSION = '3.9.3'
 export const AURAPRO_WEBUI_FIRST_VERSION = '3.9.4'
+const AURAPRO_UI_REPAIR_VERSIONS = new Set(['3.9.16', '3.9.17'])
 
 const parseSemver = (version?: string | null): number[] | null => {
   const match = `${version ?? ''}`
@@ -179,6 +180,7 @@ export const resolveOpenWebUITargetVersion = (version?: string | null): string =
   const requested = `${version ?? ''}`.trim().replace(/^v/i, '')
   if (requested === '') return AURAPRO_UI_TARGET_VERSION
   if (requested.toLowerCase() === AURAPRO_UI_LATEST_VERSION) return AURAPRO_UI_LATEST_VERSION
+  if (AURAPRO_UI_REPAIR_VERSIONS.has(requested)) return AURAPRO_UI_TARGET_VERSION
 
   const normalized = requested
   if (!isSupportedOpenWebUIVersion(normalized)) {
@@ -1317,13 +1319,39 @@ export const getPackageVersion = (packageName: string): string | null => {
 
 type OpenWebUIPackageName = 'aurapro-webui' | 'aurapro-ui' | 'open-webui'
 
+const hasOpenWebUICoreFiles = (packageName: OpenWebUIPackageName): boolean => {
+  const pythonPath = getPythonPath()
+  if (!fs.existsSync(pythonPath)) return false
+
+  try {
+    const output = execFileSync(
+      pythonPath,
+      [
+        '-c',
+        "import importlib.metadata as m, pathlib, sys; root = pathlib.Path(m.distribution(sys.argv[1]).locate_file('open_webui')); required = (root / 'env.py', root / 'migrations' / 'env.py'); print('healthy' if all(path.is_file() for path in required) else 'incomplete')",
+        packageName
+      ],
+      {
+        encoding: 'utf-8',
+        env: pythonEnv(),
+        windowsHide: true,
+        timeout: 10000
+      }
+    )
+    return output.trim() === 'healthy'
+  } catch {
+    return false
+  }
+}
+
 const getInstalledOpenWebUIPackageName = (): OpenWebUIPackageName | null => {
   for (const packageName of [
     'aurapro-webui',
     'aurapro-ui',
     'open-webui'
   ] as OpenWebUIPackageName[]) {
-    if (getExactPackageVersion(packageName)) return packageName
+    if (getExactPackageVersion(packageName) && hasOpenWebUICoreFiles(packageName))
+      return packageName
   }
   return null
 }
@@ -1390,9 +1418,15 @@ export const ensureOpenWebUIPackage = async (
   const hasSupersededPackage = supersededPackages.some(([, packageVersion]) =>
     Boolean(packageVersion)
   )
-  const targetSatisfied = useLatest
-    ? Boolean(version) && options.forceLatest !== true
-    : version === desiredVersion
+  const runtimeHealthy = Boolean(version) && hasOpenWebUICoreFiles(desiredPackageName)
+  const targetSatisfied =
+    runtimeHealthy && (useLatest ? options.forceLatest !== true : version === desiredVersion)
+
+  if (version && !runtimeHealthy) {
+    log.warn(
+      `Installed ${desiredPackageName} ${version} is missing required runtime files; reinstalling.`
+    )
+  }
 
   if (
     desiredPackageName === 'aurapro-webui' &&
@@ -1453,6 +1487,11 @@ export const ensureOpenWebUIPackage = async (
     )
   }
 
+  if (!hasOpenWebUICoreFiles(desiredPackageName)) {
+    throw new Error(
+      'Open WebUI update produced an incomplete package: required runtime files are missing. Please retry the update.'
+    )
+  }
   for (const [packageName, packageVersion] of supersededPackages) {
     if (!packageVersion) continue
     onStatus?.(`Removing previous ${packageName} package...`)
