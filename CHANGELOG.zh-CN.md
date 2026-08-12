@@ -7,6 +7,17 @@ AuraPro Desktop 的重要变更均记录在此文件中。
 本文档遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，
 项目版本遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [3.9.20] - 2026-08-11
+
+### Changed
+
+- 默认 WebUI 更新到 3.9.20。
+- 当前对话的智能词典语言候选改为最近使用的 10 种语言，并继续支持搜索和直接输入。
+
+### Fixed
+
+- 修复当前对话词典部分中文和西班牙语文案显示为问号的问题。
+
 ## [3.6.5] - 2026-06-19
 
 ### Added
