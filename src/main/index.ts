@@ -61,6 +61,7 @@ import {
   type AppConfig,
   type Connection
 } from './utils'
+import { installLocalCertificate } from './utils/local-certificate'
 
 import {
   startOpenTerminal,
@@ -2436,6 +2437,16 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     })
     ipcMain.handle('server:logs', () => (SERVER_PID ? getServerLog(SERVER_PID) : []))
     ipcMain.handle('server:logs:clear', () => clearAllServerLogs())
+    ipcMain.handle('security:installLocalCertificate', async () => {
+      const certificatePath = join(getUserDataPath(), 'certs', 'aurapro-lan.cert.pem')
+      const result = await installLocalCertificate(certificatePath)
+      if (result.success) {
+        log.info('Installed local HTTPS certificate for the current user:', certificatePath)
+      } else {
+        log.warn('Failed to install local HTTPS certificate:', result.error)
+      }
+      return result
+    })
 
     // PTY MessagePort channel
     ipcMain.handle('pty:list', () => getServerPIDs())
