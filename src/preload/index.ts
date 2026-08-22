@@ -34,6 +34,23 @@ ipcRenderer.on('open-terminal:pty:port', (event, _data) => {
   port.start()
 })
 
+// OpenCode PTY MessagePort
+let activeOpenCodePtyPort: MessagePort | null = null
+let openCodePtyOutputCallback: ((data: string) => void) | null = null
+
+ipcRenderer.on('opencode:pty:port', (event, _data) => {
+  const [port] = event.ports
+  if (!port) return
+  if (activeOpenCodePtyPort) activeOpenCodePtyPort.close()
+  activeOpenCodePtyPort = port
+  port.onmessage = (ev: MessageEvent) => {
+    if (ev.data?.type === 'output' && openCodePtyOutputCallback) {
+      openCodePtyOutputCallback(ev.data.data)
+    }
+  }
+  port.start()
+})
+
 // ─── llama.cpp PTY MessagePort ──────────────────────────
 let activeLsCppPtyPort: MessagePort | null = null
 let lsCppPtyOutputCallback: ((data: string) => void) | null = null
@@ -167,6 +184,27 @@ const api = {
     if (activeOtPtyPort) {
       activeOtPtyPort.close()
       activeOtPtyPort = null
+    }
+  },
+
+  // OpenCode
+  installOpenCode: () => ipcRenderer.invoke('opencode:install'),
+  updateOpenCode: () => ipcRenderer.invoke('opencode:update'),
+  startOpenCode: () => ipcRenderer.invoke('opencode:start'),
+  stopOpenCode: () => ipcRenderer.invoke('opencode:stop'),
+  getOpenCodeInfo: () => ipcRenderer.invoke('opencode:info'),
+  getOpenCodeStatus: () => ipcRenderer.invoke('opencode:status'),
+  getOpenCodeLogs: () => ipcRenderer.invoke('opencode:logs'),
+  uninstallOpenCode: () => ipcRenderer.invoke('opencode:uninstall'),
+  connectOpenCodePty: (onOutput: (data: string) => void) => {
+    openCodePtyOutputCallback = onOutput
+    ipcRenderer.invoke('opencode:pty:connect')
+  },
+  disconnectOpenCodePty: () => {
+    openCodePtyOutputCallback = null
+    if (activeOpenCodePtyPort) {
+      activeOpenCodePtyPort.close()
+      activeOpenCodePtyPort = null
     }
   },
 

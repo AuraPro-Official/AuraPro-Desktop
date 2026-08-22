@@ -798,7 +798,7 @@ const getMmprojPrefixForModel = (modelName: string): string => {
 }
 
 const getMmprojRepoForPrefix = (prefix: string): string | null => {
-  if (prefix === 'high-code') return 'unsloth/Qwen3.6-35B-A3B-GGUF'
+  if (prefix === 'high-code') return 'unsloth/Qwen3.8-27B-GGUF'
   if (prefix === 'lowest') return 'unsloth/gemma-4-E2B-it-qat-GGUF'
   if (prefix === 'low') return 'unsloth/gemma-4-E4B-it-qat-GGUF'
   if (prefix === 'medium-12b') return 'unsloth/gemma-4-12B-it-qat-GGUF'
@@ -808,6 +808,7 @@ const getMmprojRepoForPrefix = (prefix: string): string | null => {
 }
 
 const getMtpRepoForPrefix = (prefix: string): string | null => {
+  if (prefix === 'high-code') return 'unsloth/Qwen3.8-27B-GGUF'
   if (prefix === 'lowest') return 'unsloth/gemma-4-E2B-it-qat-GGUF'
   if (prefix === 'low') return 'unsloth/gemma-4-E4B-it-qat-GGUF'
   if (prefix === 'medium-12b') return 'unsloth/gemma-4-12B-it-qat-GGUF'
@@ -817,6 +818,7 @@ const getMtpRepoForPrefix = (prefix: string): string | null => {
 }
 
 const getMtpFilenameForPrefix = (prefix: string): string | null => {
+  if (prefix === 'high-code') return 'MTP/mtp-Qwen3.8-27B-Q4_0.gguf'
   if (prefix === 'lowest') return 'mtp-gemma-4-E2B-it.gguf'
   if (prefix === 'low') return 'mtp-gemma-4-E4B-it.gguf'
   if (prefix === 'medium-12b') return 'mtp-gemma-4-12B-it.gguf'
@@ -830,7 +832,8 @@ const AURA_MODEL_FILENAMES = [
   'medium_IQ2.gguf',
   'medium_Q4.gguf',
   'high_Q4.gguf',
-  'high-code_IQ4.gguf'
+  'high-code_IQ4.gguf',
+  'high-code_Q4.gguf'
 ]
 
 const migrateOfficialRootModels = (modelsDir: string): void => {
@@ -966,7 +969,7 @@ const findModelDraft = (modelPath: string): string | null => {
   const dir = path.dirname(modelPath)
   const mtpPrefix = getMmprojPrefixForModel(path.basename(modelPath))
   const mtpFilename = getMtpFilenameForPrefix(mtpPrefix)
-  const preferred = mtpFilename ? [path.join(dir, mtpFilename)] : []
+  const preferred = mtpFilename ? [path.join(dir, path.basename(mtpFilename))] : []
 
   for (const candidate of preferred) {
     if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate
@@ -989,12 +992,11 @@ const getPresetModelOverrides = (modelPath: string): Record<string, string> => {
   const filename = path.basename(modelPath)
   if (filename.startsWith('high-code')) {
     return {
-      'ctx-size': '163840',
-      temp: '0.6',
-      'top-p': '0.95',
+      temp: '0.7',
+      'top-p': '0.80',
       'top-k': '20',
       'min-p': '0.0',
-      'presence-penalty': '0.0',
+      'presence-penalty': '1.5',
       'repeat-penalty': '1.0'
     }
   }
@@ -1013,8 +1015,15 @@ const getPresetModelOverrides = (modelPath: string): Record<string, string> => {
   return {}
 }
 
+const LEGACY_HIGH_CODE_INTERNAL_MTP_SIZE = 18_536_192_288
+
 const hasInternalMtpSupport = (modelPath: string): boolean => {
-  return path.basename(modelPath).toLowerCase().startsWith('high-code')
+  if (path.basename(modelPath).toLowerCase() !== 'high-code_iq4.gguf') return false
+  try {
+    return fs.statSync(modelPath).size === LEGACY_HIGH_CODE_INTERNAL_MTP_SIZE
+  } catch {
+    return false
+  }
 }
 
 const normalizePositiveInteger = (value: unknown): number | null => {
@@ -1132,7 +1141,9 @@ const ensureAutoMmproj = async (
     if (candidates.some((candidate) => fs.existsSync(candidate))) continue
 
     const mmprojPrefix = getMmprojPrefixForModel(path.basename(model.filepath))
-    const repo = getMmprojRepoForPrefix(mmprojPrefix)
+    const repo = hasInternalMtpSupport(model.filepath)
+      ? 'unsloth/Qwen3.6-35B-A3B-GGUF'
+      : getMmprojRepoForPrefix(mmprojPrefix)
     if (!repo) continue
 
     const saveAs = 'mmproj-F16.gguf'
@@ -1187,7 +1198,7 @@ const ensureAutoMtp = async (
   const modelFiles = listLocalLlmModels(modelsDir)
   for (const model of modelFiles) {
     const dir = path.dirname(model.filepath)
-    if (findModelDraft(model.filepath)) continue
+    if (hasInternalMtpSupport(model.filepath) || findModelDraft(model.filepath)) continue
 
     const mtpPrefix = getMmprojPrefixForModel(path.basename(model.filepath))
     const repo = getMtpRepoForPrefix(mtpPrefix)
@@ -1213,7 +1224,7 @@ const ensureAutoMtp = async (
         },
         undefined,
         undefined,
-        filename,
+        path.basename(filename),
         subDir ? path.basename(subDir) : mtpPrefix,
         subDir
       )

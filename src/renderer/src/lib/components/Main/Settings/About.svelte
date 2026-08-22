@@ -7,6 +7,7 @@
 
   let openWebuiVersion = $state<string | null>(null)
   let openTerminalVersion = $state<string | null>(null)
+  let openCodeVersion = $state<string | null>(null)
   let llamaCppVersion = $state<string | null>(null)
   let sherpaVersion = $state<string | null>(null)
 
@@ -146,6 +147,11 @@
     openWebuiVersion = await window.electronAPI.getPackageVersion('aurapro-webui')
     openTerminalVersion = await window.electronAPI.getPackageVersion('open-terminal')
     sherpaVersion = await window.electronAPI.getPackageVersion('sherpa-onnx')
+
+    try {
+      const info = await window.electronAPI.getOpenCodeInfo()
+      openCodeVersion = info?.version ?? null
+    } catch {}
 
     try {
       const info = await window.electronAPI.getLlamaCppInfo()
@@ -328,6 +334,18 @@
       <div class="text-[13px] opacity-70">{$i18n.t('settings.about.openTerminalVersion')}</div>
       <div class="text-[12px] opacity-30 group-hover:opacity-50 transition">
         {openTerminalVersion}
+      </div>
+    </button>
+  {/if}
+
+  {#if openCodeVersion}
+    <button
+      class="group flex w-full cursor-pointer items-center justify-between border-none bg-transparent py-4"
+      onclick={() => openRelease('anomalyco/opencode', openCodeVersion!)}
+    >
+      <div class="text-[13px] opacity-70">OpenCode</div>
+      <div class="text-[12px] opacity-30 transition group-hover:opacity-50">
+        {openCodeVersion}
       </div>
     </button>
   {/if}

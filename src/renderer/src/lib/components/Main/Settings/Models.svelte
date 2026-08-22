@@ -108,14 +108,29 @@
     },
     {
       name: 'high-code_IQ4.gguf',
-      sizeStr: '~19GB',
+      sizeStr: '~14GB',
       repo: 'AuraPro',
-      hfRepo: 'unsloth/Qwen3.6-35B-A3B-MTP-GGUF',
-      filename: 'Qwen3.6-35B-A3B-UD-IQ4_NL.gguf',
-      mmprojRepo: 'unsloth/Qwen3.6-35B-A3B-GGUF',
+      hfRepo: 'unsloth/Qwen3.8-27B-GGUF',
+      filename: 'Qwen3.8-27B-UD-IQ4_XS.gguf',
+      mmprojRepo: 'unsloth/Qwen3.8-27B-GGUF',
       mmprojFilename: 'mmproj-F16.gguf',
-      sizeBytes: 19 * 1024 * 1024 * 1024,
-      ramInfo: 'RAM+VRAM 32G+6G / UMA 28G'
+      mtpRepo: 'unsloth/Qwen3.8-27B-GGUF',
+      mtpFilename: 'MTP/mtp-Qwen3.8-27B-Q4_0.gguf',
+      sizeBytes: 14_252_845_984,
+      ramInfo: 'RAM+VRAM 32GB+6GB / UMA 24GB'
+    },
+    {
+      name: 'high-code_Q4.gguf',
+      sizeStr: '~16GB',
+      repo: 'AuraPro',
+      hfRepo: 'unsloth/Qwen3.8-27B-GGUF',
+      filename: 'Qwen3.8-27B-UD-Q4_K_M.gguf',
+      mmprojRepo: 'unsloth/Qwen3.8-27B-GGUF',
+      mmprojFilename: 'mmproj-F16.gguf',
+      mtpRepo: 'unsloth/Qwen3.8-27B-GGUF',
+      mtpFilename: 'MTP/mtp-Qwen3.8-27B-Q4_0.gguf',
+      sizeBytes: 16_464_440_224,
+      ramInfo: 'RAM+VRAM 32GB+8GB / UMA 24GB'
     }
   ]
 
@@ -215,7 +230,9 @@
     const mmprojFilename = 'mmproj-F16.gguf'
     const mmprojKey =
       model?.mmprojRepo && model.mmprojFilename ? dlKey(modelKey, mmprojFilename) : null
-    const mtpKey = model?.mtpRepo && model.mtpFilename ? dlKey(modelKey, model.mtpFilename) : null
+    const mtpSaveAs = model?.mtpFilename?.split('/').pop()
+    const mtpKey =
+      model?.mtpRepo && model.mtpFilename && mtpSaveAs ? dlKey(modelKey, mtpSaveAs) : null
     if (mmprojKey) {
       activeDownloads.set(mmprojKey, {
         repo: modelKey,
@@ -225,10 +242,10 @@
         cancelFilename: model?.mmprojFilename
       })
     }
-    if (mtpKey && model?.mtpFilename) {
+    if (mtpKey && model?.mtpFilename && mtpSaveAs) {
       activeDownloads.set(mtpKey, {
         repo: modelKey,
-        filename: model.mtpFilename,
+        filename: mtpSaveAs,
         percent: 0,
         cancelRepo: model?.mtpRepo,
         cancelFilename: model?.mtpFilename
@@ -260,14 +277,14 @@
           )
         )
       }
-      if (model?.mtpRepo && model.mtpFilename) {
+      if (model?.mtpRepo && model.mtpFilename && mtpSaveAs) {
         downloads.push(
           window.electronAPI.downloadHfModel(
             model.mtpRepo,
             model.mtpFilename,
             undefined,
             undefined,
-            model.mtpFilename,
+            mtpSaveAs,
             modelKey,
             modelKey
           )
@@ -290,7 +307,8 @@
       await cancelDownload(model.mmprojRepo, model.mmprojFilename, modelKey, 'mmproj-F16.gguf')
     }
     if (model.mtpRepo && model.mtpFilename) {
-      await cancelDownload(model.mtpRepo, model.mtpFilename, modelKey, model.mtpFilename)
+      const mtpSaveAs = model.mtpFilename.split('/').pop() ?? model.mtpFilename
+      await cancelDownload(model.mtpRepo, model.mtpFilename, modelKey, mtpSaveAs)
     }
   }
 

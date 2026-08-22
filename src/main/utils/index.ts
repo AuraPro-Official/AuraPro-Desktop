@@ -109,6 +109,10 @@ export const getOpenWebUIDataPath = (): string => {
 export const getEpubConceptRuntimeFilePath = (): string =>
   path.join(getInstallDir(), 'epub-concept', 'desktop-llm-runtime.json')
 
+/** Private Desktop-to-WebUI handoff for the local OpenCode service. */
+export const getOpenCodeRuntimeFilePath = (): string =>
+  path.join(getInstallDir(), 'opencode', 'desktop-runtime.json')
+
 export const getLocalOpenWebUISourcePath = (): string | null => {
   const candidates = [
     path.resolve(getAppPath(), '..', 'webui-main'),
@@ -137,7 +141,7 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.9.23'
+export const AURAPRO_UI_TARGET_VERSION = '3.9.27'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
 export const AURAPRO_UI_LAST_VERSION = '3.9.3'
@@ -1842,6 +1846,7 @@ export const startServer = async (
         // reads this server-owned path instead of asking users to edit static
         // EPUB_CONCEPT_LOCAL_LLM_* environment variables.
         AURAPRO_DESKTOP_LLM_RUNTIME_FILE: getEpubConceptRuntimeFilePath(),
+        AURAPRO_OPENCODE_RUNTIME_FILE: getOpenCodeRuntimeFilePath(),
         ...(sherpaAsrReady
           ? {
               AUDIO_STT_ENGINE: 'sherpa',
@@ -2086,6 +2091,13 @@ export interface AppConfig {
     apiKey: string
     version?: string
   }
+  openCode: {
+    enabled: boolean
+    port: number
+    cwd: string
+    password: string
+    version: string
+  }
   llamaCpp: {
     enabled: boolean
     port: number
@@ -2174,6 +2186,13 @@ const DEFAULT_CONFIG: AppConfig = {
     port: 39284,
     cwd: '',
     apiKey: ''
+  },
+  openCode: {
+    enabled: false,
+    port: 39484,
+    cwd: '',
+    password: '',
+    version: 'latest'
   },
   llamaCpp: {
     enabled: false,
@@ -2297,6 +2316,10 @@ const normalizeConfig = (config: AppConfig): AppConfig => {
       ...DEFAULT_CONFIG.openTerminal,
       ...(config.openTerminal ?? {})
     },
+    openCode: {
+      ...DEFAULT_CONFIG.openCode,
+      ...(config.openCode ?? {})
+    },
     llamaCpp: {
       ...DEFAULT_CONFIG.llamaCpp,
       ...(config.llamaCpp ?? {})
@@ -2368,10 +2391,14 @@ export const getConfig = async (): Promise<AppConfig> => {
 let configWriteLock: Promise<void> = Promise.resolve()
 
 type ConfigUpdate = Partial<
-  Omit<AppConfig, 'localServer' | 'openTerminal' | 'llamaCpp' | 'sherpa' | 'shortcutActions'>
+  Omit<
+    AppConfig,
+    'localServer' | 'openTerminal' | 'openCode' | 'llamaCpp' | 'sherpa' | 'shortcutActions'
+  >
 > & {
   localServer?: Partial<AppConfig['localServer']>
   openTerminal?: Partial<AppConfig['openTerminal']>
+  openCode?: Partial<AppConfig['openCode']>
   llamaCpp?: Partial<AppConfig['llamaCpp']>
   sherpa?: Partial<AppConfig['sherpa']>
   shortcutActions?: Partial<AppConfig['shortcutActions']>
@@ -2395,6 +2422,7 @@ export const setConfig = async (config: ConfigUpdate): Promise<void> => {
       ...config,
       localServer: { ...existing.localServer, ...(config.localServer ?? {}) },
       openTerminal: { ...existing.openTerminal, ...(config.openTerminal ?? {}) },
+      openCode: { ...existing.openCode, ...(config.openCode ?? {}) },
       llamaCpp: { ...existing.llamaCpp, ...(config.llamaCpp ?? {}) },
       sherpa: { ...existing.sherpa, ...(config.sherpa ?? {}) },
       shortcutActions: { ...existing.shortcutActions, ...(config.shortcutActions ?? {}) }
@@ -2535,6 +2563,7 @@ export const resetApp = async (): Promise<ResetAppResult> => {
   // orphaned Python children left by an interrupted install or an earlier run.
   await stopRuntimeProcesses(pythonDir, 'bundled Python')
   await stopRuntimeProcesses(path.join(installDir, 'llama.cpp'), 'llama.cpp')
+  await stopRuntimeProcesses(path.join(installDir, 'opencode'), 'OpenCode')
 
   const targets = [
     { label: 'Python runtime', path: pythonDir },
@@ -2542,6 +2571,7 @@ export const resetApp = async (): Promise<ResetAppResult> => {
     { label: 'llama.cpp runtime', path: path.join(installDir, 'llama.cpp') },
     { label: 'downloaded models', path: path.join(installDir, 'models') },
     { label: 'Sherpa runtime files', path: path.join(installDir, 'sherpa') },
+    { label: 'OpenCode runtime', path: path.join(installDir, 'opencode') },
     { label: 'service locks', path: path.join(userDataDir, 'locks') },
     { label: 'Python download', path: path.join(userDataDir, 'python.tar.gz') },
     { label: 'partial Python download', path: path.join(userDataDir, 'python.tar.gz.tmp') }

@@ -73,6 +73,19 @@ import {
 } from './utils/open-terminal'
 
 import {
+  setupOpenCode,
+  startOpenCode,
+  stopOpenCode,
+  uninstallOpenCode,
+  getOpenCodeInfo,
+  getOpenCodePty,
+  getOpenCodeLog,
+  validateOpenCodeProcess,
+  setOpenCodeRuntimeStatusHandler,
+  isOpenCodeInstalled
+} from './utils/opencode'
+
+import {
   setupLlamaCpp,
   startLlamaCppWithFallback,
   stopLlamaCpp,
@@ -1101,6 +1114,35 @@ const connectOpenTerminalPtyPort = (): void => {
 }
 
 /**
+ * MessagePort channel for the OpenCode PTY - read-only log viewer.
+ */
+let activeOpenCodeDisposable: { dispose: () => void } | null = null
+
+const connectOpenCodePtyPort = (): void => {
+  if (!mainWindow) return
+
+  const { port1, port2 } = new MessageChannelMain()
+  const openCodePty = getOpenCodePty()
+  if (!openCodePty) {
+    port1.postMessage({ type: 'output', data: '[OpenCode is not running]\r\n' })
+    mainWindow.webContents.postMessage('opencode:pty:port', null, [port2])
+    return
+  }
+
+  activeOpenCodeDisposable?.dispose()
+  for (const chunk of getOpenCodeLog()) {
+    port1.postMessage({ type: 'output', data: chunk })
+  }
+
+  activeOpenCodeDisposable = openCodePty.onData((data: string) => {
+    port1.postMessage({ type: 'output', data })
+  })
+
+  port1.start()
+  mainWindow.webContents.postMessage('opencode:pty:port', null, [port2])
+}
+
+/**
  * MessagePort channel for the llamacpp PTY — log viewer.
  */
 let activeLlamaCppDisposable: { dispose: () => void } | null = null
@@ -1209,6 +1251,14 @@ const resetAppHandler = async () => {
     } catch (e) {
       log.warn('Failed to stop Open Terminal during reset:', e)
       serviceWarnings.push(`Open Terminal: ${getErrorMessage(e)}`)
+    }
+    try {
+      await stopOpenCode()
+      sendToRenderer('status:opencode', null)
+      sendToRenderer('status:opencode-setup', '')
+    } catch (e) {
+      log.warn('Failed to stop OpenCode during reset:', e)
+      serviceWarnings.push(`OpenCode: ${getErrorMessage(e)}`)
     }
     // Sherpa runs from the bundled Python directory and must be stopped before
     // that directory can be removed on Windows.
@@ -1551,6 +1601,9 @@ setLlamaCppRuntimeAnomalyHandler((message) => {
   scheduleAutomaticLlamaDiagnostic('runtime-anomaly', message, 250)
 })
 
+setOpenCodeRuntimeStatusHandler((nextStatus) => {
+  sendToRenderer('status:opencode', nextStatus)
+})
 let glossarySettingsSyncing = false
 let glossarySettingsWatcherStarted = false
 let lastGlossaryLlamaSettings: SharedLlamaRuntimeSettings | null = null
@@ -1849,6 +1902,7 @@ const startConfiguredServices = async (defaultConnection?: Connection): Promise<
   log.info('[startup] Starting configured background services')
 
   validateOpenTerminalProcess()
+  validateOpenCodeProcess()
   validateLlamaCppProcess()
   validateSherpaProcess()
 
@@ -1883,6 +1937,26 @@ const startConfiguredServices = async (defaultConnection?: Connection): Promise<
         } catch (error) {
           log.error('Auto-start Open Terminal failed:', error)
           sendToRenderer('status:open-terminal', 'failed')
+        }
+      })()
+    )
+  }
+
+  if (!isQuiting && CONFIG?.openCode?.enabled && isOpenCodeInstalled()) {
+    startupTasks.push(
+      (async () => {
+        try {
+          sendToRenderer('status:opencode', 'starting')
+          const result = await startOpenCode(CONFIG?.openCode?.port ?? null, (message) => {
+            sendToRenderer('status:opencode-setup', message)
+          })
+          sendToRenderer('status:opencode', 'started')
+          sendToRenderer('status:opencode-setup', '')
+          sendToRenderer('opencode:ready', result)
+        } catch (error) {
+          log.error('Auto-start OpenCode failed:', error)
+          sendToRenderer('status:opencode', 'failed')
+          sendToRenderer('status:opencode-setup', getErrorMessage(error))
         }
       })()
     )
@@ -3061,6 +3135,103 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     ipcMain.handle('open-terminal:status', () => isPackageInstalled('open-terminal'))
     ipcMain.handle('open-terminal:pty:connect', () => connectOpenTerminalPtyPort())
 
+    // OpenCode
+    ipcMain.handle('opencode:install', async () => {
+      try {
+        sendToRenderer('status:opencode', 'installing')
+        const binary = await setupOpenCode(CONFIG?.openCode?.version, (message) => {
+          sendToRenderer('status:opencode-setup', message)
+        })
+        sendToRenderer('status:opencode', 'stopped')
+        sendToRenderer('status:opencode-setup', '')
+        sendToRenderer('opencode:installed', true)
+        return binary
+      } catch (error) {
+        const message = getErrorMessage(error)
+        log.error('Failed to install OpenCode:', error)
+        sendToRenderer('status:opencode', 'failed')
+        sendToRenderer('status:opencode-setup', message)
+        throw new Error(message)
+      }
+    })
+
+    ipcMain.handle('opencode:update', async () => {
+      try {
+        const shouldRestart = Boolean(CONFIG?.openCode?.enabled)
+        await stopOpenCode()
+        sendToRenderer('status:opencode', 'installing')
+        await setupOpenCode(
+          CONFIG?.openCode?.version,
+          (message) => sendToRenderer('status:opencode-setup', message),
+          true
+        )
+        if (!shouldRestart) {
+          sendToRenderer('status:opencode', 'stopped')
+          sendToRenderer('status:opencode-setup', '')
+          sendToRenderer('opencode:installed', true)
+          return getOpenCodeInfo()
+        }
+        const result = await startOpenCode(CONFIG?.openCode?.port ?? null, (message) => {
+          sendToRenderer('status:opencode-setup', message)
+        })
+        sendToRenderer('status:opencode', 'started')
+        sendToRenderer('status:opencode-setup', '')
+        sendToRenderer('opencode:ready', result)
+        return getOpenCodeInfo()
+      } catch (error) {
+        const message = getErrorMessage(error)
+        log.error('Failed to update OpenCode:', error)
+        sendToRenderer('status:opencode', 'failed')
+        sendToRenderer('status:opencode-setup', message)
+        throw new Error(message)
+      }
+    })
+
+    ipcMain.handle('opencode:start', async () => {
+      try {
+        sendToRenderer('status:opencode', 'starting')
+        const result = await startOpenCode(CONFIG?.openCode?.port ?? null, (message) => {
+          sendToRenderer('status:opencode-setup', message)
+        })
+        const resultPort = Number(new URL(result.url).port)
+        await setConfig({
+          openCode: { ...CONFIG?.openCode, enabled: true, port: resultPort }
+        })
+        CONFIG = await getConfig()
+        sendToRenderer('status:opencode', 'started')
+        sendToRenderer('status:opencode-setup', '')
+        sendToRenderer('opencode:ready', result)
+        return result
+      } catch (error) {
+        const message = getErrorMessage(error)
+        log.error('Failed to start OpenCode:', error)
+        sendToRenderer('status:opencode', 'failed')
+        sendToRenderer('status:opencode-setup', message)
+        throw new Error(message)
+      }
+    })
+
+    ipcMain.handle('opencode:stop', async () => {
+      await stopOpenCode()
+      await setConfig({ openCode: { ...CONFIG?.openCode, enabled: false } })
+      CONFIG = await getConfig()
+      sendToRenderer('status:opencode', 'stopped')
+      return true
+    })
+    ipcMain.handle('opencode:info', () => getOpenCodeInfo())
+    ipcMain.handle('opencode:status', () => isOpenCodeInstalled())
+    ipcMain.handle('opencode:logs', () => getOpenCodeLog())
+    ipcMain.handle('opencode:pty:connect', () => connectOpenCodePtyPort())
+    ipcMain.handle('opencode:uninstall', async () => {
+      const removed = await uninstallOpenCode()
+      await setConfig({ openCode: { ...CONFIG?.openCode, enabled: false } })
+      CONFIG = await getConfig()
+      sendToRenderer('status:opencode', null)
+      sendToRenderer('status:opencode-setup', '')
+      sendToRenderer('opencode:installed', false)
+      return removed
+    })
+
     // llama.cpp
     ipcMain.handle('llamacpp:setup', async () => {
       try {
@@ -3636,6 +3807,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
       await stopSherpa()
       await stopLlamaCpp()
       await stopOpenTerminal()
+      await stopOpenCode()
       await stopServerHandler()
       globalShortcut.unregisterAll()
       mainWindow = null

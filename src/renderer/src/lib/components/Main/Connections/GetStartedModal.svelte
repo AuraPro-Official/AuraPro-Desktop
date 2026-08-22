@@ -9,6 +9,7 @@
   interface Props {
     onContinue: (options: {
       installOpenTerminal: boolean
+      installOpenCode: boolean
       installLlamaCpp: boolean
       installSherpa: boolean
       installDir: string
@@ -113,14 +114,29 @@
     },
     {
       name: 'high-code_IQ4.gguf',
-      sizeStr: '~19GB',
+      sizeStr: '~14GB',
       repo: 'AuraPro',
-      hfRepo: 'unsloth/Qwen3.6-35B-A3B-MTP-GGUF',
-      filename: 'Qwen3.6-35B-A3B-UD-IQ4_NL.gguf',
-      mmprojRepo: 'unsloth/Qwen3.6-35B-A3B-GGUF',
+      hfRepo: 'unsloth/Qwen3.8-27B-GGUF',
+      filename: 'Qwen3.8-27B-UD-IQ4_XS.gguf',
+      mmprojRepo: 'unsloth/Qwen3.8-27B-GGUF',
       mmprojFilename: 'mmproj-F16.gguf',
-      sizeBytes: 19 * 1024 * 1024 * 1024,
-      ramInfo: 'RAM+VRAM 32G+6G / UMA 28G'
+      mtpRepo: 'unsloth/Qwen3.8-27B-GGUF',
+      mtpFilename: 'MTP/mtp-Qwen3.8-27B-Q4_0.gguf',
+      sizeBytes: 14_252_845_984,
+      ramInfo: 'RAM+VRAM 32GB+6GB / UMA 24GB'
+    },
+    {
+      name: 'high-code_Q4.gguf',
+      sizeStr: '~16GB',
+      repo: 'AuraPro',
+      hfRepo: 'unsloth/Qwen3.8-27B-GGUF',
+      filename: 'Qwen3.8-27B-UD-Q4_K_M.gguf',
+      mmprojRepo: 'unsloth/Qwen3.8-27B-GGUF',
+      mmprojFilename: 'mmproj-F16.gguf',
+      mtpRepo: 'unsloth/Qwen3.8-27B-GGUF',
+      mtpFilename: 'MTP/mtp-Qwen3.8-27B-Q4_0.gguf',
+      sizeBytes: 16_464_440_224,
+      ramInfo: 'RAM+VRAM 32GB+8GB / UMA 24GB'
     }
   ]
 
@@ -132,6 +148,7 @@
   }
 
   let installOpenTerminal = $state(false)
+  let installOpenCode = $state(false)
   let installSherpa = $state(true)
   let installDir = $state('')
   let defaultInstallDir = $state('')
@@ -282,11 +299,13 @@
   const GIB = 1024 * 1024 * 1024
   const CORE_INSTALL_BYTES = 6 * GIB
   const SHERPA_INSTALL_BYTES = 2 * GIB
+  const OPEN_CODE_INSTALL_BYTES = 512 * 1024 * 1024
   const RAG_CUDA_INSTALL_BYTES = 3 * GIB
   const requiredInstallBytes = () =>
     CORE_INSTALL_BYTES +
     selectedModel.sizeBytes +
     (installSherpa ? SHERPA_INSTALL_BYTES : 0) +
+    (installOpenCode ? OPEN_CODE_INSTALL_BYTES : 0) +
     (llamaCppVariant.startsWith('cuda-') && ragHardwareAcceleration ? RAG_CUDA_INSTALL_BYTES : 0)
   const formatInstallGb = (bytes: number) => {
     const value = bytes / GIB
@@ -336,6 +355,7 @@
     if (!(await validateInstallPath())) return
     onContinue({
       installOpenTerminal,
+      installOpenCode,
       installLlamaCpp: true,
       installSherpa,
       installDir,
@@ -409,6 +429,23 @@
           checked={installOpenTerminal}
           onchange={(v) => {
             installOpenTerminal = v
+          }}
+        />
+      </div>
+
+      <div class="flex items-center justify-between gap-4 py-3">
+        <div>
+          <div class="text-[13px] font-medium text-gray-700 dark:text-gray-300">
+            {$i18n.t('main.getStarted.opencode')}
+          </div>
+          <div class="mt-0.5 text-[11px] text-gray-400 dark:text-gray-500">
+            {$i18n.t('main.getStarted.opencodeDesc')}
+          </div>
+        </div>
+        <Switch
+          checked={installOpenCode}
+          onchange={(value) => {
+            installOpenCode = value
           }}
         />
       </div>
@@ -642,6 +679,7 @@
         <div class="mt-1 text-[10px] leading-relaxed text-gray-400 dark:text-gray-500">
           核心组件 6 GB · 模型 {selectedModel.sizeStr}
           {installSherpa ? ' · Sherpa 约 2 GB' : ''}
+          {installOpenCode ? ' · OpenCode 约 0.5 GB' : ''}
           {llamaCppVariant.startsWith('cuda-') && ragHardwareAcceleration
             ? ' · RAG CUDA 约 3 GB'
             : ''}

@@ -146,14 +146,29 @@
     },
     {
       name: 'high-code_IQ4.gguf',
-      sizeStr: '~19GB',
+      sizeStr: '~14GB',
       repo: 'AuraPro',
-      hfRepo: 'unsloth/Qwen3.6-35B-A3B-MTP-GGUF',
-      filename: 'Qwen3.6-35B-A3B-UD-IQ4_NL.gguf',
-      mmprojRepo: 'unsloth/Qwen3.6-35B-A3B-GGUF',
+      hfRepo: 'unsloth/Qwen3.8-27B-GGUF',
+      filename: 'Qwen3.8-27B-UD-IQ4_XS.gguf',
+      mmprojRepo: 'unsloth/Qwen3.8-27B-GGUF',
       mmprojFilename: 'mmproj-F16.gguf',
-      sizeBytes: 19 * 1024 * 1024 * 1024,
-      ramInfo: 'RAM+VRAM 32G+6G / UMA 28G'
+      mtpRepo: 'unsloth/Qwen3.8-27B-GGUF',
+      mtpFilename: 'MTP/mtp-Qwen3.8-27B-Q4_0.gguf',
+      sizeBytes: 14_252_845_984,
+      ramInfo: 'RAM+VRAM 32GB+6GB / UMA 24GB'
+    },
+    {
+      name: 'high-code_Q4.gguf',
+      sizeStr: '~16GB',
+      repo: 'AuraPro',
+      hfRepo: 'unsloth/Qwen3.8-27B-GGUF',
+      filename: 'Qwen3.8-27B-UD-Q4_K_M.gguf',
+      mmprojRepo: 'unsloth/Qwen3.8-27B-GGUF',
+      mmprojFilename: 'mmproj-F16.gguf',
+      mtpRepo: 'unsloth/Qwen3.8-27B-GGUF',
+      mtpFilename: 'MTP/mtp-Qwen3.8-27B-Q4_0.gguf',
+      sizeBytes: 16_464_440_224,
+      ramInfo: 'RAM+VRAM 32GB+8GB / UMA 24GB'
     }
   ]
 
@@ -178,6 +193,7 @@
   let llamaCppVariant = $state('cpu')
   let ragHardwareAcceleration = $state(false)
   let installSherpaRecommended = $state(true)
+  let installOpenCode = $state(false)
   let diskFreeBytes = $state<number | null>(null)
   let diskProbePath = $state('')
   let showUnsupportedInstallPath = $state(false)
@@ -460,6 +476,7 @@
   const requiredModelInstallBytes = () =>
     selectedModel.sizeBytes +
     (installSherpaRecommended ? 5 : 3) * 1024 * 1024 * 1024 +
+    (installOpenCode ? 512 * 1024 * 1024 : 0) +
     (llamaCppVariant.startsWith('cuda-') && ragHardwareAcceleration ? 3 : 0) * 1024 * 1024 * 1024
 
   const formatGb = (bytes: number) => (bytes / 1024 / 1024 / 1024).toFixed(1)
@@ -499,7 +516,8 @@
   const RAG_CUDA_INSTALL_BYTES = 3 * 1024 * 1024 * 1024
   const requiredCoreInstallBytes = () =>
     CORE_INSTALL_REQUIRED_BYTES +
-    (llamaCppVariant.startsWith('cuda-') && ragHardwareAcceleration ? RAG_CUDA_INSTALL_BYTES : 0)
+    (llamaCppVariant.startsWith('cuda-') && ragHardwareAcceleration ? RAG_CUDA_INSTALL_BYTES : 0) +
+    (installOpenCode ? 512 * 1024 * 1024 : 0)
   const wait = (milliseconds: number): Promise<void> =>
     new Promise((resolve) => setTimeout(resolve, milliseconds))
   const sherpaInstallStatus = (): string =>
@@ -546,6 +564,8 @@
         await window.electronAPI.stopSherpa()
       } else if (stage === 'terminal') {
         await window.electronAPI.stopOpenTerminal()
+      } else if (stage === 'opencode') {
+        await window.electronAPI.stopOpenCode()
       } else if (stage === 'webui-start') {
         await window.electronAPI.stopServer()
       }
@@ -703,6 +723,10 @@
         ...(current.sherpa || {}),
         enabled: installSherpaRecommended
       }
+      configUpdates.openCode = {
+        ...(current.openCode || {}),
+        enabled: installOpenCode
+      }
       if (installDir && installDir !== defaultInstallDir) {
         configUpdates.installDir = installDir
       }
@@ -733,6 +757,33 @@
           ...installWarnings,
           createOptionalInstallWarning('Open Terminal', 'The optional package was not installed.')
         ]
+      }
+
+      if (installOpenCode) {
+        currentInstallStage = 'opencode'
+        coreProgress = 35
+        installStatus = $i18n.t('setup.install.opencodeInstalling')
+        try {
+          await window.electronAPI.installOpenCode()
+          const openCodeResult = await window.electronAPI.startOpenCode()
+          if (!openCodeResult?.url) {
+            throw new Error('OpenCode did not become ready. Check the OpenCode log for details.')
+          }
+        } catch (firstError) {
+          console.warn('OpenCode install failed; retrying once:', firstError)
+          await prepareAutomaticRepair('opencode')
+          await wait(1000)
+          try {
+            await window.electronAPI.installOpenCode()
+            await window.electronAPI.startOpenCode()
+          } catch (retryError) {
+            console.warn('OpenCode install failed; continuing setup:', retryError)
+            installWarnings = [
+              ...installWarnings,
+              createOptionalInstallWarning('OpenCode', retryError)
+            ]
+          }
+        }
       }
 
       if (installSherpaRecommended) {
@@ -867,7 +918,7 @@
               selectedModel.mtpFilename,
               undefined,
               undefined,
-              selectedModel.mtpFilename,
+              selectedModel.mtpFilename.split('/').pop() ?? selectedModel.mtpFilename,
               modelKey,
               modelKey
             )
@@ -1008,6 +1059,18 @@
       </label>
     </div>
 
+    <div class="mb-8 rounded-xl bg-black/[0.03] px-4 py-3 dark:bg-white/[0.04]">
+      <label class="flex cursor-pointer items-start gap-3">
+        <input type="checkbox" class="mt-0.5" bind:checked={installOpenCode} />
+        <div>
+          <div class="text-[12px] opacity-70">{$i18n.t('setup.install.opencode')}</div>
+          <div class="mt-1 text-[10px] leading-relaxed opacity-25">
+            {$i18n.t('setup.install.opencodeDesc')}
+          </div>
+        </div>
+      </label>
+    </div>
+
     <div class="mb-6 border-t border-black/[0.06] pt-3 dark:border-white/[0.08]">
       <div class="flex items-center justify-between gap-4">
         <span class="text-[12px] opacity-55">当前步骤预计所需空间</span>
@@ -1035,6 +1098,7 @@
         核心组件 6 GB{llamaCppVariant.startsWith('cuda-') && ragHardwareAcceleration
           ? ' · RAG CUDA 约 3 GB'
           : ''}
+        {installOpenCode ? ' · OpenCode 约 0.5 GB' : ''}
       </div>
     </div>
 

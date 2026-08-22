@@ -20,6 +20,7 @@
     openwebui: () => import('./Settings/OpenWebUI.svelte'),
     connections: () => import('./Settings/Connections.svelte'),
     terminal: () => import('./Settings/OpenTerminal.svelte'),
+    opencode: () => import('./Settings/OpenCode.svelte'),
     inference: () => import('./Settings/InferenceRuntime.svelte'),
     speech: () => import('./Settings/Speech.svelte'),
     models: () => import('./Settings/Models.svelte'),
@@ -68,6 +69,11 @@
       id: 'terminal',
       label: () => $i18n.t('settings.tabs.terminal'),
       icon: 'M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z'
+    },
+    {
+      id: 'opencode',
+      label: () => $i18n.t('settings.tabs.opencode'),
+      icon: 'M8.25 6.75L3 12l5.25 5.25M15.75 6.75L21 12l-5.25 5.25M14.25 3.75l-4.5 16.5'
     },
     {
       id: 'inference',

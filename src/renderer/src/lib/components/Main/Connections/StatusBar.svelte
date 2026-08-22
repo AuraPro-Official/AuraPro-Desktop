@@ -9,16 +9,19 @@
     serverStatus: string | undefined
     serverReachable: boolean | undefined
     openTerminalStatus: string | null
+    openCodeStatus: string | null
     llamaCppStatus: string | null
     sherpaStatus: string | null
     openWebuiInstalled: boolean
     openTerminalInstalled: boolean
+    openCodeInstalled: boolean
     llamaCppInstalled: boolean
     sherpaInstalled: boolean
     activeLog: string | null
     onSelectLog: (log: string) => void
     onStartServer: () => void
     onToggleOpenTerminal: () => void
+    onToggleOpenCode: () => void
     onToggleLlamaCpp: () => void
     onToggleSherpa: () => void
     onOpenSettings: (tab?: string) => void
@@ -29,16 +32,19 @@
     serverStatus,
     serverReachable,
     openTerminalStatus,
+    openCodeStatus,
     llamaCppStatus,
     sherpaStatus,
     openWebuiInstalled,
     openTerminalInstalled,
+    openCodeInstalled,
     llamaCppInstalled,
     sherpaInstalled,
     activeLog,
     onSelectLog,
     onStartServer,
     onToggleOpenTerminal,
+    onToggleOpenCode,
     onToggleLlamaCpp,
     onToggleSherpa,
     onOpenSettings,
@@ -57,6 +63,14 @@
   )
   const otFailed = $derived(openTerminalStatus === 'failed')
 
+  const openCodeRunning = $derived(openCodeStatus === 'started')
+  const openCodeStarting = $derived(
+    openCodeStatus === 'starting' ||
+      openCodeStatus === 'installing' ||
+      openCodeStatus === 'stopping'
+  )
+  const openCodeFailed = $derived(openCodeStatus === 'failed')
+
   const lsRunning = $derived(llamaCppStatus === 'started')
   const lsStarting = $derived(
     llamaCppStatus === 'starting' ||
@@ -73,6 +87,7 @@
   const statusShouldShow = (status: string | null) => Boolean(status && status !== 'stopped')
   const showServer = $derived(openWebuiInstalled || !!serverStatus)
   const showTerminal = $derived(openTerminalInstalled || statusShouldShow(openTerminalStatus))
+  const showOpenCode = $derived(openCodeInstalled || statusShouldShow(openCodeStatus))
   const showLlama = $derived(llamaCppInstalled || !!llamaCppStatus)
   const showSherpa = $derived(sherpaInstalled || statusShouldShow(sherpaStatus))
   const isChinese = $derived(($i18n.language ?? '').toLowerCase().startsWith('zh'))
@@ -180,8 +195,51 @@
     </button>
   {/if}
 
-  {#if showLlama}
+  {#if showOpenCode}
     {#if showServer || showTerminal}
+      <div class="mx-0.5 h-3 w-px bg-black/[0.08] dark:bg-white/[0.08]"></div>
+    {/if}
+
+    <button
+      class="flex cursor-pointer items-center gap-1.5 rounded-md border-none bg-transparent px-2 py-0.5 text-[11px] text-[#1d1d1f] transition-all dark:text-[#fafafa] {activeLog ===
+      'opencode'
+        ? 'bg-black/[0.08] opacity-90 dark:bg-white/[0.1]'
+        : 'opacity-50 hover:bg-black/[0.04] hover:opacity-80 dark:hover:bg-white/[0.06]'}"
+      onclick={() => {
+        if (!openCodeRunning && !openCodeStarting) {
+          onToggleOpenCode()
+        }
+        onSelectLog('opencode')
+      }}
+      oncontextmenu={(event) => {
+        event.preventDefault()
+        if (openCodeRunning) onToggleOpenCode()
+      }}
+      use:tooltip={openCodeRunning
+        ? activeLog === 'opencode'
+          ? $i18n.t('sidebar.tooltip.hideLogs')
+          : $i18n.t('sidebar.tooltip.viewLogs')
+        : openCodeStarting
+          ? $i18n.t('common.starting')
+          : openCodeFailed
+            ? $i18n.t('sidebar.tooltip.clickToRetry')
+            : $i18n.t('sidebar.tooltip.startOpenCode')}
+    >
+      <div
+        class="h-[7px] w-[7px] shrink-0 rounded-full {openCodeRunning
+          ? 'bg-emerald-400 shadow-[0_0_5px_rgba(52,211,153,0.6)]'
+          : openCodeStarting
+            ? 'animate-pulse bg-amber-400'
+            : openCodeFailed
+              ? 'bg-red-400'
+              : 'bg-black/15 dark:bg-white/20'}"
+      ></div>
+      <span>OpenCode</span>
+    </button>
+  {/if}
+
+  {#if showLlama}
+    {#if showServer || showTerminal || showOpenCode}
       <div class="w-px h-3 bg-black/[0.08] dark:bg-white/[0.08] mx-0.5"></div>
     {/if}
 
@@ -225,7 +283,7 @@
   {/if}
 
   {#if showSherpa}
-    {#if showServer || showTerminal || showLlama}
+    {#if showServer || showTerminal || showOpenCode || showLlama}
       <div class="w-px h-3 bg-black/[0.08] dark:bg-white/[0.08] mx-0.5"></div>
     {/if}
 

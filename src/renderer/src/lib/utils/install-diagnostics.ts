@@ -6,6 +6,7 @@ export type InstallationStage =
   | 'llama-runtime'
   | 'speech'
   | 'terminal'
+  | 'opencode'
   | 'webui-start'
   | 'connection'
   | 'unknown'
@@ -347,6 +348,7 @@ export const diagnoseInstallationFailure = (
     stage === 'llama-runtime' ||
     stage === 'speech' ||
     stage === 'terminal' ||
+    stage === 'opencode' ||
     stage === 'webui-start'
   ) {
     return makeReport(stage, 'runtime-start', message, {

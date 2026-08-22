@@ -152,10 +152,16 @@ const OFFICIAL_MODEL_SOURCES: Record<string, OfficialModelSource> = {
     expectedSize: 15 * GB
   },
   'high-code_IQ4.gguf': {
-    repo: 'unsloth/Qwen3.6-35B-A3B-MTP-GGUF',
-    filename: 'Qwen3.6-35B-A3B-UD-IQ4_NL.gguf',
+    repo: 'unsloth/Qwen3.8-27B-GGUF',
+    filename: 'Qwen3.8-27B-UD-IQ4_XS.gguf',
     saveAs: 'high-code_IQ4.gguf',
-    expectedSize: 19 * GB
+    expectedSize: 14_252_845_984
+  },
+  'high-code_Q4.gguf': {
+    repo: 'unsloth/Qwen3.8-27B-GGUF',
+    filename: 'Qwen3.8-27B-UD-Q4_K_M.gguf',
+    saveAs: 'high-code_Q4.gguf',
+    expectedSize: 16_464_440_224
   }
 }
 
@@ -179,6 +185,14 @@ const MTP_SOURCES: Record<string, { repo: string; filename: string }> = {
   'high_Q4.gguf': {
     repo: 'unsloth/gemma-4-26B-A4B-it-qat-GGUF',
     filename: 'mtp-gemma-4-26B-A4B-it.gguf'
+  },
+  'high-code_IQ4.gguf': {
+    repo: 'unsloth/Qwen3.8-27B-GGUF',
+    filename: 'MTP/mtp-Qwen3.8-27B-Q4_0.gguf'
+  },
+  'high-code_Q4.gguf': {
+    repo: 'unsloth/Qwen3.8-27B-GGUF',
+    filename: 'MTP/mtp-Qwen3.8-27B-Q4_0.gguf'
   }
 }
 
@@ -204,10 +218,32 @@ const MMPROJ_SOURCES: Record<string, CompanionModelSource> = {
     filename: 'mmproj-F16.gguf'
   },
   'high-code_IQ4.gguf': {
-    repo: 'unsloth/Qwen3.6-35B-A3B-GGUF',
+    repo: 'unsloth/Qwen3.8-27B-GGUF',
+    filename: 'mmproj-F16.gguf'
+  },
+  'high-code_Q4.gguf': {
+    repo: 'unsloth/Qwen3.8-27B-GGUF',
     filename: 'mmproj-F16.gguf'
   }
 }
+
+const LEGACY_HIGH_CODE_INTERNAL_MTP_SIZE = 18_536_192_288
+const LEGACY_HIGH_CODE_MMPROJ_SOURCE: CompanionModelSource = {
+  repo: 'unsloth/Qwen3.6-35B-A3B-GGUF',
+  filename: 'mmproj-F16.gguf'
+}
+
+const hasLegacyInternalMtp = (modelPath: string): boolean => {
+  if (path.basename(modelPath).toLowerCase() !== 'high-code_iq4.gguf') return false
+  try {
+    return fs.statSync(modelPath).size === LEGACY_HIGH_CODE_INTERNAL_MTP_SIZE
+  } catch {
+    return false
+  }
+}
+
+const getMmprojSource = (modelName: string, modelPath: string): CompanionModelSource | undefined =>
+  hasLegacyInternalMtp(modelPath) ? LEGACY_HIGH_CODE_MMPROJ_SOURCE : MMPROJ_SOURCES[modelName]
 
 const normalizeVariant = (variant: string | undefined): string => {
   if (!variant || variant === 'auto') return 'auto'
@@ -952,7 +988,7 @@ export const diagnoseLlamaCpp = async (
   for (const model of modelsToCheckForVision) {
     const filepath = absoluteModelPath(model)
     const modelName = path.basename(filepath)
-    const source = MMPROJ_SOURCES[modelName]
+    const source = getMmprojSource(modelName, filepath)
     if (!source) continue
     const projectorPath = findCompanionGguf(path.dirname(filepath), source.filename, 'mmproj')
     const partial = hasCompanionPartial(path.dirname(filepath), 'mmproj')
@@ -974,7 +1010,10 @@ export const diagnoseLlamaCpp = async (
     logFailures.multimodalLoadFailed ||
     (Boolean(startupError) && !runtimeActive && multimodalLog.inProgress)
   if (multimodalLog.attempted && multimodalRuntimeFailed) {
-    const source = activeModelName ? MMPROJ_SOURCES[activeModelName] : undefined
+    const source =
+      activeModelName && activeModelPath
+        ? getMmprojSource(activeModelName, activeModelPath)
+        : undefined
     const filepath =
       source && activeModelPath ? path.join(path.dirname(activeModelPath), source.filename) : ''
     const hasIncompleteProjector = Boolean(
@@ -1005,9 +1044,14 @@ export const diagnoseLlamaCpp = async (
   if (mtpEnabled) {
     for (const model of modelsToCheck) {
       const filepath = absoluteModelPath(model)
+      if (hasLegacyInternalMtp(filepath)) continue
       const source = MTP_SOURCES[path.basename(filepath)]
       if (!source) continue
-      const mtpPath = findCompanionGguf(path.dirname(filepath), source.filename, 'mtp-')
+      const mtpPath = findCompanionGguf(
+        path.dirname(filepath),
+        path.basename(source.filename),
+        'mtp-'
+      )
       const partial = hasCompanionPartial(path.dirname(filepath), 'mtp-')
       if (!isGgufValid(mtpPath) || partial) {
         mtpMissing++
@@ -1263,11 +1307,11 @@ export const repairLlamaCpp = async (
         onStatus?.(`Repairing MTP model ${source.filename} ${progress.percent.toFixed(0)}%`),
       undefined,
       undefined,
-      source.filename,
+      path.basename(source.filename),
       modelKey,
       modelKey
     )
-    actions.push(`Repaired MTP model ${source.filename}`)
+    actions.push(`Repaired MTP model ${path.basename(source.filename)}`)
   }
 
   if (selected.some((issue) => issue.action === 'disable-mtp')) {
