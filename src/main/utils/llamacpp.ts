@@ -22,6 +22,14 @@ import {
 import { downloadModel } from './huggingface'
 import { ServiceLock, isProcessAlive } from './service-lock'
 import { hasLlamaCppRuntimeAnomaly } from './llamacpp-log-diagnostics'
+import {
+  isNewerLlamaBuild,
+  parseLlamaBuildTag,
+  selectLatestCompatibleLlamaRelease,
+  sortLlamaBuildTagsNewestFirst,
+  type LlamaRelease,
+  type LlamaReleaseAsset
+} from './llamacpp-release'
 
 // State
 
@@ -201,11 +209,14 @@ export const getLlamaCppInfo = () => {
     const cacheBase = path.join(getInstallDir(), 'llama.cpp')
     try {
       if (fs.existsSync(cacheBase)) {
-        const dirs = fs
-          .readdirSync(cacheBase, { withFileTypes: true })
-          .filter((d) => d.isDirectory())
-        for (const d of dirs) {
-          const found = findBinary(path.join(cacheBase, d.name))
+        const cachedTags = sortLlamaBuildTagsNewestFirst(
+          fs
+            .readdirSync(cacheBase, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => entry.name)
+        )
+        for (const tag of cachedTags) {
+          const found = findBinary(path.join(cacheBase, tag))
           if (found) {
             binaryPath = found
             break
@@ -310,16 +321,6 @@ export const ensureEpubConceptModel = async (
 
 // Asset Resolution
 
-interface ReleaseAsset {
-  name: string
-  browser_download_url: string
-}
-
-interface LlamaRelease {
-  tag_name: string
-  assets: ReleaseAsset[]
-}
-
 interface LlamaConfig {
   [key: string]: unknown
   ctxSize?: number
@@ -334,6 +335,9 @@ interface LlamaConfig {
 
 const DEFAULT_LLAMA_CPP_FALLBACK_VERSION = 'b9637'
 const LLAMA_CPP_RELEASE_FALLBACK_ATTEMPTS = 12
+const LLAMA_CPP_RELEASE_DISCOVERY_LIMIT = 30
+const LLAMA_CPP_RELEASE_CACHE_TTL_MS = 60_000
+let recentLlamaReleasesCache: { expiresAt: number; releases: LlamaRelease[] } | null = null
 
 const githubHeaders = (): Record<string, string> => ({
   Accept: 'application/vnd.github.v3+json',
@@ -356,33 +360,46 @@ const describeGithubError = (error: unknown): string => {
   return message
 }
 
-const parseBuildTag = (tag: string | undefined | null): number | null => {
-  const match = String(tag ?? '').match(/^b(\d+)$/)
-  if (!match) return null
-  const build = Number.parseInt(match[1], 10)
-  return Number.isFinite(build) ? build : null
-}
-
 const previousBuildTag = (tag: string, offset: number): string | null => {
-  const build = parseBuildTag(tag)
+  const build = parseLlamaBuildTag(tag)
   if (build === null || build <= offset) return null
   return `b${build - offset}`
 }
 
-const fetchLlamaRelease = async (version: string): Promise<LlamaRelease> => {
-  const apiUrl =
-    version === 'latest'
-      ? 'https://api.github.com/repos/ggml-org/llama.cpp/releases/latest'
-      : `https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/${version}`
-
+const fetchGithubJson = async <T>(apiUrl: string, timeout = 10000): Promise<T> => {
   const response = await fetch(apiUrl, {
     headers: githubHeaders(),
-    signal: AbortSignal.timeout(10000)
+    signal: AbortSignal.timeout(timeout)
   })
   if (!response.ok) {
     throw new Error(`GitHub API returned ${response.status}: ${response.statusText}`)
   }
-  return (await response.json()) as LlamaRelease
+  return (await response.json()) as T
+}
+
+const fetchLlamaReleaseByTag = async (version: string): Promise<LlamaRelease> =>
+  fetchGithubJson<LlamaRelease>(
+    `https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/${encodeURIComponent(version)}`
+  )
+
+const fetchRecentLlamaReleases = async (force = false): Promise<LlamaRelease[]> => {
+  if (
+    !force &&
+    recentLlamaReleasesCache?.expiresAt &&
+    recentLlamaReleasesCache.expiresAt > Date.now()
+  ) {
+    return recentLlamaReleasesCache.releases
+  }
+
+  const releases = await fetchGithubJson<LlamaRelease[]>(
+    `https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=${LLAMA_CPP_RELEASE_DISCOVERY_LIMIT}`,
+    15000
+  )
+  recentLlamaReleasesCache = {
+    expiresAt: Date.now() + LLAMA_CPP_RELEASE_CACHE_TTL_MS,
+    releases
+  }
+  return releases
 }
 
 const llamaReleaseCandidates = (
@@ -589,6 +606,41 @@ const getAssetPatterns = (tag: string, variant: string): { patterns: string[]; i
   return { patterns: [`llama-${tag}-bin-ubuntu-x64.tar.gz`], isZip: false }
 }
 
+const findReleaseAsset = (release: LlamaRelease, variant: string): LlamaReleaseAsset | null => {
+  const { patterns } = getAssetPatterns(release.tag_name, variant)
+  return release.assets.find((asset) => patterns.includes(asset.name)) ?? null
+}
+
+const hasCompleteReleaseAssets = (release: LlamaRelease, variant: string): boolean => {
+  const mainAsset = findReleaseAsset(release, variant)
+  if (!mainAsset) return false
+  if (process.platform !== 'win32' || !variant.startsWith('cuda-')) return true
+
+  const cudaVersion = mainAsset.name.match(/-cuda-(\d+\.\d+)-x64\.zip$/i)?.[1]
+  return Boolean(
+    cudaVersion &&
+    release.assets.some(
+      (asset) => asset.name === `cudart-llama-bin-win-cuda-${cudaVersion}-x64.zip`
+    )
+  )
+}
+
+const fetchLatestLlamaRelease = async (variant: string, force = false): Promise<LlamaRelease> => {
+  const releases = await fetchRecentLlamaReleases(force)
+  const release = selectLatestCompatibleLlamaRelease(releases, (candidate) =>
+    hasCompleteReleaseAssets(candidate, variant)
+  )
+  if (!release) {
+    throw new Error(
+      `No complete llama.cpp nightly release was found for ${process.platform}/${process.arch}/${variant}.`
+    )
+  }
+  return release
+}
+
+const resolveLlamaRelease = async (version: string, variant: string): Promise<LlamaRelease> =>
+  version === 'latest' ? fetchLatestLlamaRelease(variant) : fetchLlamaReleaseByTag(version)
+
 /**
  * Find the llama-server binary inside the extracted directory.
  */
@@ -686,7 +738,7 @@ const isCachedInstallReady = (versionDir: string, binary: string, variant: strin
 }
 
 const downloadAndExtractReleaseAsset = async (
-  asset: ReleaseAsset,
+  asset: LlamaReleaseAsset,
   downloadDir: string,
   extractDir: string,
   isZip: boolean,
@@ -744,8 +796,8 @@ const downloadAndExtractReleaseAsset = async (
 }
 
 const ensureBundledCudaRuntime = async (
-  assets: ReleaseAsset[],
-  mainAsset: ReleaseAsset,
+  assets: LlamaReleaseAsset[],
+  mainAsset: LlamaReleaseAsset,
   versionDir: string,
   binary: string,
   onStatus?: (status: string) => void
@@ -1268,10 +1320,12 @@ export const setupLlamaCpp = async (onStatus?: (status: string) => void): Promis
   } else {
     // 'latest'  - scan all cached version directories for a usable binary
     try {
-      const cachedVersions = fs
-        .readdirSync(cacheBase, { withFileTypes: true })
-        .filter((d) => d.isDirectory())
-        .map((d) => d.name)
+      const cachedVersions = sortLlamaBuildTagsNewestFirst(
+        fs
+          .readdirSync(cacheBase, { withFileTypes: true })
+          .filter((d) => d.isDirectory())
+          .map((d) => d.name)
+      )
 
       for (const cachedTag of cachedVersions) {
         const cachedDir = path.join(cacheBase, cachedTag)
@@ -1291,25 +1345,51 @@ export const setupLlamaCpp = async (onStatus?: (status: string) => void): Promis
 
   onStatus?.('Fetching release info...')
   const installReleaseWithFallback = async (): Promise<string> => {
-    let initialReleaseData: LlamaRelease
+    const badVersions: string[] = config.llamaCpp?.badVersions ?? []
+    const fallbackVersion = config.llamaCpp?.fallbackVersion ?? DEFAULT_LLAMA_CPP_FALLBACK_VERSION
+    let initialReleaseData: LlamaRelease | null = null
     try {
-      initialReleaseData = await fetchLlamaRelease(version)
+      initialReleaseData = await resolveLlamaRelease(version, variant)
     } catch (error) {
-      if (binaryPath) {
-        log.info('Network unavailable, using cached llama-server binary:', binaryPath)
-        onStatus?.('Ready (offline)')
-        return binaryPath
+      if (version === 'latest') {
+        try {
+          log.warn(
+            `Unable to discover the latest compatible llama.cpp nightly; trying ${fallbackVersion}:`,
+            error
+          )
+          initialReleaseData = await fetchLlamaReleaseByTag(fallbackVersion)
+        } catch (fallbackError) {
+          if (binaryPath) {
+            log.info('Network unavailable, using cached llama-server binary:', binaryPath)
+            onStatus?.('Ready (offline)')
+            return binaryPath
+          }
+          throw new Error(
+            `Failed to fetch llama.cpp release info and no cached llama.cpp binary was found. ` +
+              `Please connect to the internet for the initial llama.cpp installation. ` +
+              `Latest error: ${describeGithubError(error)}. ` +
+              `Fallback error: ${describeGithubError(fallbackError)}`
+          )
+        }
+      } else {
+        if (binaryPath) {
+          log.info('Network unavailable, using cached llama-server binary:', binaryPath)
+          onStatus?.('Ready (offline)')
+          return binaryPath
+        }
+        throw new Error(
+          `Failed to fetch llama.cpp release info and no cached llama.cpp binary was found. ` +
+            `Please connect to the internet for the initial llama.cpp installation. ` +
+            `Original error: ${describeGithubError(error)}`
+        )
       }
-      throw new Error(
-        `Failed to fetch llama.cpp release info and no cached llama.cpp binary was found. ` +
-          `Please connect to the internet for the initial llama.cpp installation. ` +
-          `Original error: ${describeGithubError(error)}`
-      )
+    }
+
+    if (!initialReleaseData) {
+      throw new Error('Failed to resolve a llama.cpp release.')
     }
 
     const initialTag = initialReleaseData.tag_name
-    const badVersions: string[] = config.llamaCpp?.badVersions ?? []
-    const fallbackVersion = config.llamaCpp?.fallbackVersion ?? DEFAULT_LLAMA_CPP_FALLBACK_VERSION
     const candidates = llamaReleaseCandidates(initialTag, fallbackVersion, badVersions)
     const failures: string[] = []
 
@@ -1374,7 +1454,9 @@ export const setupLlamaCpp = async (onStatus?: (status: string) => void): Promis
     for (const candidateTag of candidates) {
       try {
         const releaseData =
-          candidateTag === initialTag ? initialReleaseData : await fetchLlamaRelease(candidateTag)
+          candidateTag === initialTag
+            ? initialReleaseData
+            : await fetchLlamaReleaseByTag(candidateTag)
 
         if (candidateTag !== initialTag) {
           onStatus?.(`Latest llama.cpp is unavailable, trying ${candidateTag}...`)
@@ -1448,7 +1530,7 @@ export const startLlamaCppWithFallback = async (onStatus?: (status: string) => v
     })
 
     onStatus?.(`Latest version failed, falling back to ${fallbackVersion}...`)
-    log.warn(`Falling back to stable version: ${fallbackVersion}`)
+    log.warn(`Falling back to pinned fallback build: ${fallbackVersion}`)
 
     try {
       return await startLlamaCpp(onStatus)
@@ -1484,19 +1566,9 @@ export const checkLlamaCppUpdate = async (): Promise<{
   const currentInfo = getLlamaCppInfo()
 
   try {
-    const response = await fetch(
-      'https://api.github.com/repos/ggml-org/llama.cpp/releases/latest',
-      {
-        headers: githubHeaders(),
-        signal: AbortSignal.timeout(5000)
-      }
-    )
-
-    if (!response.ok) {
-      throw new Error(`GitHub API returned ${response.status}: ${response.statusText}`)
-    }
-
-    const releaseData = await response.json()
+    const config = await getConfig()
+    const variant = resolveVariant(config.llamaCpp?.variant)
+    const releaseData = await fetchLatestLlamaRelease(variant)
     const latestVersion = releaseData.tag_name
     const currentVersion = currentInfo.version
 
@@ -1507,7 +1579,7 @@ export const checkLlamaCppUpdate = async (): Promise<{
     return {
       currentVersion,
       latestVersion,
-      updateAvailable: currentVersion !== latestVersion
+      updateAvailable: isNewerLlamaBuild(currentVersion, latestVersion)
     }
   } catch (error) {
     log.error('Failed to check for llama.cpp updates:', error)
@@ -1522,54 +1594,73 @@ export const checkLlamaCppUpdate = async (): Promise<{
 export const updateLlamaCpp = async (
   onStatus?: (status: string) => void
 ): Promise<ReturnType<typeof getLlamaCppInfo>> => {
-  // 1. Verify network is available BEFORE destructive operations  -
-  //    don't delete the old binary if we can't download a replacement.
   onStatus?.('Checking for updates...')
+  const config = await getConfig()
+  const originalVersion = config.llamaCpp?.version || 'latest'
+  const variant = resolveVariant(config.llamaCpp?.variant)
+  let latestRelease: LlamaRelease
   try {
-    const response = await fetch(
-      'https://api.github.com/repos/ggml-org/llama.cpp/releases/latest',
-      {
-        headers: githubHeaders(),
-        signal: AbortSignal.timeout(10000)
-      }
-    )
-    if (!response.ok) {
-      throw new Error(`GitHub API returned ${response.status}: ${response.statusText}`)
-    }
+    latestRelease = await fetchLatestLlamaRelease(variant, true)
   } catch (error) {
     throw new Error(
-      `Cannot update llama.cpp: unable to reach GitHub. ` +
+      `Cannot update llama.cpp: unable to find a complete nightly release for this system. ` +
         `Please check your internet connection. (${describeGithubError(error)})`
     )
   }
 
-  // 2. Stop if running
-  await stopLlamaCpp()
-
-  // 3. Clear old cache directory (safe  - we verified network above)
   const currentInfo = getLlamaCppInfo()
-  if (currentInfo.version) {
-    const cacheDir = path.join(getInstallDir(), 'llama.cpp', currentInfo.version)
-    if (fs.existsSync(cacheDir)) {
+  if (currentInfo.version && !isNewerLlamaBuild(currentInfo.version, latestRelease.tag_name)) {
+    onStatus?.('Already up to date')
+    return currentInfo
+  }
+
+  // Keep the old runtime until the replacement has downloaded and started.
+  // An interrupted or incompatible update can therefore restart the working build.
+  await stopLlamaCpp()
+  await setConfig({ llamaCpp: { ...config.llamaCpp, version: 'latest', badVersions: [] } })
+
+  try {
+    onStatus?.(`Downloading llama.cpp ${latestRelease.tag_name}...`)
+    await startLlamaCppWithFallback(onStatus)
+  } catch (error) {
+    if (currentInfo.version) {
+      onStatus?.(`Update failed; restoring llama.cpp ${currentInfo.version}...`)
+      const recoveryConfig = await getConfig()
+      await setConfig({
+        llamaCpp: { ...recoveryConfig.llamaCpp, version: currentInfo.version }
+      })
+      try {
+        await startLlamaCpp(onStatus)
+      } catch (recoveryError) {
+        log.error(`Failed to restart previous llama.cpp ${currentInfo.version}:`, recoveryError)
+      } finally {
+        const restoredConfig = await getConfig()
+        await setConfig({
+          llamaCpp: { ...restoredConfig.llamaCpp, version: originalVersion }
+        })
+      }
+    }
+    throw error
+  }
+
+  const updatedInfo = getLlamaCppInfo()
+  if (
+    currentInfo.version &&
+    updatedInfo.version === latestRelease.tag_name &&
+    currentInfo.version !== updatedInfo.version
+  ) {
+    const oldCacheDir = path.join(getInstallDir(), 'llama.cpp', currentInfo.version)
+    if (fs.existsSync(oldCacheDir)) {
       onStatus?.('Removing old version...')
       try {
-        fs.rmSync(cacheDir, { recursive: true, force: true })
-      } catch (err) {
-        log.error(`Failed to remove old llama.cpp cache at ${cacheDir}:`, err)
+        fs.rmSync(oldCacheDir, { recursive: true, force: true })
+      } catch (error) {
+        log.warn(`Failed to remove old llama.cpp cache at ${oldCacheDir}:`, error)
       }
     }
   }
 
-  // 4. Temporarily enforce 'latest' in config so it fetches the newest.
-  // Clear stale bad-version marks so a fixed installer can retry the real latest.
-  const config = await getConfig()
-  await setConfig({ llamaCpp: { ...config.llamaCpp, version: 'latest', badVersions: [] } })
-
-  // 5. Download new release
-  onStatus?.('Downloading update...')
-  await startLlamaCppWithFallback(onStatus)
-
-  return getLlamaCppInfo()
+  return updatedInfo
 }
 
 export const reinstallLlamaCpp = async (onStatus?: (status: string) => void): Promise<string> => {
