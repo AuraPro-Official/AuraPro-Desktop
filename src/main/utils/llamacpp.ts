@@ -30,6 +30,11 @@ import {
   type LlamaRelease,
   type LlamaReleaseAsset
 } from './llamacpp-release'
+import {
+  getLlamaAssetPatterns,
+  matchesAssetPattern,
+  normalizeLlamaVariantForPlatform
+} from './platform-support'
 
 // State
 
@@ -548,67 +553,30 @@ const detectBestVariant = (): string => {
 /**
  * Resolve the variant  - if 'auto' or empty, detect the best one.
  */
-const normalizeVariant = (variant: string | undefined): string | undefined => {
-  if (variant === 'cuda-13.1' || variant === 'cuda-13.2') return 'cuda-13.3'
-  return variant
-}
-
 const resolveVariant = (variant: string | undefined): string => {
-  if (!variant || variant === 'auto') {
-    const detected = detectBestVariant()
-    log.info(`Auto-detected variant: ${detected}`)
-    return detected
+  const requested = !variant || variant === 'auto' ? detectBestVariant() : variant
+  const resolved = normalizeLlamaVariantForPlatform(requested, process.platform, process.arch)
+  if (!variant || variant === 'auto') log.info(`Auto-detected variant: ${requested}`)
+  if (requested !== resolved) {
+    log.warn(
+      `llama.cpp variant ${requested} is unavailable on ${process.platform}/${process.arch}; using ${resolved}`
+    )
   }
-  return normalizeVariant(variant) ?? variant
-}
-
-/**
- * Determine the correct release asset name for this platform/arch/variant.
- */
-const getAssetPatterns = (tag: string, variant: string): { patterns: string[]; isZip: boolean } => {
-  const platform = process.platform
-  const arch = process.arch
-
-  if (platform === 'darwin') {
-    const archStr = arch === 'arm64' ? 'arm64' : 'x64'
-    return { patterns: [`llama-${tag}-bin-macos-${archStr}.tar.gz`], isZip: false }
-  }
-
-  if (platform === 'linux') {
-    const variantMap: Record<string, string[]> = {
-      cpu: [`llama-${tag}-bin-ubuntu-x64.tar.gz`],
-      vulkan: [`llama-${tag}-bin-ubuntu-vulkan-x64.tar.gz`],
-      rocm: [`llama-${tag}-bin-ubuntu-rocm-7.2-x64.tar.gz`]
-    }
-    const names = variantMap[variant] ?? variantMap.cpu
-    return { patterns: names, isZip: false }
-  }
-
-  if (platform === 'win32') {
-    const archStr = arch === 'arm64' ? 'arm64' : 'x64'
-    const cuda13Patterns = [
-      `llama-${tag}-bin-win-cuda-13.3-x64.zip`,
-      `llama-${tag}-bin-win-cuda-13.2-x64.zip`,
-      `llama-${tag}-bin-win-cuda-13.1-x64.zip`
-    ]
-    const variantMap: Record<string, string[]> = {
-      cpu: [`llama-${tag}-bin-win-cpu-${archStr}.zip`],
-      'cuda-12.4': [`llama-${tag}-bin-win-cuda-12.4-x64.zip`],
-      'cuda-13.3': cuda13Patterns,
-      'cuda-13.2': cuda13Patterns,
-      'cuda-13.1': cuda13Patterns,
-      vulkan: [`llama-${tag}-bin-win-vulkan-x64.zip`]
-    }
-    const names = variantMap[variant] ?? variantMap.cpu
-    return { patterns: names, isZip: true }
-  }
-
-  return { patterns: [`llama-${tag}-bin-ubuntu-x64.tar.gz`], isZip: false }
+  return resolved
 }
 
 const findReleaseAsset = (release: LlamaRelease, variant: string): LlamaReleaseAsset | null => {
-  const { patterns } = getAssetPatterns(release.tag_name, variant)
-  return release.assets.find((asset) => patterns.includes(asset.name)) ?? null
+  const { patterns } = getLlamaAssetPatterns(
+    release.tag_name,
+    variant,
+    process.platform,
+    process.arch
+  )
+  return (
+    release.assets.find((asset) =>
+      patterns.some((pattern) => matchesAssetPattern(asset.name, pattern))
+    ) ?? null
+  )
 }
 
 const hasCompleteReleaseAssets = (release: LlamaRelease, variant: string): boolean => {
@@ -677,7 +645,7 @@ const VARIANT_MARKER_FILENAME = '.aurapro-variant'
 const readInstalledVariant = (versionDir: string): string | null => {
   try {
     const value = fs.readFileSync(path.join(versionDir, VARIANT_MARKER_FILENAME), 'utf8').trim()
-    return normalizeVariant(value) ?? value
+    return normalizeLlamaVariantForPlatform(value, process.platform, process.arch)
   } catch {
     return null
   }
@@ -1402,9 +1370,16 @@ export const setupLlamaCpp = async (onStatus?: (status: string) => void): Promis
         fs.mkdirSync(versionDir, { recursive: true })
       }
 
-      const { patterns, isZip } = getAssetPatterns(tag, variant)
+      const { patterns, isZip } = getLlamaAssetPatterns(
+        tag,
+        variant,
+        process.platform,
+        process.arch
+      )
       const assets = releaseData.assets
-      const asset = assets.find((candidate) => patterns.includes(candidate.name))
+      const asset = assets.find((candidate) =>
+        patterns.some((pattern) => matchesAssetPattern(candidate.name, pattern))
+      )
       if (!asset) {
         const available = assets.map((candidate) => candidate.name).join(', ')
         throw new Error(

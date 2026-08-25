@@ -8,6 +8,7 @@
   interface SystemInfo {
     totalMemGB?: number
     platform?: string
+    architecture?: string
   }
 
   interface LlamaInfo {
@@ -42,6 +43,7 @@
   } | null>(null)
   let updateError = $state<string | null>(null)
   let defaultParallel = $state(2)
+  let systemArchitecture = $state('')
 
   const getDefaultParallel = (sysInfo: SystemInfo | null) => {
     const totalMemGB = Number(sysInfo?.totalMemGB ?? 0)
@@ -60,6 +62,7 @@
     lsInfo = await window.electronAPI.getLlamaCppInfo()
     const sysInfo = await window.electronAPI.getSystemInfo().catch(() => null)
     defaultParallel = getDefaultParallel(sysInfo)
+    systemArchitecture = sysInfo?.architecture ?? ''
     loaded = true
 
     window.electronAPI.onData((data: LlamaEvent) => {
@@ -101,12 +104,21 @@
           autoOption,
           { value: 'cpu', label: $i18n.t('settings.inference.variantDefaultMetal') }
         ]
-      if (platform === 'win32')
+      if (platform === 'win32') {
+        if (systemArchitecture === 'arm64')
+          return [autoOption, { value: 'cpu', label: $i18n.t('settings.inference.variantCPU') }]
         return [
           autoOption,
           { value: 'cpu', label: $i18n.t('settings.inference.variantCPU') },
           { value: 'cuda-12.4', label: 'CUDA 12.4 (RTX 40 / older)' },
           { value: 'cuda-13.3', label: 'CUDA 13.3 (RTX 50)' },
+          { value: 'vulkan', label: 'Vulkan' }
+        ]
+      }
+      if (systemArchitecture === 'arm64')
+        return [
+          autoOption,
+          { value: 'cpu', label: $i18n.t('settings.inference.variantCPU') },
           { value: 'vulkan', label: 'Vulkan' }
         ]
       return [

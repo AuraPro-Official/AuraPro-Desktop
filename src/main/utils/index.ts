@@ -12,6 +12,7 @@ import { app, shell, net as electronNet, session } from 'electron'
 import { execFileSync, spawn, execSync, execFile } from 'child_process'
 
 import log from 'electron-log'
+import { getBundledPythonTarget, isBundledPythonMachineCompatible } from './platform-support'
 log.transports.file.resolvePathFn = () => getLogFilePath('main')
 
 const serverLogger = log.create({ logId: 'server' })
@@ -141,7 +142,7 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.9.28'
+export const AURAPRO_UI_TARGET_VERSION = '3.9.29'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
 export const AURAPRO_UI_LAST_VERSION = '3.9.3'
@@ -582,32 +583,15 @@ export const portInUse = async (port: number, host: string = '0.0.0.0'): Promise
 
 // ─── Python Download & Install ──────────────────────────
 
-const getPlatformString = () => {
-  const platformMap = {
-    darwin: 'apple-darwin',
-    win32: 'pc-windows-msvc',
-    linux: 'unknown-linux-gnu'
-  }
-  return platformMap[os.platform()] || 'unknown-linux-gnu'
-}
+const PYTHON_RELEASE_DATE = '20260310'
+const PYTHON_VERSION = '3.12.13'
 
-const getArchString = () => {
-  const archMap = {
-    x64: 'x86_64',
-    arm64: 'aarch64',
-    ia32: 'i686'
-  }
-  return archMap[os.arch()] || 'x86_64'
-}
+const getPythonTarget = (): string => getBundledPythonTarget(process.platform, process.arch)
 
 const generateDownloadUrl = () => {
   const baseUrl = 'https://github.com/astral-sh/python-build-standalone/releases/download'
-  const releaseDate = '20260310'
-  const pythonVersion = '3.12.13'
-  const archString = getArchString()
-  const platformString = getPlatformString()
-  const filename = `cpython-${pythonVersion}+${releaseDate}-${archString}-${platformString}-install_only.tar.gz`
-  return `${baseUrl}/${releaseDate}/${filename}`
+  const filename = `cpython-${PYTHON_VERSION}+${PYTHON_RELEASE_DATE}-${getPythonTarget()}-install_only.tar.gz`
+  return `${baseUrl}/${PYTHON_RELEASE_DATE}/${filename}`
 }
 
 const parseContentRangeTotal = (contentRange: string | null): number => {
@@ -758,7 +742,7 @@ export const formatDownloadEta = (seconds?: number): string => {
 }
 
 export const getPythonDownloadPath = (): string => {
-  return path.join(getUserDataPath(), 'python.tar.gz')
+  return path.join(getUserDataPath(), `python-${PYTHON_VERSION}-${getPythonTarget()}.tar.gz`)
 }
 
 export const getPythonInstallationDir = (): string => {
@@ -991,14 +975,27 @@ export const isPythonInstalled = (installationDir?: string) => {
     return false
   }
   try {
-    const pythonVersion = execFileSync(pythonPath, ['--version'], {
-      encoding: 'utf-8',
-      env: pythonEnv(),
-      windowsHide: true,
-      timeout: 60000
-    })
-    log.info('Installed Python Version:', pythonVersion.trim())
-    return true
+    const pythonInfo = execFileSync(
+      pythonPath,
+      [
+        '-c',
+        "import platform, sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}|{platform.machine()}')"
+      ],
+      {
+        encoding: 'utf-8',
+        env: pythonEnv(),
+        windowsHide: true,
+        timeout: 60000
+      }
+    )
+    const [pythonVersion, pythonMachine = ''] = pythonInfo.trim().split('|')
+    const compatible =
+      pythonVersion.startsWith('3.12.') &&
+      isBundledPythonMachineCompatible(process.platform, process.arch, pythonMachine)
+    log.info(
+      `Installed Python: version=${pythonVersion}, machine=${pythonMachine}, compatible=${compatible}`
+    )
+    return compatible
   } catch {
     return false
   }
@@ -1552,49 +1549,45 @@ export const installTorchPackage = async (
   try {
     const config = await getConfig()
     const llamaVariant = config.llamaCpp?.variant ?? 'cpu'
-    const supportsCudaWheels = process.platform === 'win32' || process.platform === 'linux'
+    const supportsCudaWheels =
+      process.arch === 'x64' && (process.platform === 'win32' || process.platform === 'linux')
     const useCuda =
       supportsCudaWheels &&
       llamaVariant.startsWith('cuda-') &&
       config.localServer?.ragHardwareAcceleration === true
+    const isIntelMac = process.platform === 'darwin' && process.arch === 'x64'
+    const torchVersion = isIntelMac ? '2.2.2' : '2.8.0'
     const suffix = process.platform === 'darwin' ? '' : useCuda ? '+cu128' : '+cpu'
-    const expectedVersions = {
-      torch: `2.8.0${suffix}`,
-      torchaudio: `2.8.0${suffix}`,
-      torchvision: `0.23.0${suffix}`
-    }
-
-    const alreadyInstalled = Object.entries(expectedVersions).every(
-      ([packageName, expectedVersion]) => getExactPackageVersion(packageName) === expectedVersion
-    )
+    const expectedVersion = `${torchVersion}${suffix}`
+    const alreadyInstalled = getExactPackageVersion('torch') === expectedVersion
     if (alreadyInstalled) {
-      log.info(
-        `PyTorch packages already match the selected RAG runtime (${useCuda ? 'CUDA cu128' : 'CPU'})`
-      )
+      log.info(`PyTorch already matches the selected RAG runtime (${expectedVersion})`)
       return true
     }
 
-    const packages = Object.entries(expectedVersions).map(
-      ([packageName, expectedVersion]) => `${packageName}==${expectedVersion}`
-    )
-    const extraIndex = useCuda
-      ? 'https://download.pytorch.org/whl/cu128'
-      : 'https://download.pytorch.org/whl/cpu'
+    const packageSpec = `torch==${expectedVersion}`
+    const indexArgs =
+      process.platform === 'darwin'
+        ? []
+        : [
+            '--extra-index-url',
+            useCuda
+              ? 'https://download.pytorch.org/whl/cu128'
+              : 'https://download.pytorch.org/whl/cpu'
+          ]
     const runtimeLabel = useCuda ? 'CUDA 版 PyTorch（cu128）' : 'CPU 版 PyTorch'
     const logRuntimeLabel = useCuda ? 'CUDA-enabled PyTorch (cu128)' : 'CPU PyTorch'
 
     onStatus?.(`正在安装 ${runtimeLabel} 依赖...`)
-    log.info(`Installing ${logRuntimeLabel} for RAG; llama.cpp variant=${llamaVariant}`)
-    execFileSync(
-      getPythonPath(),
-      ['-m', 'uv', 'pip', 'install', '-U', ...packages, '--extra-index-url', extraIndex],
-      {
-        encoding: 'utf-8',
-        env: pythonEnv(),
-        stdio: 'inherit',
-        windowsHide: true
-      }
+    log.info(
+      `Installing ${logRuntimeLabel} ${expectedVersion} for RAG; llama.cpp variant=${llamaVariant}`
     )
+    execFileSync(getPythonPath(), ['-m', 'uv', 'pip', 'install', '-U', packageSpec, ...indexArgs], {
+      encoding: 'utf-8',
+      env: pythonEnv(),
+      stdio: 'inherit',
+      windowsHide: true
+    })
     onStatus?.(`${runtimeLabel} 安装完成`)
     return true
   } catch (error) {
@@ -2573,8 +2566,13 @@ export const resetApp = async (): Promise<ResetAppResult> => {
     { label: 'Sherpa runtime files', path: path.join(installDir, 'sherpa') },
     { label: 'OpenCode runtime', path: path.join(installDir, 'opencode') },
     { label: 'service locks', path: path.join(userDataDir, 'locks') },
-    { label: 'Python download', path: path.join(userDataDir, 'python.tar.gz') },
-    { label: 'partial Python download', path: path.join(userDataDir, 'python.tar.gz.tmp') }
+    { label: 'Python download', path: getPythonDownloadPath() },
+    { label: 'partial Python download', path: `${getPythonDownloadPath()}.tmp` },
+    { label: 'legacy Python download', path: path.join(userDataDir, 'python.tar.gz') },
+    {
+      label: 'legacy partial Python download',
+      path: path.join(userDataDir, 'python.tar.gz.tmp')
+    }
   ]
   const seen = new Set<string>()
   for (const target of targets) {

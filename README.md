@@ -31,14 +31,16 @@ The application uses a modular installation model. Large runtimes and models are
 
 ## Supported Platforms
 
-| Operating system  | Architecture         | Release formats          |
-| ----------------- | -------------------- | ------------------------ |
-| Windows 10/11     | x64, ARM64           | NSIS `.exe`              |
-| macOS 12 or later | Apple Silicon, Intel | `.dmg`, `.zip`           |
-| Linux             | x64, ARM64           | AppImage, Debian package |
-| Linux x64         | x64                  | Snap, Flatpak            |
+| Operating system                    | Architecture         | Release formats          |
+| ----------------------------------- | -------------------- | ------------------------ |
+| Windows 10/11                       | x64                  | NSIS `.exe`              |
+| Windows 11                          | ARM64                | NSIS `.exe`              |
+| macOS 13 or later                   | Apple Silicon, Intel | `.dmg`, `.zip`           |
+| Linux with glibc 2.28 or later      | x64, ARM64           | AppImage, Debian package |
+| Linux with glibc 2.28 or later, x64 | x64                  | Snap, Flatpak            |
 
 Component availability may vary by platform and architecture. Refer to the [Releases](https://github.com/AuraPro-Official/AuraPro-Desktop/releases) page for the files included in each release.
+On Windows 11 ARM64, the desktop application is native ARM64 while the bundled Python services run as x64 processes through Windows emulation because several AI libraries do not publish Windows ARM64 wheels.
 
 ## Installation and Use
 

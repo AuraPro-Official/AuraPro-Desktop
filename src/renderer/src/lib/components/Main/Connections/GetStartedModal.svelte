@@ -281,12 +281,19 @@
   const variantOptions = $derived(
     (() => {
       if (platform === 'darwin') return [{ value: 'cpu', label: 'Apple Metal (Default)' }]
-      if (platform === 'win32')
+      if (platform === 'win32') {
+        if (systemArchitecture === 'arm64') return [{ value: 'cpu', label: 'CPU Only' }]
         return [
           { value: 'cuda-12.4', label: 'NVIDIA CUDA 12.4 (RTX 40 / older)' },
           { value: 'cuda-13.3', label: 'NVIDIA CUDA 13.3 (RTX 50)' },
           { value: 'vulkan', label: 'Vulkan (For AMD / Intel discrete GPU)' },
           { value: 'cpu', label: 'CPU Only' }
+        ]
+      }
+      if (systemArchitecture === 'arm64')
+        return [
+          { value: 'cpu', label: 'CPU Only' },
+          { value: 'vulkan', label: 'Vulkan' }
         ]
       return [
         { value: 'cpu', label: 'CPU Only' },

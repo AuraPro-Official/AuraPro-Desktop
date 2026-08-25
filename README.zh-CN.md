@@ -31,14 +31,16 @@ AuraPro Desktop 负责安装、启动和管理 AuraPro 的本地服务与可选�
 
 ## 支持平台
 
-| 操作系统        | 架构                 | 发布格式                |
-| --------------- | -------------------- | ----------------------- |
-| Windows 10/11   | x64、ARM64           | NSIS `.exe`             |
-| macOS 12 及以上 | Apple Silicon、Intel | `.dmg`、`.zip`          |
-| Linux           | x64、ARM64           | AppImage、Debian 软件包 |
-| Linux x64       | x64                  | Snap、Flatpak           |
+| 操作系统                         | 架构                 | 发布格式                |
+| -------------------------------- | -------------------- | ----------------------- |
+| Windows 10/11                    | x64                  | NSIS `.exe`             |
+| Windows 11                       | ARM64                | NSIS `.exe`             |
+| macOS 13 及以上                  | Apple Silicon、Intel | `.dmg`、`.zip`          |
+| glibc 2.28 及以上的 Linux        | x64、ARM64           | AppImage、Debian 软件包 |
+| glibc 2.28 及以上的 Linux（x64） | x64                  | Snap、Flatpak           |
 
 不同平台和架构的可用组件可能有所不同。实际发布文件以 [Releases](https://github.com/AuraPro-Official/AuraPro-Desktop/releases) 页面为准。
+Windows 11 ARM64 使用原生 ARM64 桌面程序；由于部分 AI 依赖尚未提供 Windows ARM64 wheel，本地 Python 服务会通过 Windows 自带的 x64 模拟层运行。
 
 ## 安装与使用
 
