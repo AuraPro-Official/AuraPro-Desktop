@@ -7,24 +7,6 @@ All notable changes to AuraPro Desktop are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.9.29] - 2026-08-25
-
-### Added
-
-- Added live Code Agent progress, elapsed time, current tool activity, and delayed-step notices.
-- Added automated runtime compatibility checks for all supported desktop platform targets.
-
-### Changed
-
-- Improved llama.cpp release discovery for upstream pre-release builds and platform-specific assets.
-- Improved microphone and speaker selector styling to match the rest of WebUI settings.
-
-### Fixed
-
-- Fixed Intel Mac WebUI installation failing when a dependency attempted an unsupported source build.
-- Fixed Code Agent changed-file and code-diff reporting.
-- Fixed unsupported runtime variants being offered on incompatible systems.
-
 ## [3.6.5] - 2026-06-19
 
 ### Added
