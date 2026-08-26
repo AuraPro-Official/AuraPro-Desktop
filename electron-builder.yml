@@ -40,9 +40,6 @@ mac:
   target:
     - target: dmg
     - target: zip
-      arch:
-        - x64
-        - arm64
   artifactName: ${name}-${arch}-mac.${ext}
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
