@@ -142,7 +142,7 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.9.29'
+export const AURAPRO_UI_TARGET_VERSION = '3.9.30'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
 export const AURAPRO_UI_LAST_VERSION = '3.9.3'
@@ -888,7 +888,7 @@ export const installPython = async (
     await new Promise<void>((resolve, reject) => {
       execFile(
         pythonPath,
-        ['-m', 'pip', 'install', 'uv'],
+        ['-m', 'pip', 'install', '--upgrade', 'pip', 'uv'],
         {
           encoding: 'utf-8',
           env: pythonEnv(),
@@ -948,6 +948,16 @@ const pythonEnv = (extra: Record<string, string> = {}): Record<string, string> =
   const base = Object.fromEntries(
     Object.entries(process.env).filter((entry): entry is [string, string] => Boolean(entry[1]))
   )
+  const binarySelectionOverrides = new Set([
+    'PIP_NO_BINARY',
+    'PIP_ONLY_BINARY',
+    'UV_NO_BINARY',
+    'UV_ONLY_BINARY'
+  ])
+
+  for (const key of Object.keys(base)) {
+    if (binarySelectionOverrides.has(key.toUpperCase())) delete base[key]
+  }
 
   if (process.platform === 'win32') {
     // python.exe lives at the root of the installation directory on Windows
@@ -1173,7 +1183,14 @@ export const installPackage = (
           ...(localOpenWebUISourcePath ? ['-e', localOpenWebUISourcePath] : [packageSpec]),
           ...(localOpenWebUISourcePath || version ? [] : ['-U']),
           ...(isAuraProUiPackage && !localOpenWebUISourcePath
-            ? ['--refresh-package', packageName]
+            ? [
+                '--refresh-package',
+                packageName,
+                '--refresh-package',
+                'cryptography',
+                '--only-binary',
+                'cryptography'
+              ]
             : [])
         ],
         {
