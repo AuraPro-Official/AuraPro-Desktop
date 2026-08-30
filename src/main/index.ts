@@ -46,6 +46,7 @@ import {
   getPackageVersion,
   ensureOpenWebUIPackage,
   getOpenWebUIPackageNameForVersion,
+  cleanupPythonPackageCaches,
   AURAPRO_UI_TARGET_VERSION,
   resolveOpenWebUITargetVersion,
   getLocalNetworkAddresses,
@@ -2461,7 +2462,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
           (status: string) => {
             sendToRenderer('status:install', status)
           },
-          { forceLatest: true }
+          { forceLatest: true, cleanupCaches: false }
         )
         sendToRenderer('status:install', 'Installing Open Terminal…')
         await installPackage('open-terminal', otVersion, (status: string) => {
@@ -2483,7 +2484,9 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
           log.error('Failed to copy bundled data:', e)
         }
 
-        scheduleCacheCleanup(['python-packages'], 'webui-install-or-update')
+        await cleanupPythonPackageCaches((status) => {
+          sendToRenderer('status:install', status)
+        })
         sendToRenderer('status:package', true)
         return true
       } catch (error: unknown) {
@@ -3773,10 +3776,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
           await startGlossaryCtxSizeSync()
           await startConfiguredServices(defaultConnection)
         } finally {
-          scheduleCacheCleanup(
-            ['python-packages', 'huggingface'],
-            'application-startup-after-services'
-          )
+          scheduleCacheCleanup(['huggingface'], 'application-startup-after-services')
         }
       })().catch((error) => {
         log.error('[startup] Background startup failed:', error)
