@@ -22,6 +22,7 @@ import {
 import { downloadModel } from './huggingface'
 import { ServiceLock, isProcessAlive } from './service-lock'
 import { hasLlamaCppRuntimeAnomaly } from './llamacpp-log-diagnostics'
+import { scheduleLlamaCppVersionCleanup } from './cache-cleanup'
 import {
   isNewerLlamaBuild,
   parseLlamaBuildTag,
@@ -1586,6 +1587,7 @@ export const updateLlamaCpp = async (
   const currentInfo = getLlamaCppInfo()
   if (currentInfo.version && !isNewerLlamaBuild(currentInfo.version, latestRelease.tag_name)) {
     onStatus?.('Already up to date')
+    scheduleLlamaCppVersionCleanup(currentInfo.version)
     return currentInfo
   }
 
@@ -1619,20 +1621,8 @@ export const updateLlamaCpp = async (
   }
 
   const updatedInfo = getLlamaCppInfo()
-  if (
-    currentInfo.version &&
-    updatedInfo.version === latestRelease.tag_name &&
-    currentInfo.version !== updatedInfo.version
-  ) {
-    const oldCacheDir = path.join(getInstallDir(), 'llama.cpp', currentInfo.version)
-    if (fs.existsSync(oldCacheDir)) {
-      onStatus?.('Removing old version...')
-      try {
-        fs.rmSync(oldCacheDir, { recursive: true, force: true })
-      } catch (error) {
-        log.warn(`Failed to remove old llama.cpp cache at ${oldCacheDir}:`, error)
-      }
-    }
+  if (updatedInfo.version) {
+    scheduleLlamaCppVersionCleanup(updatedInfo.version)
   }
 
   return updatedInfo

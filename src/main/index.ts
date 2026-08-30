@@ -62,6 +62,7 @@ import {
   type Connection
 } from './utils'
 import { installLocalCertificate } from './utils/local-certificate'
+import { scheduleCacheCleanup } from './utils/cache-cleanup'
 
 import {
   startOpenTerminal,
@@ -2482,6 +2483,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
           log.error('Failed to copy bundled data:', e)
         }
 
+        scheduleCacheCleanup(['python-packages'], 'webui-install-or-update')
         sendToRenderer('status:package', true)
         return true
       } catch (error: unknown) {
@@ -3629,6 +3631,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
             percent: 100,
             filepath
           })
+          scheduleCacheCleanup(['huggingface'], 'manual-model-download')
           await reloadLlamaCppModelsAfterDownload(filepath)
           return filepath
         } catch (error) {
@@ -3764,10 +3767,17 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
       }
 
       void (async () => {
-        await migrateWebUIDistributionConfigIfNeeded()
-        await migrateDataIfNeeded()
-        await startGlossaryCtxSizeSync()
-        await startConfiguredServices(defaultConnection)
+        try {
+          await migrateWebUIDistributionConfigIfNeeded()
+          await migrateDataIfNeeded()
+          await startGlossaryCtxSizeSync()
+          await startConfiguredServices(defaultConnection)
+        } finally {
+          scheduleCacheCleanup(
+            ['python-packages', 'huggingface'],
+            'application-startup-after-services'
+          )
+        }
       })().catch((error) => {
         log.error('[startup] Background startup failed:', error)
       })
