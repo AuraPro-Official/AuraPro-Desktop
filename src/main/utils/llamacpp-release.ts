@@ -27,6 +27,9 @@ export const sortLlamaBuildTagsNewestFirst = (tags: string[]): string[] =>
     return right.localeCompare(left)
   })
 
+export const selectHistoricalLlamaBuilds = (tags: string[], activeTag: string): string[] =>
+  tags.filter((tag) => parseLlamaBuildTag(tag) !== null && tag !== activeTag)
+
 export const selectLatestCompatibleLlamaRelease = (
   releases: LlamaRelease[],
   isCompatible: (release: LlamaRelease) => boolean

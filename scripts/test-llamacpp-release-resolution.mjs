@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   isNewerLlamaBuild,
+  selectHistoricalLlamaBuilds,
   selectLatestCompatibleLlamaRelease,
   sortLlamaBuildTagsNewestFirst
 } from '../src/main/utils/llamacpp-release.ts'
@@ -52,4 +53,11 @@ test('only reports an update when the candidate build is newer', () => {
   assert.equal(isNewerLlamaBuild('b10589', 'b10590'), true)
   assert.equal(isNewerLlamaBuild('b10590', 'b10590'), false)
   assert.equal(isNewerLlamaBuild('b10591', 'b10590'), false)
+})
+
+test('only selects historical nightly build directories for removal', () => {
+  assert.deepEqual(
+    selectHistoricalLlamaBuilds(['b10590', 'b10589', 'runtime-cache', 'models'], 'b10590'),
+    ['b10589']
+  )
 })
