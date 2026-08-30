@@ -8,7 +8,7 @@ import { getInstallDir, getPythonPath } from './index'
 import { getHfCacheDir } from './huggingface'
 import { selectHistoricalLlamaBuilds } from './llamacpp-release'
 
-export type CacheCleanupKind = 'python-packages' | 'huggingface' | 'llamacpp'
+export type CacheCleanupKind = 'huggingface' | 'llamacpp'
 
 const CLEANUP_DELAY_MS = 15_000
 const STALE_DOWNLOAD_AGE_MS = 60 * 60 * 1000
@@ -27,6 +27,7 @@ const runPython = (args: string[], label: string, timeout = 10 * 60 * 1000): Pro
       return
     }
 
+    log.info(`[cache-cleanup:${label}] Starting`)
     execFile(
       pythonPath,
       args,
@@ -43,15 +44,11 @@ const runPython = (args: string[], label: string, timeout = 10 * 60 * 1000): Pro
         const output = `${stdout ?? ''}\n${stderr ?? ''}`.trim()
         if (output) log.info(`[cache-cleanup:${label}] ${output}`)
         if (error) log.warn(`[cache-cleanup] ${label} failed; continuing:`, error)
+        else log.info(`[cache-cleanup:${label}] Completed`)
         resolve()
       }
     )
   })
-
-const cleanupPythonPackageCaches = async (): Promise<void> => {
-  await runPython(['-m', 'uv', 'cache', 'clean'], 'uv')
-  await runPython(['-m', 'pip', 'cache', 'purge'], 'pip')
-}
 
 const cleanupDesktopDownloadTemps = async (): Promise<void> => {
   const cacheRoot = getHfCacheDir()
@@ -216,7 +213,6 @@ const runPendingCleanup = async (): Promise<void> => {
     log.info(
       `[cache-cleanup] Starting background cleanup: ${[...kinds].join(', ')}; reason=${reasons.join(', ')}`
     )
-    if (kinds.has('python-packages')) await cleanupPythonPackageCaches()
     if (kinds.has('huggingface')) await cleanupHuggingFaceCaches()
     if (kinds.has('llamacpp') && llamaVersion) {
       await cleanupHistoricalLlamaCppVersions(llamaVersion)

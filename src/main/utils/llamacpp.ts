@@ -1491,8 +1491,15 @@ export const startLlamaCppWithFallback = async (onStatus?: (status: string) => v
     })
   }
 
+  const startAndScheduleCleanup = async () => {
+    const result = await startLlamaCpp(onStatus)
+    const activeVersion = getLlamaCppInfo().version
+    if (activeVersion) scheduleLlamaCppVersionCleanup(activeVersion)
+    return result
+  }
+
   try {
-    return await startLlamaCpp(onStatus)
+    return await startAndScheduleCleanup()
   } catch (err) {
     if (!(err instanceof LlamaStartError) || !err.canFallback) throw err
     const { version: currentInstalledTag } = getLlamaCppInfo()
@@ -1509,7 +1516,7 @@ export const startLlamaCppWithFallback = async (onStatus?: (status: string) => v
     log.warn(`Falling back to pinned fallback build: ${fallbackVersion}`)
 
     try {
-      return await startLlamaCpp(onStatus)
+      return await startAndScheduleCleanup()
     } finally {
       if (originalVersion === 'latest') {
         const latestConfig = await getConfig()

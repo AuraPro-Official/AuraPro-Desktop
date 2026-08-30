@@ -142,7 +142,7 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.9.31'
+export const AURAPRO_UI_TARGET_VERSION = '3.9.32'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
 export const AURAPRO_UI_LAST_VERSION = '3.9.3'
@@ -979,6 +979,54 @@ export const getPythonPath = (installationDir?: string) => {
   return path.normalize(getPythonExecutablePath(installationDir || getPythonInstallationDir()))
 }
 
+const runPythonCacheCommand = async (
+  args: string[],
+  label: string,
+  timeout = 2 * 60 * 1000
+): Promise<void> => {
+  const pythonPath = getPythonPath()
+  if (!fs.existsSync(pythonPath)) return
+
+  log.info(`[cache-cleanup:${label}] Starting before WebUI service launch`)
+  await new Promise<void>((resolve) => {
+    execFile(
+      pythonPath,
+      args,
+      {
+        encoding: 'utf-8',
+        env: pythonEnv(),
+        windowsHide: true,
+        timeout
+      },
+      (error, stdout, stderr) => {
+        const output = `${stdout ?? ''}\n${stderr ?? ''}`.trim()
+        if (output) log.info(`[cache-cleanup:${label}] ${output}`)
+        if (error) log.warn(`[cache-cleanup] ${label} failed; continuing:`, error)
+        else log.info(`[cache-cleanup:${label}] Completed`)
+        resolve()
+      }
+    )
+  })
+}
+
+let pythonPackageCacheCleanupPromise: Promise<void> | null = null
+
+export const cleanupPythonPackageCaches = async (
+  onStatus?: (status: string) => void
+): Promise<void> => {
+  if (pythonPackageCacheCleanupPromise) return await pythonPackageCacheCleanupPromise
+
+  pythonPackageCacheCleanupPromise = (async () => {
+    onStatus?.('Cleaning package caches...')
+    await runPythonCacheCommand(['-m', 'uv', 'cache', 'clean'], 'uv')
+    await runPythonCacheCommand(['-m', 'pip', 'cache', 'purge'], 'pip')
+  })().finally(() => {
+    pythonPackageCacheCleanupPromise = null
+  })
+
+  await pythonPackageCacheCleanupPromise
+}
+
 export const isPythonInstalled = (installationDir?: string) => {
   const pythonPath = getPythonPath(installationDir)
   if (!fs.existsSync(pythonPath)) {
@@ -1410,7 +1458,7 @@ const removeSupersededOpenWebUIDistribution = (
 export const ensureOpenWebUIPackage = async (
   targetVersion = AURAPRO_UI_TARGET_VERSION,
   onStatus?: (status: string) => void,
-  options: { forceLatest?: boolean } = {}
+  options: { forceLatest?: boolean; cleanupCaches?: boolean } = {}
 ): Promise<OpenWebUIPackageName> => {
   const desiredVersion = resolveOpenWebUITargetVersion(targetVersion)
   const useLatest = isLatestOpenWebUITarget(desiredVersion)
@@ -1460,6 +1508,7 @@ export const ensureOpenWebUIPackage = async (
   if (targetSatisfied && !hasSupersededPackage) {
     await installTorchPackage(version ?? desiredVersion, onStatus)
     await ensureEpubConceptRuntimePackage(onStatus)
+    if (options.cleanupCaches !== false) await cleanupPythonPackageCaches(onStatus)
     return desiredPackageName
   }
 
@@ -1528,6 +1577,7 @@ export const ensureOpenWebUIPackage = async (
 
   await installTorchPackage(installedVersion ?? desiredVersion, onStatus)
   await ensureEpubConceptRuntimePackage(onStatus)
+  if (options.cleanupCaches !== false) await cleanupPythonPackageCaches(onStatus)
   return desiredPackageName
 }
 
