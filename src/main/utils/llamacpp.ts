@@ -1053,11 +1053,7 @@ const normalizePositiveInteger = (value: unknown): number | null => {
   return Math.max(1, Math.floor(numeric))
 }
 
-const getDefaultParallel = (): number => {
-  const totalMemGB = Math.round(os.totalmem() / (1024 * 1024 * 1024))
-  if (process.platform === 'darwin') return totalMemGB <= 16 ? 1 : 2
-  return totalMemGB <= 32 ? 1 : 2
-}
+const getDefaultParallel = (): number => 1
 
 const sortModelsForPreset = (
   models: Array<{ filepath: string; mtimeMs: number }>

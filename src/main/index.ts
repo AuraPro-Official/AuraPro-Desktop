@@ -1547,6 +1547,19 @@ const migrateWebUIDistributionConfigIfNeeded = async (): Promise<void> => {
   }
 }
 
+const migrateLlamaParallelConfigIfNeeded = async (): Promise<void> => {
+  if (!CONFIG) CONFIG = await getConfig()
+  const requiredMigrationVersion = 1
+  if (Number(CONFIG.llamaParallelMigrationVersion ?? 0) >= requiredMigrationVersion) return
+
+  await setConfig({
+    llamaParallelMigrationVersion: requiredMigrationVersion,
+    llamaCpp: { ...CONFIG.llamaCpp, parallel: 1 }
+  })
+  CONFIG = await getConfig()
+  log.info('Migrated the default llama.cpp parallel slot count to 1')
+}
+
 let lastAutomaticLlamaDiagnosticFingerprint: string | null = null
 
 const runAutomaticLlamaDiagnostic = async (
@@ -3773,6 +3786,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
         try {
           await migrateWebUIDistributionConfigIfNeeded()
           await migrateDataIfNeeded()
+          await migrateLlamaParallelConfigIfNeeded()
           await startGlossaryCtxSizeSync()
           await startConfiguredServices(defaultConnection)
         } finally {

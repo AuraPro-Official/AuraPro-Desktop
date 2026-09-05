@@ -142,7 +142,7 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.9.34'
+export const AURAPRO_UI_TARGET_VERSION = '3.9.35'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
 export const AURAPRO_UI_LAST_VERSION = '3.9.3'
@@ -2213,6 +2213,7 @@ export interface AppConfig {
   version: number
   dataVersion: number
   webuiDistributionMigrationVersion: number
+  llamaParallelMigrationVersion: number
   defaultConnectionId: string | null
   connections: Connection[]
   runInBackground: boolean
@@ -2312,6 +2313,7 @@ const DEFAULT_CONFIG: AppConfig = {
   version: 0,
   dataVersion: 0,
   webuiDistributionMigrationVersion: 0,
+  llamaParallelMigrationVersion: 0,
   defaultConnectionId: null,
   connections: [],
   runInBackground: true,
@@ -2345,6 +2347,7 @@ const DEFAULT_CONFIG: AppConfig = {
     fallbackVersion: 'b9637',
     badVersions: [],
     variant: 'auto',
+    parallel: 1,
     mtpEnabled: false,
     multimodalEnabled: true,
     extraArgs: []

@@ -5,12 +5,6 @@
   import Switch from '../../common/Switch.svelte'
   import { getErrorMessage } from '../../../utils/errors'
 
-  interface SystemInfo {
-    totalMemGB?: number
-    platform?: string
-    architecture?: string
-  }
-
   interface LlamaInfo {
     url?: string
     status?: string
@@ -42,15 +36,8 @@
     updateAvailable: boolean
   } | null>(null)
   let updateError = $state<string | null>(null)
-  let defaultParallel = $state(2)
+  let defaultParallel = $state(1)
   let systemArchitecture = $state('')
-
-  const getDefaultParallel = (sysInfo: SystemInfo | null) => {
-    const totalMemGB = Number(sysInfo?.totalMemGB ?? 0)
-    const platform = sysInfo?.platform ?? ''
-    if (platform === 'darwin') return totalMemGB > 0 && totalMemGB <= 16 ? 1 : 2
-    return totalMemGB > 0 && totalMemGB <= 32 ? 1 : 2
-  }
 
   const normalizePositiveInteger = (value: unknown, fallback: number) => {
     const numeric = Number(value)
@@ -61,7 +48,6 @@
   onMount(async () => {
     lsInfo = await window.electronAPI.getLlamaCppInfo()
     const sysInfo = await window.electronAPI.getSystemInfo().catch(() => null)
-    defaultParallel = getDefaultParallel(sysInfo)
     systemArchitecture = sysInfo?.architecture ?? ''
     loaded = true
 

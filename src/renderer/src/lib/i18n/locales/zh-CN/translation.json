@@ -299,7 +299,7 @@
   "settings.inference.contextSize": "上下文长度",
   "settings.inference.contextSizeDesc": "设置模型的最大上下文长度（默认：16384）",
   "settings.inference.parallelSlots": "并发槽位",
-  "settings.inference.parallelSlotsDesc": "设置 llama.cpp 服务的并发槽位数。数值越低，占用内存越少",
+  "settings.inference.parallelSlotsDesc": "设置并发槽位数。每个槽位的可用上下文长度约为总上下文长度除以并发槽位数，建议设为 1",
   "settings.inference.mtp": "MTP 推测解码",
   "settings.inference.mtpDesc": "提高 40%~150% 的回复速度，但会增加约 1-2GB 的内存或显存占用，如果配置不够则可能提升不明显，甚至导致速度更慢。配置吃紧的用户建议不要开启。",
   "settings.inference.multimodal": "多模态",

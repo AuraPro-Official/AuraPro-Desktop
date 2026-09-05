@@ -323,7 +323,7 @@
   "settings.inference.contextSize": "Context size",
   "settings.inference.contextSizeDesc": "Set the maximum context length for models (default: 16384)",
   "settings.inference.parallelSlots": "Parallel slots",
-  "settings.inference.parallelSlotsDesc": "Set llama.cpp server slots. Lower values reduce memory usage",
+  "settings.inference.parallelSlotsDesc": "Set the number of parallel slots. The available context length per slot is approximately the total context length divided by the number of slots. Recommended: 1",
   "settings.inference.mtp": "MTP Speculative Decoding",
   "settings.inference.mtpDesc": "Improves response speed by 40%-150%, but uses roughly 1-2 GB more RAM or VRAM. On insufficient hardware, the gain may be small or performance may even decrease. Users with tight resources should leave it off.",
   "settings.inference.multimodal": "Multimodal",

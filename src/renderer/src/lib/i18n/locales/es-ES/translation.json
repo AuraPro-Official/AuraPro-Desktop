@@ -223,6 +223,8 @@
   "settings.inference.extraArguments": "Argumentos adicionales",
   "settings.inference.extraArgumentsDesc": "Flags CLI adicionales para llama-server",
   "settings.inference.extraArgumentsPlaceholder": "ej. --model /path/to/model.gguf -ngl 99",
+  "settings.inference.parallelSlots": "Ranuras en paralelo",
+  "settings.inference.parallelSlotsDesc": "Configura el número de ranuras en paralelo. La longitud de contexto disponible por ranura es aproximadamente la longitud total dividida por el número de ranuras. Se recomienda: 1",
   "settings.inference.redownload": "Volver a descargar",
   "settings.inference.variantAuto": "Automático (recomendado)",
   "settings.inference.variantDefaultMetal": "Predeterminado (Metal)",
