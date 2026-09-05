@@ -4,9 +4,10 @@ import * as path from 'path'
 import { createHash } from 'crypto'
 import { execFileSync, execSync } from 'child_process'
 
+import { app } from 'electron'
 import log from 'electron-log'
 
-import { getConfig, getInstallDir, portInUse, setConfig } from './index'
+import { getConfig, getExactPackageVersions, getInstallDir, portInUse, setConfig } from './index'
 import { downloadModel, getModelsDir, listModels, type HfModel } from './huggingface'
 import {
   getLlamaCppInfo,
@@ -23,6 +24,8 @@ import {
   inspectLlamaCppMtpLog,
   inspectLlamaCppMultimodalLog
 } from './llamacpp-log-diagnostics'
+import { getOpenCodeInfo } from './opencode'
+import { getInstalledOfficialGlossaryVersion } from './official-glossaries'
 
 export type LlamaDiagnosticSeverity = 'error' | 'warning' | 'info'
 export type LlamaRepairAction =
@@ -52,6 +55,18 @@ export interface LlamaDiagnosticReport {
   fingerprint: string
   variant: string
   recommendedVariant: string
+  system: {
+    operatingSystem: string
+    cpuModel: string
+  }
+  software: {
+    auraProVersion: string
+    webuiVersion: string | null
+    optionalComponents: Array<{
+      id: 'sherpa' | 'official-glossaries' | 'open-terminal' | 'opencode' | 'pytorch'
+      version: string
+    }>
+  }
   hardware: {
     nvidiaDetected: boolean
     gpuNames: string[]
@@ -119,6 +134,111 @@ interface CompanionModelSource {
 }
 
 const GB = 1024 * 1024 * 1024
+
+const runTextCommand = (command: string, args: string[]): string | null => {
+  try {
+    return execFileSync(command, args, {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 5000
+    }).trim()
+  } catch {
+    return null
+  }
+}
+
+const getWindowsVersion = (): string => {
+  const releaseParts = os.release().split('.')
+  const registryOutput = runTextCommand('reg.exe', [
+    'query',
+    'HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion'
+  ])
+  const registryValues = new Map<string, string>()
+
+  for (const line of registryOutput?.split(/\r?\n/) ?? []) {
+    const match = line.match(/^\s*(\S+)\s+REG_\S+\s+(.+?)\s*$/)
+    if (match) registryValues.set(match[1], match[2])
+  }
+
+  const build = registryValues.get('CurrentBuildNumber') ?? releaseParts[2] ?? os.release()
+  const updateRevisionRaw = registryValues.get('UBR')
+  const updateRevision = updateRevisionRaw ? Number(updateRevisionRaw) : Number.NaN
+  const numericBuild = Number(build)
+  const productName = registryValues.get('ProductName') ?? ''
+  const displayName = /Windows Server/i.test(productName)
+    ? productName.replace(/^Microsoft\s+/i, '')
+    : numericBuild >= 22000
+      ? 'Windows 11'
+      : numericBuild > 0
+        ? 'Windows 10'
+        : 'Windows'
+  const fullBuild = Number.isFinite(updateRevision) ? `${build}.${updateRevision}` : build
+  return `${displayName} · build ${fullBuild}`
+}
+
+const getLinuxVersion = (): string => {
+  let distribution = os.type()
+  try {
+    const osRelease = fs.readFileSync('/etc/os-release', 'utf8')
+    const prettyName = osRelease.match(/^PRETTY_NAME=(.+)$/m)?.[1]?.trim()
+    if (prettyName) distribution = prettyName.replace(/^["']|["']$/g, '')
+  } catch {}
+  return `${distribution} · kernel ${os.release()}`
+}
+
+const getOperatingSystemVersion = (): string => {
+  if (process.platform === 'win32') return getWindowsVersion()
+  if (process.platform === 'darwin') {
+    const productVersion = runTextCommand('/usr/bin/sw_vers', ['-productVersion'])
+    return productVersion ? `macOS ${productVersion}` : `macOS · Darwin ${os.release()}`
+  }
+  if (process.platform === 'linux') return getLinuxVersion()
+  return `${os.type()} ${os.release()}`
+}
+
+const getCpuModel = (): string => {
+  const model = os
+    .cpus()
+    .find((cpu) => cpu.model.trim())
+    ?.model.trim()
+  return model || `${os.arch()} CPU`
+}
+
+const getSoftwareVersions = async (): Promise<LlamaDiagnosticReport['software']> => {
+  const packageVersions = await getExactPackageVersions([
+    'aurapro-webui',
+    'aurapro-ui',
+    'open-webui',
+    'sherpa-onnx',
+    'open-terminal',
+    'torch'
+  ])
+  const glossaryVersion = await getInstalledOfficialGlossaryVersion()
+  const openCodeVersion = getOpenCodeInfo().version
+  const optionalComponents: LlamaDiagnosticReport['software']['optionalComponents'] = []
+  const addOptional = (
+    id: LlamaDiagnosticReport['software']['optionalComponents'][number]['id'],
+    version: string | null | undefined
+  ): void => {
+    if (version) optionalComponents.push({ id, version })
+  }
+
+  addOptional('sherpa', packageVersions['sherpa-onnx'])
+  addOptional('official-glossaries', glossaryVersion)
+  addOptional('open-terminal', packageVersions['open-terminal'])
+  addOptional('opencode', openCodeVersion)
+  addOptional('pytorch', packageVersions.torch)
+
+  return {
+    auraProVersion: app.getVersion(),
+    webuiVersion:
+      packageVersions['aurapro-webui'] ??
+      packageVersions['aurapro-ui'] ??
+      packageVersions['open-webui'] ??
+      null,
+    optionalComponents
+  }
+}
 
 const OFFICIAL_MODEL_SOURCES: Record<string, OfficialModelSource> = {
   'lowest.gguf': {
@@ -591,7 +711,11 @@ export const diagnoseLlamaCpp = async (
   trigger = 'manual',
   startupError?: string
 ): Promise<LlamaDiagnosticReport> => {
-  const config = await getConfig()
+  const [config, software] = await Promise.all([getConfig(), getSoftwareVersions()])
+  const system = {
+    operatingSystem: getOperatingSystemVersion(),
+    cpuModel: getCpuModel()
+  }
   const configuredVariant = normalizeVariant(config.llamaCpp?.variant)
   const probe = probeNvidia()
   const recommendedVariant = recommendedVariantFor(probe)
@@ -606,8 +730,17 @@ export const diagnoseLlamaCpp = async (
   const totalRamBytes = os.totalmem()
   const freeRamBytes = os.freemem()
   const evidence: string[] = [
+    'Operating system: ' + system.operatingSystem,
+    'CPU: ' + system.cpuModel,
+    'AuraPro: ' + software.auraProVersion,
+    'WebUI: ' + (software.webuiVersion ?? 'not installed'),
     `System memory free: ${(freeRamBytes / 1024 ** 3).toFixed(1)} / ${(totalRamBytes / 1024 ** 3).toFixed(1)} GiB`
   ]
+  evidence.push(
+    ...software.optionalComponents.map(
+      (component) => `Installed component ${component.id}: ${component.version}`
+    )
+  )
 
   if (probe.detected && variant === 'cpu' && process.platform === 'win32') {
     evidence.push(`NVIDIA GPU available for acceleration: ${probe.names.join(', ')}`)
@@ -1166,6 +1299,8 @@ export const diagnoseLlamaCpp = async (
     fingerprint,
     variant,
     recommendedVariant,
+    system,
+    software,
     hardware: {
       nvidiaDetected: probe.detected,
       gpuNames: probe.names.length > 0 ? probe.names : adapterNamesFromProbe(probe),

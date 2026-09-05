@@ -300,6 +300,9 @@ const readInstalledManifest = async (): Promise<OfficialGlossaryManifest | null>
   }
 }
 
+export const getInstalledOfficialGlossaryVersion = async (): Promise<string | null> =>
+  (await readInstalledManifest())?.version ?? null
+
 const fetchUpdateMetadata = async (): Promise<OfficialGlossaryUpdateMetadata> => {
   const metadataUrl = new URL(getUpdateMetadataUrl())
   ensureDownloadUrlIsSafe(metadataUrl)

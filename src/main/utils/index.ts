@@ -142,7 +142,7 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.9.32'
+export const AURAPRO_UI_TARGET_VERSION = '3.9.33'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
 export const AURAPRO_UI_LAST_VERSION = '3.9.3'
@@ -987,7 +987,7 @@ const runPythonCacheCommand = async (
   const pythonPath = getPythonPath()
   if (!fs.existsSync(pythonPath)) return
 
-  log.info(`[cache-cleanup:${label}] Starting before WebUI service launch`)
+  log.info(`[cache-cleanup:${label}] Starting after package installation or update`)
   await new Promise<void>((resolve) => {
     execFile(
       pythonPath,
@@ -1352,6 +1352,56 @@ export const getExactPackageVersion = (packageName: string): string | null => {
   }
 }
 
+export const getExactPackageVersions = async (
+  packageNames: string[]
+): Promise<Record<string, string>> => {
+  const pythonPath = getPythonPath()
+  if (!fs.existsSync(pythonPath)) return {}
+
+  const names = [...new Set(packageNames.map((name) => name.trim()).filter(Boolean))]
+  if (names.length === 0) return {}
+
+  const script = [
+    'import importlib.metadata as metadata, json, sys',
+    'versions = {}',
+    'for name in sys.argv[1:]:',
+    '    try:',
+    '        versions[name] = metadata.version(name)',
+    '    except metadata.PackageNotFoundError:',
+    '        pass',
+    'print(json.dumps(versions))'
+  ].join('\n')
+
+  try {
+    const output = await new Promise<string>((resolve, reject) => {
+      execFile(
+        pythonPath,
+        ['-c', script, ...names],
+        {
+          encoding: 'utf-8',
+          env: pythonEnv(),
+          windowsHide: true,
+          timeout: 15000
+        },
+        (error, stdout) => {
+          if (error) reject(error)
+          else resolve(stdout)
+        }
+      )
+    })
+    const parsed = JSON.parse(output) as Record<string, unknown>
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        (entry): entry is [string, string] =>
+          names.includes(entry[0]) && typeof entry[1] === 'string' && entry[1].trim().length > 0
+      )
+    )
+  } catch (error) {
+    log.warn('Failed to read installed Python package versions:', error)
+    return {}
+  }
+}
+
 export const getPackageVersion = (packageName: string): string | null => {
   const pythonPath = getPythonPath()
   if (!fs.existsSync(pythonPath)) return null
@@ -1463,10 +1513,15 @@ export const ensureOpenWebUIPackage = async (
   const desiredVersion = resolveOpenWebUITargetVersion(targetVersion)
   const useLatest = isLatestOpenWebUITarget(desiredVersion)
   const desiredPackageName = getOpenWebUIPackageNameForVersion(desiredVersion)
-  const version = getExactPackageVersion(desiredPackageName)
-  const newAuraProVersion = getExactPackageVersion('aurapro-webui')
-  const legacyAuraProVersion = getExactPackageVersion('aurapro-ui')
-  const legacyOpenWebUIVersion = getExactPackageVersion('open-webui')
+  const installedVersions = await getExactPackageVersions([
+    'aurapro-webui',
+    'aurapro-ui',
+    'open-webui'
+  ])
+  const version = installedVersions[desiredPackageName] ?? null
+  const newAuraProVersion = installedVersions['aurapro-webui'] ?? null
+  const legacyAuraProVersion = installedVersions['aurapro-ui'] ?? null
+  const legacyOpenWebUIVersion = installedVersions['open-webui'] ?? null
   const migratableLegacyAuraProVersion =
     legacyAuraProVersion && isVersionAtOrBefore(legacyAuraProVersion, AURAPRO_UI_LAST_VERSION)
       ? legacyAuraProVersion
@@ -1488,6 +1543,19 @@ export const ensureOpenWebUIPackage = async (
   const targetSatisfied =
     runtimeHealthy && (useLatest ? options.forceLatest !== true : version === desiredVersion)
 
+  const ensureRuntimeDependencies = async (packageVersion: string, packageChanged = false) => {
+    let runtimeChanged = packageChanged
+    const onInstalled = () => {
+      runtimeChanged = true
+    }
+    await installTorchPackage(packageVersion, onStatus, onInstalled)
+    await ensureEpubConceptRuntimePackage(onStatus, onInstalled)
+    // Ordinary launches only verify dependencies. Clean once, after all mutations finish.
+    if (runtimeChanged && options.cleanupCaches !== false) {
+      await cleanupPythonPackageCaches(onStatus)
+    }
+  }
+
   if (version && !runtimeHealthy) {
     log.warn(
       `Installed ${desiredPackageName} ${version} is missing required runtime files; reinstalling.`
@@ -1506,9 +1574,7 @@ export const ensureOpenWebUIPackage = async (
   }
 
   if (targetSatisfied && !hasSupersededPackage) {
-    await installTorchPackage(version ?? desiredVersion, onStatus)
-    await ensureEpubConceptRuntimePackage(onStatus)
-    if (options.cleanupCaches !== false) await cleanupPythonPackageCaches(onStatus)
+    await ensureRuntimeDependencies(version ?? desiredVersion)
     return desiredPackageName
   }
 
@@ -1575,9 +1641,7 @@ export const ensureOpenWebUIPackage = async (
     }
   }
 
-  await installTorchPackage(installedVersion ?? desiredVersion, onStatus)
-  await ensureEpubConceptRuntimePackage(onStatus)
-  if (options.cleanupCaches !== false) await cleanupPythonPackageCaches(onStatus)
+  await ensureRuntimeDependencies(installedVersion ?? desiredVersion, true)
   return desiredPackageName
 }
 
@@ -1587,7 +1651,8 @@ export const ensureOpenWebUIPackage = async (
  * users must install manually after AuraPro starts.
  */
 export const ensureEpubConceptRuntimePackage = async (
-  onStatus?: (status: string) => void
+  onStatus?: (status: string) => void,
+  onInstalled?: () => void
 ): Promise<void> => {
   const packageName = 'sqlite-vec'
   const version = '0.1.9'
@@ -1606,11 +1671,13 @@ export const ensureEpubConceptRuntimePackage = async (
     )
   }
   log.info(`Installed EPUB runtime dependency: ${packageName}==${version}`)
+  onInstalled?.()
 }
 
 export const installTorchPackage = async (
   version: string,
-  onStatus?: (status: string) => void
+  onStatus?: (status: string) => void,
+  onInstalled?: () => void
 ): Promise<boolean> => {
   void version
   try {
@@ -1649,12 +1716,29 @@ export const installTorchPackage = async (
     log.info(
       `Installing ${logRuntimeLabel} ${expectedVersion} for RAG; llama.cpp variant=${llamaVariant}`
     )
-    execFileSync(getPythonPath(), ['-m', 'uv', 'pip', 'install', '-U', packageSpec, ...indexArgs], {
-      encoding: 'utf-8',
-      env: pythonEnv(),
-      stdio: 'inherit',
-      windowsHide: true
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(
+        getPythonPath(),
+        ['-m', 'uv', 'pip', 'install', '-U', packageSpec, ...indexArgs],
+        { env: pythonEnv(), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }
+      )
+      let lastOutput = ''
+      const handleOutput = (data: Buffer) => {
+        const line = data.toString().trim()
+        if (!line) return
+        lastOutput = line.slice(-2000)
+        log.info(`[pytorch-install] ${line}`)
+        onStatus?.(line)
+      }
+      child.stdout?.on('data', handleOutput)
+      child.stderr?.on('data', handleOutput)
+      child.once('error', reject)
+      child.once('close', (code) => {
+        if (code === 0) resolve()
+        else reject(new Error(lastOutput || `PyTorch installation failed (exit code ${code})`))
+      })
     })
+    onInstalled?.()
     onStatus?.(`${runtimeLabel} 安装完成`)
     return true
   } catch (error) {

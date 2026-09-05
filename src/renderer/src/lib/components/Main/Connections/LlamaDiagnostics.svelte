@@ -19,6 +19,18 @@
     fingerprint: string
     variant: string
     recommendedVariant: string
+    system: {
+      operatingSystem: string
+      cpuModel: string
+    }
+    software: {
+      auraProVersion: string
+      webuiVersion: string | null
+      optionalComponents: Array<{
+        id: 'sherpa' | 'official-glossaries' | 'open-terminal' | 'opencode' | 'pytorch'
+        version: string
+      }>
+    }
     hardware: {
       nvidiaDetected: boolean
       gpuNames: string[]
@@ -81,6 +93,19 @@
     report?.issues.filter((issue) => issue.severity === 'error').length ?? 0
   )
   const formatMemory = (bytes: number): string => `${(bytes / 1024 ** 3).toFixed(1)} GB`
+
+  const componentLabel = (
+    id: DiagnosticReport['software']['optionalComponents'][number]['id']
+  ): string => {
+    const labels: Record<typeof id, [string, string]> = {
+      sherpa: ['Sherpa', 'Sherpa'],
+      'official-glossaries': ['词典', 'Glossaries'],
+      'open-terminal': ['Open Terminal', 'Open Terminal'],
+      opencode: ['OpenCode', 'OpenCode'],
+      pytorch: ['PyTorch', 'PyTorch']
+    }
+    return text(...labels[id])
+  }
 
   const baseIssueId = (id: string): string => id.split(':')[0]
 
@@ -399,6 +424,20 @@
           </div>
 
           <dl class="mt-3 grid grid-cols-[108px_1fr] gap-x-3 gap-y-2 text-[11px]">
+            <dt class="text-black/35 dark:text-white/35">{text('操作系统', 'Operating system')}</dt>
+            <dd
+              class="m-0 break-words text-right font-mono text-black/65 dark:text-white/65"
+              title={report.system.operatingSystem}
+            >
+              {report.system.operatingSystem}
+            </dd>
+            <dt class="text-black/35 dark:text-white/35">{text('处理器', 'CPU')}</dt>
+            <dd
+              class="m-0 break-words text-right text-black/65 dark:text-white/65"
+              title={report.system.cpuModel}
+            >
+              {report.system.cpuModel}
+            </dd>
             <dt class="text-black/35 dark:text-white/35">{text('运行变体', 'Runtime variant')}</dt>
             <dd class="m-0 text-right font-mono text-black/65 dark:text-white/65">
               {report.variant}
@@ -428,6 +467,20 @@
             <dd class="m-0 text-right font-mono text-black/65 dark:text-white/65">
               {report.runtime.version ?? text('未安装', 'Not installed')}
             </dd>
+            <dt class="text-black/35 dark:text-white/35">AuraPro</dt>
+            <dd class="m-0 text-right font-mono text-black/65 dark:text-white/65">
+              {report.software.auraProVersion}
+            </dd>
+            <dt class="text-black/35 dark:text-white/35">WebUI</dt>
+            <dd class="m-0 text-right font-mono text-black/65 dark:text-white/65">
+              {report.software.webuiVersion ?? text('未安装', 'Not installed')}
+            </dd>
+            {#each report.software.optionalComponents as component (component.id)}
+              <dt class="text-black/35 dark:text-white/35">{componentLabel(component.id)}</dt>
+              <dd class="m-0 text-right font-mono text-black/65 dark:text-white/65">
+                {component.version}
+              </dd>
+            {/each}
             <dt class="text-black/35 dark:text-white/35">{text('本地模型', 'Local models')}</dt>
             <dd class="m-0 text-right text-black/65 dark:text-white/65">
               {report.models.total}
