@@ -19,7 +19,7 @@ import {
   type MenuItemConstructorOptions
 } from 'electron'
 import path, { join } from 'path'
-import { access, cp, mkdir, readFile, readdir, rm, statfs } from 'fs/promises'
+import { access, cp, readFile, readdir, statfs } from 'fs/promises'
 import { execFile } from 'child_process'
 import { userInfo } from 'os'
 
@@ -121,6 +121,8 @@ import {
   probeInstallDirectoryWritable,
   type InstallDirectoryWriteProbe
 } from './utils/install-preflight'
+
+import { REQUIRED_DATA_VERSION, seedDataDirectory } from './utils/data-seed'
 
 import log from 'electron-log'
 log.transports.file.resolvePathFn = () => getLogFilePath('main')
@@ -1375,77 +1377,50 @@ const preferLocalConnectionOnStartup = async (config: AppConfig): Promise<AppCon
   return getConfig()
 }
 
+/**
+ * Bring the Open WebUI data directory up to {@link REQUIRED_DATA_VERSION}.
+ *
+ * This used to delete the whole data directory and re-copy the bundle,
+ * preserving glossary files by name. That destroyed every other thing the user
+ * owned — `webui.db` (chats, knowledge bases, accounts, imported EPUB books and
+ * their overlays), `uploads/`, `vector_db/` and the `.key` secret — so the next
+ * bump of the required version would have silently wiped every install on
+ * launch. Seeding is now additive; see `utils/data-seed.ts` for the rules and
+ * for the escape hatch a future step can use to replace a specific seed file.
+ */
 const migrateDataIfNeeded = async (): Promise<void> => {
   if (!CONFIG) CONFIG = await getConfig()
-  const requiredDataVersion = 3
   const currentDataVersion = Number(CONFIG.dataVersion ?? CONFIG.version ?? 0)
-  if (currentDataVersion >= requiredDataVersion) return
+  if (currentDataVersion >= REQUIRED_DATA_VERSION) return
 
   log.info(
-    `Migrating data from version ${currentDataVersion} to ${requiredDataVersion} (replacing data directory)...`
+    `Migrating data from version ${currentDataVersion} to ${REQUIRED_DATA_VERSION} (seeding missing bundled data)...`
   )
   sendToRenderer('startup:migration', { status: 'starting' })
 
   try {
-    const packagedDataDir = getPackagedDataDir()
-    const targetDataDir = getOpenWebUIDataPath()
-    const glossaryBackupDir = join(app.getPath('temp'), `aurapro-glossary-backup-${Date.now()}`)
-    const glossaryItemsToPreserve = [
-      'glossaries',
-      'glossary.settings.json',
-      'glossary.json',
-      'official-glossaries.manifest.json'
-    ]
-    const preservedGlossaryItems: string[] = []
+    const result = await seedDataDirectory({
+      packagedDataDir: getPackagedDataDir(),
+      targetDataDir: getOpenWebUIDataPath(),
+      fromVersion: currentDataVersion,
+      toVersion: REQUIRED_DATA_VERSION,
+      onStatus: (status) => sendToRenderer('startup:migration', { status })
+    })
 
-    if (!(await pathExists(packagedDataDir))) {
-      throw new Error(`Bundled data directory not found: ${packagedDataDir}`)
-    }
-
-    if (await pathExists(targetDataDir)) {
-      const entries = await readdir(targetDataDir, { withFileTypes: true })
-      for (const entry of entries) {
-        if (
-          entry.isFile() &&
-          /^glossary_[A-Za-z0-9_]+\.json$/.test(entry.name) &&
-          !glossaryItemsToPreserve.includes(entry.name)
-        ) {
-          glossaryItemsToPreserve.push(entry.name)
-        }
-      }
-
-      sendToRenderer('startup:migration', { status: 'backing-up' })
-      for (const item of glossaryItemsToPreserve) {
-        const source = join(targetDataDir, item)
-        if (await pathExists(source)) {
-          await mkdir(glossaryBackupDir, { recursive: true })
-          await cp(source, join(glossaryBackupDir, item), { recursive: true, force: true })
-          preservedGlossaryItems.push(item)
-        }
-      }
-      await rm(targetDataDir, { recursive: true, force: true })
-    }
-
-    sendToRenderer('startup:migration', { status: 'copying' })
-    await cp(packagedDataDir, targetDataDir, { recursive: true, force: true })
-
-    for (const item of preservedGlossaryItems) {
-      await cp(join(glossaryBackupDir, item), join(targetDataDir, item), {
-        recursive: true,
-        force: true
-      })
-    }
-
-    if (preservedGlossaryItems.length > 0) {
-      await rm(glossaryBackupDir, { recursive: true, force: true })
+    if (result.replaced.length > 0) {
       log.info(
-        `Preserved user glossary data during database version ${requiredDataVersion} update: ${preservedGlossaryItems.join(', ')}`
+        `Replaced bundled data for version ${REQUIRED_DATA_VERSION}: ${result.replaced.join(', ')}` +
+          (result.backupDir ? ` (previous copies backed up to ${result.backupDir})` : '')
       )
     }
 
-    await setConfig({ version: requiredDataVersion, dataVersion: requiredDataVersion })
+    await setConfig({ version: REQUIRED_DATA_VERSION, dataVersion: REQUIRED_DATA_VERSION })
     CONFIG = await getConfig()
-    log.info(`Successfully replaced data folder for database version ${requiredDataVersion} update`)
+    log.info(
+      `Data directory ready for database version ${REQUIRED_DATA_VERSION}; seeded: ${
+        result.seeded.join(', ') || 'nothing (existing data preserved)'
+      }`
+    )
     sendToRenderer('config:updated', CONFIG)
     sendToRenderer('startup:migration', { status: 'completed' })
   } catch (error) {
