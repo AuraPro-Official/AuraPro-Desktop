@@ -142,7 +142,7 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.9.36'
+export const AURAPRO_UI_TARGET_VERSION = '3.9.38'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
 export const AURAPRO_UI_LAST_VERSION = '3.9.3'
@@ -427,7 +427,12 @@ const isIntegratedGpuName = (name: string): boolean => {
     value.includes('vmware')
   )
     return true
-  if (value.includes('intel') && /(uhd|iris|hd graphics|graphics)/.test(value)) return true
+  if (
+    value.includes('intel') &&
+    !/(arc|iris xe max|data center gpu|flex)/.test(value) &&
+    /(uhd|iris|hd graphics|graphics)/.test(value)
+  )
+    return true
   if (
     /(radeon\(tm\) graphics|radeon graphics|vega \d+)/.test(value) &&
     !/(rx|pro|wx|firepro)/.test(value)
@@ -436,13 +441,22 @@ const isIntegratedGpuName = (name: string): boolean => {
   return false
 }
 
-const parseDxdiagDedicatedVramGB = (): number => {
-  if (process.platform !== 'win32') return 0
+type WindowsGpuInfo = { gpuName: string; dedicatedVramGB: number }
+let windowsGpuInfoRequest: Promise<WindowsGpuInfo> | null = null
+let windowsGpuInfoCache: { value: WindowsGpuInfo; expiresAt: number } | null = null
 
+const readDxdiagGpuInfo = async (): Promise<WindowsGpuInfo> => {
   const tmpPath = path.join(os.tmpdir(), `aurapro-dxdiag-${Date.now()}.txt`)
   try {
-    execFileSync('dxdiag', ['/t', tmpPath], { timeout: 30000, windowsHide: true })
-    if (!fs.existsSync(tmpPath)) return 0
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        'dxdiag.exe',
+        ['/whql:off', '/t', tmpPath],
+        { timeout: 60000, windowsHide: true },
+        (error) => (error ? reject(error) : resolve())
+      )
+    })
+    if (!fs.existsSync(tmpPath)) throw new Error('DxDiag report was not created')
 
     const bytes = fs.readFileSync(tmpPath)
     const text = bytes.includes(0) ? bytes.toString('utf16le') : bytes.toString('utf8')
@@ -472,13 +486,36 @@ const parseDxdiagDedicatedVramGB = (): number => {
       .filter((mb) => mb > 0)
 
     const maxDedicatedMb = dedicatedGpuMemory.length > 0 ? Math.max(...dedicatedGpuMemory) : 0
-    return Math.round(maxDedicatedMb / 1024)
-  } catch (e) {
-    log.warn('Failed to get dedicated GPU memory via dxdiag:', e)
-    return 0
+    if (!devices.length) throw new Error('DxDiag report contains no display devices')
+    return {
+      gpuName: [...new Set(devices.map((device) => device.name))].join(', '),
+      dedicatedVramGB: Math.round(maxDedicatedMb / 1024)
+    }
   } finally {
-    fs.rmSync(tmpPath, { force: true })
+    try {
+      await fs.promises.rm(tmpPath, { force: true })
+    } catch (error) {
+      log.warn('Failed to remove DxDiag report:', error)
+    }
   }
+}
+
+const getWindowsGpuInfo = (): Promise<WindowsGpuInfo> => {
+  if (windowsGpuInfoCache && windowsGpuInfoCache.expiresAt > Date.now()) {
+    return Promise.resolve(windowsGpuInfoCache.value)
+  }
+  if (!windowsGpuInfoRequest) {
+    windowsGpuInfoRequest = readDxdiagGpuInfo()
+      .then((value) => {
+        windowsGpuInfoCache = { value, expiresAt: Date.now() + 60000 }
+        log.info('DxDiag hardware detection:', value)
+        return value
+      })
+      .finally(() => {
+        windowsGpuInfoRequest = null
+      })
+  }
+  return windowsGpuInfoRequest
 }
 
 const getLinuxDedicatedVramGB = (): number => {
@@ -513,17 +550,9 @@ export const getSystemInfo = async (options: { includeDedicatedVram?: boolean } 
   let dedicatedVramGB = 0
   try {
     if (process.platform === 'win32') {
-      const output = execSync('wmic path win32_VideoController get name', {
-        encoding: 'utf-8',
-        windowsHide: true,
-        timeout: 10000
-      })
-      const lines = output
-        .split('\r\n')
-        .map((l) => l.trim())
-        .filter((l) => l && l !== 'Name')
-      gpuName = lines.join(', ')
-      dedicatedVramGB = options.includeDedicatedVram ? parseDxdiagDedicatedVramGB() : 0
+      const detected = await getWindowsGpuInfo()
+      gpuName = detected.gpuName
+      dedicatedVramGB = detected.dedicatedVramGB
     } else if (process.platform === 'darwin') {
       const output = execSync("system_profiler SPDisplaysDataType | grep 'Chipset Model'", {
         encoding: 'utf-8'
@@ -1078,10 +1107,13 @@ export const isUvInstalled = (installationDir?: string) => {
 const isPackageFileLockedError = (error: unknown): boolean => {
   const message = getErrorMessage(error).toLowerCase()
   return (
+    message.includes('os error 5') ||
     message.includes('os error 32') ||
     message.includes('failed to remove file') ||
+    message.includes('access is denied') ||
     message.includes('being used by another process') ||
     message.includes('process cannot access the file') ||
+    message.includes('拒绝访问') ||
     message.includes('另一个程序正在使用此文件') ||
     message.includes('进程无法访问')
   )
@@ -1167,7 +1199,76 @@ const prepareOpenWebUIPackageMutation = async (
   onStatus?.('Stopping Open WebUI before updating...')
   await stopAllServers()
   await killStaleOpenWebUIProcesses(onStatus)
+  await killBundledPythonProcesses(onStatus)
   await sleep(1000)
+}
+
+const killBundledPythonProcesses = async (onStatus?: (status: string) => void): Promise<void> => {
+  const pythonDir = getPythonInstallationDir()
+  if (!fs.existsSync(pythonDir)) return
+
+  if (process.platform === 'win32') {
+    const pythonDirLiteral = JSON.stringify(path.normalize(pythonDir))
+    const script = `
+$ErrorActionPreference = 'SilentlyContinue'
+$pythonDir = [System.IO.Path]::GetFullPath(${pythonDirLiteral})
+$targets = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+  $exe = $_.ExecutablePath
+  if (-not $exe) { return $false }
+  try {
+    return [System.IO.Path]::GetFullPath($exe).StartsWith(
+      $pythonDir,
+      [System.StringComparison]::OrdinalIgnoreCase
+    )
+  } catch {
+    return $false
+  }
+})
+foreach ($p in $targets) {
+  Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+  Write-Output $p.ProcessId
+}
+exit 0
+`
+    try {
+      const killed = execFileSync('powershell', ['-NoProfile', '-Command', script], {
+        encoding: 'utf-8',
+        windowsHide: true,
+        timeout: 15000
+      }).trim()
+      if (killed) {
+        log.info(`Stopped bundled Python processes before package mutation: ${killed}`)
+        onStatus?.('Stopped Python services before updating...')
+      }
+    } catch (error) {
+      log.warn('Failed to stop bundled Python processes before package mutation:', error)
+    }
+    return
+  }
+
+  try {
+    const output = execFileSync('ps', ['-eo', 'pid=,command='], {
+      encoding: 'utf-8',
+      timeout: 10000
+    })
+    const killed: number[] = []
+    for (const line of output.split(/\r?\n/)) {
+      const match = line.trim().match(/^(\d+)\s+(.+)$/)
+      if (!match || !match[2].includes(pythonDir)) continue
+      const pid = Number(match[1])
+      if (!pid || pid === process.pid) continue
+      try {
+        process.kill(pid, 'SIGKILL')
+        killed.push(pid)
+      } catch {}
+    }
+    if (killed.length) {
+      log.info(`Stopped bundled Python processes before package mutation: ${killed.join(', ')}`)
+      onStatus?.('Stopped Python services before updating...')
+    }
+  } catch (error) {
+    log.warn('Failed to stop bundled Python processes before package mutation:', error)
+  }
 }
 
 export const uninstallPython = (installationDir?: string): boolean => {
@@ -1198,7 +1299,11 @@ export const uninstallPython = (installationDir?: string): boolean => {
 export const installPackage = (
   packageName: string,
   version?: string,
-  onStatus?: (status: string) => void
+  onStatus?: (status: string) => void,
+  options: {
+    reinstallPackages?: string[]
+    refreshPackages?: string[]
+  } = {}
 ): Promise<boolean> => {
   const runInstall = (): Promise<boolean> =>
     new Promise((resolve, reject) => {
@@ -1230,6 +1335,8 @@ export const installPackage = (
           'install',
           ...(localOpenWebUISourcePath ? ['-e', localOpenWebUISourcePath] : [packageSpec]),
           ...(localOpenWebUISourcePath || version ? [] : ['-U']),
+          ...(options.reinstallPackages ?? []).flatMap((name) => ['--reinstall-package', name]),
+          ...(options.refreshPackages ?? []).flatMap((name) => ['--refresh-package', name]),
           ...(isAuraProUiPackage && !localOpenWebUISourcePath
             ? [
                 '--refresh-package',
@@ -1460,6 +1567,55 @@ const hasOpenWebUICoreFiles = (packageName: OpenWebUIPackageName): boolean => {
   }
 }
 
+const hasSharedPythonRuntimeImports = (): boolean => {
+  const pythonPath = getPythonPath()
+  if (!fs.existsSync(pythonPath)) return false
+
+  try {
+    const output = execFileSync(
+      pythonPath,
+      [
+        '-c',
+        [
+          'import fastapi, pydantic, pydantic_core',
+          "assert getattr(pydantic_core, '__version__', None)",
+          "print('healthy')"
+        ].join('; ')
+      ],
+      {
+        encoding: 'utf-8',
+        env: pythonEnv(),
+        windowsHide: true,
+        timeout: 15000
+      }
+    )
+    return output.trim() === 'healthy'
+  } catch (error) {
+    log.warn('Shared Python runtime import validation failed:', error)
+    return false
+  }
+}
+
+const repairSharedPythonRuntime = async (
+  packageName: OpenWebUIPackageName,
+  packageVersion: string,
+  onStatus?: (status: string) => void
+): Promise<void> => {
+  onStatus?.('Repairing shared Python runtime...')
+  log.warn(
+    `Repairing shared Python runtime for ${packageName} ${packageVersion} by reinstalling pydantic-core`
+  )
+  await installPackage(packageName, packageVersion, onStatus, {
+    reinstallPackages: ['pydantic-core'],
+    refreshPackages: ['pydantic-core']
+  })
+  if (!hasSharedPythonRuntimeImports()) {
+    throw new Error(
+      'The shared Python runtime is incomplete after repair. Close AuraPro and retry the update.'
+    )
+  }
+}
+
 const getInstalledOpenWebUIPackageName = (): OpenWebUIPackageName | null => {
   for (const packageName of [
     'aurapro-webui',
@@ -1539,8 +1695,10 @@ export const ensureOpenWebUIPackage = async (
   const hasSupersededPackage = supersededPackages.some(([, packageVersion]) =>
     Boolean(packageVersion)
   )
-  const runtimeHealthy = Boolean(version) && hasOpenWebUICoreFiles(desiredPackageName)
-  const targetSatisfied =
+  const coreFilesHealthy = Boolean(version) && hasOpenWebUICoreFiles(desiredPackageName)
+  let sharedRuntimeHealthy = coreFilesHealthy && hasSharedPythonRuntimeImports()
+  let runtimeHealthy = coreFilesHealthy && sharedRuntimeHealthy
+  let targetSatisfied =
     runtimeHealthy && (useLatest ? options.forceLatest !== true : version === desiredVersion)
 
   const ensureRuntimeDependencies = async (packageVersion: string, packageChanged = false) => {
@@ -1579,6 +1737,14 @@ export const ensureOpenWebUIPackage = async (
   }
 
   await prepareOpenWebUIPackageMutation(onStatus)
+
+  if (version && coreFilesHealthy && !sharedRuntimeHealthy) {
+    await repairSharedPythonRuntime(desiredPackageName, version, onStatus)
+    sharedRuntimeHealthy = true
+    runtimeHealthy = true
+    targetSatisfied =
+      runtimeHealthy && (useLatest ? options.forceLatest !== true : version === desiredVersion)
+  }
 
   if (hasSupersededPackage) {
     const dataDir = getOpenWebUIDataPath()
@@ -1623,6 +1789,13 @@ export const ensureOpenWebUIPackage = async (
   if (!hasOpenWebUICoreFiles(desiredPackageName)) {
     throw new Error(
       'Open WebUI update produced an incomplete package: required runtime files are missing. Please retry the update.'
+    )
+  }
+  if (!hasSharedPythonRuntimeImports()) {
+    await repairSharedPythonRuntime(
+      desiredPackageName,
+      installedVersion ?? desiredVersion,
+      onStatus
     )
   }
   for (const [packageName, packageVersion] of supersededPackages) {

@@ -156,19 +156,6 @@
       mtpFilename: 'MTP/mtp-Qwen3.8-27B-Q4_0.gguf',
       sizeBytes: 14_252_845_984,
       ramInfo: 'RAM+VRAM 32GB+6GB / UMA 24GB'
-    },
-    {
-      name: 'high-code_Q4.gguf',
-      sizeStr: '~16GB',
-      repo: 'AuraPro',
-      hfRepo: 'unsloth/Qwen3.8-27B-GGUF',
-      filename: 'Qwen3.8-27B-UD-Q4_K_M.gguf',
-      mmprojRepo: 'unsloth/Qwen3.8-27B-GGUF',
-      mmprojFilename: 'mmproj-F16.gguf',
-      mtpRepo: 'unsloth/Qwen3.8-27B-GGUF',
-      mtpFilename: 'MTP/mtp-Qwen3.8-27B-Q4_0.gguf',
-      sizeBytes: 16_464_440_224,
-      ramInfo: 'RAM+VRAM 32GB+8GB / UMA 24GB'
     }
   ]
 
@@ -1060,7 +1047,7 @@
         <div>
           <div class="text-[12px] opacity-70">Install Sherpa speech service (Recommended)</div>
           <div class="text-[10px] opacity-25 mt-1 leading-relaxed">
-            Enables local voice input and TTS. You can change or remove it later in Speech settings.
+            {$i18n.t('main.getStarted.sherpaDesc')}
           </div>
         </div>
       </label>
@@ -1330,45 +1317,55 @@
       </div>
 
       <div class="mb-8">
-        <div class="text-[11px] opacity-40 mb-1.5">
-          Recommended based on RAM/VRAM: {systemMemGB ?? '?'}GB / {dedicatedVramGB}GB
-        </div>
-        <div class="flex flex-col gap-2">
-          {#each visibleModels() as model (model.filename)}
-            <!-- svelte-ignore a11y_click_events_have_key_events -->
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div
-              class="flex items-center justify-between px-4 py-3 rounded-xl cursor-pointer transition-all {selectedModel.name ===
-              model.name
-                ? 'bg-white/[0.08] ring-1 ring-white/20'
-                : 'bg-black/[0.03] dark:bg-white/[0.03] hover:bg-white/[0.05]'}"
-              onclick={() => selectModel(model)}
+        <details>
+          <summary class="cursor-pointer py-2 text-[13px]">
+            {$i18n.t('main.getStarted.selectedDownloadModel')}:
+            <span class="font-medium break-all text-emerald-600 dark:text-emerald-400"
+              >{selectedModel.name}</span
             >
-              <div class="flex flex-col">
-                <span
-                  class="text-[13px] font-medium {selectedModel.name === model.name
-                    ? 'text-emerald-400'
-                    : 'opacity-80'}">{model.name.replace('.gguf', '')}</span
-                >
-                <span class="text-[10px] opacity-30">
-                  {model.sizeStr} · {model.ramInfo}{model.macOnly ? ' · Mac only' : ''}
-                </span>
-                <div class="mt-1 flex flex-wrap gap-1">
-                  {#each modelCapabilities(model.name) as capability (capability)}
-                    <span
-                      class="rounded border border-black/[0.06] px-1.5 py-px text-[9px] opacity-30 dark:border-white/[0.08]"
-                    >
-                      {$i18n.t('settings.models.capability.' + capability)}
-                    </span>
-                  {/each}
+            <span class="ml-2 text-[11px] opacity-50">{$i18n.t('main.getStarted.changeModel')}</span
+            >
+          </summary>
+          <div class="text-[11px] opacity-40 mb-1.5">
+            Recommended based on RAM/VRAM: {systemMemGB ?? '?'}GB / {dedicatedVramGB}GB
+          </div>
+          <div class="flex flex-col gap-2">
+            {#each visibleModels() as model (model.filename)}
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div
+                class="flex items-center justify-between px-4 py-3 rounded-xl cursor-pointer transition-all {selectedModel.name ===
+                model.name
+                  ? 'bg-white/[0.08] ring-1 ring-white/20'
+                  : 'bg-black/[0.03] dark:bg-white/[0.03] hover:bg-white/[0.05]'}"
+                onclick={() => selectModel(model)}
+              >
+                <div class="flex flex-col">
+                  <span
+                    class="text-[13px] font-medium {selectedModel.name === model.name
+                      ? 'text-emerald-400'
+                      : 'opacity-80'}">{model.name.replace('.gguf', '')}</span
+                  >
+                  <span class="text-[10px] opacity-30">
+                    {model.sizeStr} · {model.ramInfo}{model.macOnly ? ' · Mac only' : ''}
+                  </span>
+                  <div class="mt-1 flex flex-wrap gap-1">
+                    {#each modelCapabilities(model.name) as capability (capability)}
+                      <span
+                        class="rounded border border-black/[0.06] px-1.5 py-px text-[9px] opacity-30 dark:border-white/[0.08]"
+                      >
+                        {$i18n.t('settings.models.capability.' + capability)}
+                      </span>
+                    {/each}
+                  </div>
                 </div>
+                {#if selectedModel.name === model.name}
+                  <div class="size-2 rounded-full bg-emerald-400"></div>
+                {/if}
               </div>
-              {#if selectedModel.name === model.name}
-                <div class="size-2 rounded-full bg-emerald-400"></div>
-              {/if}
-            </div>
-          {/each}
-        </div>
+            {/each}
+          </div>
+        </details>
       </div>
 
       <div class="mb-5 rounded-xl bg-black/[0.03] px-4 py-3 dark:bg-white/[0.04]">

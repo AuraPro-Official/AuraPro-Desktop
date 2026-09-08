@@ -1037,6 +1037,9 @@
   <div class="flex items-center justify-between">
     <div>
       <div class="text-[13px] opacity-70">{$i18n.t('settings.speech.serviceTitle')}</div>
+      <div class="text-[11px] opacity-50 mt-0.5">
+        {$i18n.t('main.getStarted.sherpaDesc')}
+      </div>
       <div class="text-[11px] opacity-30 mt-0.5">
         {#if installed}
           {serviceRunning

@@ -1923,19 +1923,15 @@ const startConfiguredServices = async (defaultConnection?: Connection): Promise<
 
   const startupTasks: Promise<void>[] = []
 
-  // Start the default connection first so the primary UI does not wait for
-  // optional inference, terminal, or speech services.
+  // Complete the primary WebUI start and any package mutation before Python-based
+  // optional services are allowed to load DLLs from the shared environment.
   if (!isQuiting && defaultConnection) {
-    startupTasks.push(
-      (async () => {
-        try {
-          const result = await connectTo(defaultConnection)
-          if (result) sendToRenderer('connection:open', result)
-        } catch (error) {
-          log.error('Auto-connect to default connection failed:', error)
-        }
-      })()
-    )
+    try {
+      const result = await connectTo(defaultConnection)
+      if (result) sendToRenderer('connection:open', result)
+    } catch (error) {
+      log.error('Auto-connect to default connection failed:', error)
+    }
   }
 
   if (!isQuiting && CONFIG?.openTerminal?.enabled) {
@@ -2463,11 +2459,24 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
 
     // Package
     ipcMain.handle('install:package', async () => {
+      let restartOpenTerminal = false
+      let restartSherpa = false
       try {
         log.info('Starting package installation...')
         CONFIG = await getConfig()
         const owuiVersion = resolveOpenWebUITargetVersion(CONFIG?.localServer?.version)
         const otVersion = CONFIG?.openTerminal?.version || undefined
+        restartOpenTerminal = validateOpenTerminalProcess()
+        restartSherpa = validateSherpaProcess()
+
+        if (restartOpenTerminal) {
+          sendToRenderer('status:open-terminal', 'stopping')
+          await stopOpenTerminal()
+        }
+        if (restartSherpa) {
+          sendToRenderer('status:sherpa', 'stopping')
+          await stopSherpa()
+        }
 
         sendToRenderer('status:install', 'Installing AuraPro…')
         await ensureOpenWebUIPackage(
@@ -2477,10 +2486,23 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
           },
           { forceLatest: true, cleanupCaches: false }
         )
-        sendToRenderer('status:install', 'Installing Open Terminal…')
-        await installPackage('open-terminal', otVersion, (status: string) => {
-          sendToRenderer('status:install', status)
-        }).catch((e) => log.warn('open-terminal install failed (non-fatal):', e))
+        const installedOpenTerminalVersion = getExactPackageVersion('open-terminal')
+        const shouldInstallOpenTerminal =
+          CONFIG?.openTerminal?.enabled === true &&
+          (!installedOpenTerminalVersion ||
+            Boolean(otVersion && installedOpenTerminalVersion !== otVersion))
+        if (shouldInstallOpenTerminal) {
+          sendToRenderer('status:install', 'Installing Open Terminal…')
+          await installPackage('open-terminal', otVersion, (status: string) => {
+            sendToRenderer('status:install', status)
+          })
+        } else {
+          log.info(
+            CONFIG?.openTerminal?.enabled
+              ? `Open Terminal already installed (${installedOpenTerminalVersion}); skipping package update`
+              : 'Open Terminal was not selected; skipping package installation'
+          )
+        }
 
         try {
           const packagedDataDir = getPackagedDataDir()
@@ -2509,6 +2531,32 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
           getErrorMessage(error) ||
             'Package installation failed. Please check your internet connection and try again.'
         )
+      } finally {
+        if (restartOpenTerminal && CONFIG?.openTerminal?.enabled) {
+          try {
+            const result = await startOpenTerminal(
+              CONFIG?.openTerminal?.port ?? null,
+              (status: string) => sendToRenderer('status:open-terminal', status)
+            )
+            sendToRenderer('status:open-terminal', 'started')
+            sendToRenderer('open-terminal:ready', result)
+          } catch (error) {
+            log.warn('Failed to restart Open Terminal after package update:', error)
+            sendToRenderer('status:open-terminal', 'failed')
+          }
+        }
+        if (restartSherpa && CONFIG?.sherpa?.enabled) {
+          try {
+            const result = await startSherpa(CONFIG?.sherpa?.port ?? null, (status: string) =>
+              sendToRenderer('status:sherpa-setup', String(status ?? ''))
+            )
+            sendToRenderer('status:sherpa', 'started')
+            sendToRenderer('sherpa:ready', toIpcSafeValue(result))
+          } catch (error) {
+            log.warn('Failed to restart Sherpa after package update:', error)
+            sendToRenderer('status:sherpa', 'failed')
+          }
+        }
       }
     })
 

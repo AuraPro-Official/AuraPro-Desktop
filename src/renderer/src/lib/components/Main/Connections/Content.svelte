@@ -703,19 +703,19 @@
               class="absolute inset-0 bg-gradient-to-t from-[#fafafa] dark:from-[#111] via-[#fafafa]/30 dark:via-[#111]/30 to-transparent pointer-events-none"
             ></div>
 
-            <!-- Content positioned bottom-left -->
+            <!-- Flexible space keeps the welcome actions slightly below center. -->
             <div
-              class="absolute bottom-0 left-0 right-0 max-h-full overflow-y-auto overscroll-contain p-6 sm:p-10"
+              class="absolute inset-0 grid grid-rows-[minmax(24px,3fr)_auto_minmax(24px,2fr)] overflow-y-auto overscroll-contain px-6 sm:px-10"
               in:fade={{ duration: 300 }}
             >
-              <div class="max-w-sm">
+              <div class="row-start-2 mx-auto w-full max-w-[480px] text-center">
                 <div
-                  class="text-3xl font-medium mb-3 tracking-tight text-[#1d1d1f] dark:text-[#fafafa]"
+                  class="text-3xl font-medium mb-3 tracking-normal text-[#1d1d1f] dark:text-[#fafafa]"
                 >
                   {$i18n.t('app.name')}
                 </div>
                 <div
-                  class="text-base opacity-50 mb-8 leading-relaxed text-[#1d1d1f] dark:text-[#fafafa]"
+                  class="text-base opacity-75 mb-6 leading-relaxed text-[#1d1d1f] dark:text-[#fafafa]"
                 >
                   {$i18n.t('main.heroDescription')}
                 </div>
@@ -753,7 +753,7 @@
                         />
                       </svg>
                     {:else}
-                      {$i18n.t('main.getStarted')}
+                      {$i18n.t('main.installAndStart')}
                       <svg
                         class="h-3.5 w-3.5"
                         fill="none"
@@ -781,7 +781,7 @@
 
                   {#if installPhase === 'working'}
                     <div
-                      class="mt-4 w-full max-w-[380px] rounded-xl bg-white/55 px-4 py-3 text-left shadow-sm backdrop-blur-sm dark:bg-black/25"
+                      class="mx-auto mt-4 w-full max-w-[380px] rounded-xl bg-white/55 px-4 py-3 text-left shadow-sm backdrop-blur-sm dark:bg-black/25"
                       in:fade={{ duration: 200 }}
                     >
                       <div class="mb-2 flex items-center justify-between text-[11px] opacity-55">
@@ -871,7 +871,7 @@
                 {#if installPhase !== 'working'}
                   <div class="mt-6">
                     <button
-                      class="text-sm opacity-40 hover:opacity-70 transition bg-transparent border-none text-[#1d1d1f] dark:text-[#fafafa]"
+                      class="text-sm opacity-60 hover:opacity-90 transition bg-transparent border-none text-[#1d1d1f] dark:text-[#fafafa]"
                       onclick={() => {
                         showAddConnectionModal = true
                       }}

@@ -118,19 +118,6 @@
       mtpFilename: 'MTP/mtp-Qwen3.8-27B-Q4_0.gguf',
       sizeBytes: 14_252_845_984,
       ramInfo: 'RAM+VRAM 32GB+6GB / UMA 24GB'
-    },
-    {
-      name: 'high-code_Q4.gguf',
-      sizeStr: '~16GB',
-      repo: 'AuraPro',
-      hfRepo: 'unsloth/Qwen3.8-27B-GGUF',
-      filename: 'Qwen3.8-27B-UD-Q4_K_M.gguf',
-      mmprojRepo: 'unsloth/Qwen3.8-27B-GGUF',
-      mmprojFilename: 'mmproj-F16.gguf',
-      mtpRepo: 'unsloth/Qwen3.8-27B-GGUF',
-      mtpFilename: 'MTP/mtp-Qwen3.8-27B-Q4_0.gguf',
-      sizeBytes: 16_464_440_224,
-      ramInfo: 'RAM+VRAM 32GB+8GB / UMA 24GB'
     }
   ]
 

@@ -124,19 +124,6 @@
       mtpFilename: 'MTP/mtp-Qwen3.8-27B-Q4_0.gguf',
       sizeBytes: 14_252_845_984,
       ramInfo: 'RAM+VRAM 32GB+6GB / UMA 24GB'
-    },
-    {
-      name: 'high-code_Q4.gguf',
-      sizeStr: '~16GB',
-      repo: 'AuraPro',
-      hfRepo: 'unsloth/Qwen3.8-27B-GGUF',
-      filename: 'Qwen3.8-27B-UD-Q4_K_M.gguf',
-      mmprojRepo: 'unsloth/Qwen3.8-27B-GGUF',
-      mmprojFilename: 'mmproj-F16.gguf',
-      mtpRepo: 'unsloth/Qwen3.8-27B-GGUF',
-      mtpFilename: 'MTP/mtp-Qwen3.8-27B-Q4_0.gguf',
-      sizeBytes: 16_464_440_224,
-      ramInfo: 'RAM+VRAM 32GB+8GB / UMA 24GB'
     }
   ]
 
@@ -383,13 +370,13 @@
   <div class="absolute inset-0 bg-black/50 backdrop-blur-sm"></div>
 
   <div
-    class="relative w-full max-w-xl max-h-[calc(100vh-1rem)] overflow-y-auto rounded-xl bg-white shadow-2xl sm:rounded-3xl dark:bg-gray-950"
+    class="relative w-full max-w-3xl max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-xl bg-white shadow-2xl sm:rounded-3xl dark:bg-gray-950"
     transition:scale={{ start: 0.97, duration: 180 }}
     onmousedown={(e) => e.stopPropagation()}
   >
     <!-- Visual header -->
     <div
-      class="relative flex h-36 items-center justify-center overflow-hidden bg-gradient-to-br from-gray-900 via-gray-800 to-black dark:from-white dark:via-gray-100 dark:to-gray-200"
+      class="relative flex h-28 items-center justify-center overflow-hidden bg-gradient-to-br from-gray-900 via-gray-800 to-black dark:from-white dark:via-gray-100 dark:to-gray-200"
     >
       <div
         class="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent"
@@ -463,12 +450,9 @@
             class="text-[13px] font-medium text-gray-700 dark:text-gray-300 flex items-center gap-1.5"
           >
             {$i18n.t('main.getStarted.llamaCpp')}
-            <span class="text-[9px] opacity-30 uppercase tracking-wide"
-              >{$i18n.t('common.experimental')}</span
-            >
           </div>
           <div class="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
-            Select the optimized version for your hardware
+            {$i18n.t('main.getStarted.llamaCppHardwareDesc')}
           </div>
         </div>
         <select
@@ -505,7 +489,7 @@
         <div>
           <div class="text-[13px] font-medium text-gray-700 dark:text-gray-300">sherpa</div>
           <div class="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
-            Local speech input and TTS runtime
+            {$i18n.t('main.getStarted.sherpaDesc')}
           </div>
         </div>
         <Switch
@@ -519,7 +503,7 @@
       <!-- Model Selection -->
       <div class="py-4">
         <div class="text-[12px] font-medium text-gray-700 dark:text-gray-300 mb-2">
-          Select Model (Recommended: {selectedModel.name.replace('.gguf', '')})
+          {$i18n.t('main.getStarted.modelSelection')}
         </div>
         {#if detectingHardware}
           <div
@@ -568,39 +552,50 @@
             </div>
           </button>
         </div>
-        <div class="grid grid-cols-2 gap-2">
-          {#each visibleModels() as model (model.filename)}
-            <!-- svelte-ignore a11y_click_events_have_key_events -->
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div
-              class="flex flex-col px-3 py-2 rounded-xl border border-solid cursor-pointer transition-all {selectedModel.name ===
-              model.name
-                ? 'border-emerald-500 bg-emerald-500/5 dark:bg-emerald-500/10'
-                : 'border-gray-100 dark:border-gray-800 hover:border-gray-200 dark:hover:border-gray-700'}"
-              onclick={() => (selectedModel = model)}
+        <details>
+          <summary class="cursor-pointer py-2 text-[12px] text-gray-700 dark:text-gray-300">
+            {$i18n.t('main.getStarted.selectedDownloadModel')}:
+            <span class="font-medium break-all text-emerald-600 dark:text-emerald-400"
+              >{selectedModel.name}</span
             >
+            <span class="ml-2 text-[11px] text-gray-500"
+              >{$i18n.t('main.getStarted.changeModel')}</span
+            >
+          </summary>
+          <div class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {#each visibleModels() as model (model.filename)}
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div
-                class="text-[11px] font-medium {selectedModel.name === model.name
-                  ? 'text-emerald-600 dark:text-emerald-400'
-                  : 'text-gray-700 dark:text-gray-300'}"
+                class="flex flex-col px-3 py-2 rounded-xl border border-solid cursor-pointer transition-all {selectedModel.name ===
+                model.name
+                  ? 'border-emerald-500 bg-emerald-500/5 dark:bg-emerald-500/10'
+                  : 'border-gray-100 dark:border-gray-800 hover:border-gray-200 dark:hover:border-gray-700'}"
+                onclick={() => (selectedModel = model)}
               >
-                {model.name}
+                <div
+                  class="text-[11px] font-medium {selectedModel.name === model.name
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-gray-700 dark:text-gray-300'}"
+                >
+                  {model.name}
+                </div>
+                <div class="text-[9px] text-gray-400 dark:text-gray-500">
+                  {model.sizeStr} · {model.ramInfo}{model.macOnly ? ' · Mac only' : ''}
+                </div>
+                <div class="mt-1 flex flex-wrap gap-1">
+                  {#each modelCapabilities(model.name) as capability (capability)}
+                    <span
+                      class="rounded border border-gray-200/70 px-1.5 py-px text-[9px] text-gray-400 dark:border-gray-700/70 dark:text-gray-500"
+                    >
+                      {$i18n.t('settings.models.capability.' + capability)}
+                    </span>
+                  {/each}
+                </div>
               </div>
-              <div class="text-[9px] text-gray-400 dark:text-gray-500">
-                {model.sizeStr} · {model.ramInfo}{model.macOnly ? ' · Mac only' : ''}
-              </div>
-              <div class="mt-1 flex flex-wrap gap-1">
-                {#each modelCapabilities(model.name) as capability (capability)}
-                  <span
-                    class="rounded border border-gray-200/70 px-1.5 py-px text-[9px] text-gray-400 dark:border-gray-700/70 dark:text-gray-500"
-                  >
-                    {$i18n.t('settings.models.capability.' + capability)}
-                  </span>
-                {/each}
-              </div>
-            </div>
-          {/each}
-        </div>
+            {/each}
+          </div>
+        </details>
       </div>
     </div>
 

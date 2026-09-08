@@ -100,7 +100,7 @@
     <div>
       <div class="text-[13px] opacity-40">{$i18n.t('settings.terminal.notInstalled')}</div>
       <div class="text-[11px] opacity-20 mt-0.5">
-        {$i18n.t('settings.terminal.notInstalledDesc')}
+        {$i18n.t('main.getStarted.openTerminalDesc')}
       </div>
     </div>
     <button
@@ -137,6 +137,9 @@
       <div class="flex items-center justify-between mb-3">
         <div>
           <div class="text-[13px] opacity-70">{$i18n.t('settings.terminal.server')}</div>
+          <div class="text-[11px] opacity-50 mt-0.5">
+            {$i18n.t('main.getStarted.openTerminalDesc')}
+          </div>
           <div class="text-[11px] opacity-25 mt-0.5">
             {#if version}v{version} ·
             {/if}{$i18n.t('settings.terminal.instance')}

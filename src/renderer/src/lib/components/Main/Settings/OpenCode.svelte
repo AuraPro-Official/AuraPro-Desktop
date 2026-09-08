@@ -90,7 +90,7 @@
         <div>
           <div class="text-[13px] font-medium opacity-80">OpenCode</div>
           <div class="mt-1 text-[11px] leading-5 opacity-35">
-            {$i18n.t('settings.opencode.description')}
+            {$i18n.t('main.getStarted.opencodeDesc')}
           </div>
         </div>
         <div class="flex shrink-0 items-center gap-1.5">
