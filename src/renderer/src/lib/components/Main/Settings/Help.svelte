@@ -78,7 +78,7 @@
   </label>
 
   <div class="help-categories" role="group" aria-label={$i18n.t('settings.tabs.help')}>
-    {#each tutorialSections as section}
+    {#each tutorialSections as section (section.id)}
       <button
         type="button"
         class:active={activeSectionId === section.id}
@@ -111,7 +111,7 @@
               </summary>
               <div class="help-body">
                 <ol>
-                  {#each item.steps as step}
+                  {#each item.steps as step, stepIndex (stepIndex)}
                     <li>{step}</li>
                   {/each}
                 </ol>
@@ -119,7 +119,7 @@
                   <aside class="help-tips">
                     <p>{getTutorialText(tutorialUiText.tipsLabel, language)}</p>
                     <ul>
-                      {#each item.tips as tip}<li>{tip}</li>{/each}
+                      {#each item.tips as tip, tipIndex (tipIndex)}<li>{tip}</li>{/each}
                     </ul>
                   </aside>
                 {/if}
@@ -127,7 +127,7 @@
                   <div class="help-links">
                     <p>{getTutorialText(tutorialUiText.linksLabel, language)}</p>
                     <div>
-                      {#each item.links as link}
+                      {#each item.links as link (link.url)}
                         <button
                           type="button"
                           onclick={() => window.electronAPI.openInBrowser(link.url)}
