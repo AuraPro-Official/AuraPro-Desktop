@@ -47,8 +47,9 @@
 
   onMount(async () => {
     lsInfo = await window.electronAPI.getLlamaCppInfo()
-    const sysInfo = await window.electronAPI.getSystemInfo().catch(() => null)
-    systemArchitecture = sysInfo?.architecture ?? ''
+    // Variant filtering only needs architecture, not a full GPU scan.
+    const appInfo = await window.electronAPI.getAppInfo().catch(() => null)
+    systemArchitecture = appInfo?.arch ?? ''
     loaded = true
 
     window.electronAPI.onData((data: LlamaEvent) => {

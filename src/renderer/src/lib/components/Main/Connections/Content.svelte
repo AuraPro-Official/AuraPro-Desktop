@@ -703,9 +703,9 @@
               class="absolute inset-0 bg-gradient-to-t from-[#fafafa] dark:from-[#111] via-[#fafafa]/30 dark:via-[#111]/30 to-transparent pointer-events-none"
             ></div>
 
-            <!-- Flexible space keeps the welcome actions slightly below center. -->
+            <!-- Flexible space lowers the welcome actions and contracts on shorter windows. -->
             <div
-              class="absolute inset-0 grid grid-rows-[minmax(24px,3fr)_auto_minmax(24px,2fr)] overflow-y-auto overscroll-contain px-6 sm:px-10"
+              class="absolute inset-0 grid grid-rows-[minmax(24px,7fr)_auto_minmax(24px,3fr)] overflow-y-auto overscroll-contain px-6 sm:px-10"
               in:fade={{ duration: 300 }}
             >
               <div class="row-start-2 mx-auto w-full max-w-[480px] text-center">

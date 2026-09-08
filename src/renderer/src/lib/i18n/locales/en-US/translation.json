@@ -112,7 +112,7 @@
 
   "main.openWebUI": "Open WebUI",
   "main.selectConnection": "Select a connection to get started",
-  "main.heroDescription": "Install and run locally, or connect to an existing server.",
+  "main.heroDescription": "Install and run locally, or connect to a remote AuraPro instance.",
   "main.installAndStart": "Install and get started",
   "main.getStarted": "Get Started",
   "main.getStarted.title": "Set up your environment",
@@ -120,6 +120,9 @@
   "main.getStarted.sherpaDesc": "High-performance speech recognition and speech output component",
   "main.getStarted.modelSelection": "Select model",
   "main.getStarted.selectedDownloadModel": "Model to download",
+  "main.getStarted.detectingHardware": "Detecting hardware and matching a runtime and model. Please wait...",
+  "main.getStarted.hardwareDetectionFailed": "Hardware detection could not finish. Default settings are in use; select a runtime and model manually.",
+  "main.getStarted.hardwareDetected": "Hardware detection complete. Recommended settings applied.",
   "main.getStarted.changeModel": "Choose manually",
   "main.getStarted.llamaCppHardwareDesc": "Select the optimized version for your hardware",
   "main.getStarted.openTerminal": "Open Terminal",

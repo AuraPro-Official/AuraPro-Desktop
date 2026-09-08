@@ -146,7 +146,8 @@
   let systemMemGB = $state<number | null>(null)
   let systemArchitecture = $state('')
   let dedicatedVramGB = $state(0)
-  let detectingHardware = $state(false)
+  let detectingHardware = $state(true)
+  let hardwareDetectionFailed = $state(false)
   let modelPreference = $state<'quality' | 'speed'>('quality')
   let showUnsupportedInstallPath = $state(false)
   let diskFreeBytes = $state<number | null>(null)
@@ -256,6 +257,7 @@
       dedicatedVramGB = sysInfo?.dedicatedVramGB || 0
       applyRecommendedModel()
     } catch {
+      hardwareDetectionFailed = true
       systemMemGB = 8
       systemArchitecture = ''
       dedicatedVramGB = 0
@@ -327,6 +329,7 @@
       await detectHardware(quickSysInfo)
     } catch (err) {
       console.error('Hardware detection failed:', err)
+      hardwareDetectionFailed = true
       // Fallback to defaults
       llamaCppVariant = 'cpu'
       systemMemGB = 8
@@ -346,6 +349,7 @@
   }
 
   const continueInstall = async (): Promise<void> => {
+    if (detectingHardware) return
     if (!(await validateInstallPath())) return
     onContinue({
       installOpenTerminal,
@@ -409,6 +413,23 @@
     </div>
 
     <!-- Options -->
+    <div
+      role="status"
+      aria-live="polite"
+      class="flex items-center gap-2 px-6 pt-4 text-xs text-gray-700 dark:text-gray-300"
+    >
+      {#if detectingHardware}
+        <span
+          aria-hidden="true"
+          class="size-4 shrink-0 animate-spin motion-reduce:animate-none rounded-full border-2 border-gray-300 border-t-emerald-500"
+        ></span>
+        {$i18n.t('main.getStarted.detectingHardware')}
+      {:else if hardwareDetectionFailed}
+        {$i18n.t('main.getStarted.hardwareDetectionFailed')}
+      {:else}
+        {$i18n.t('main.getStarted.hardwareDetected')}
+      {/if}
+    </div>
     <div class="px-6 py-4 flex flex-col divide-y divide-gray-100/30 dark:divide-gray-800/15">
       <div class="py-3 flex items-center justify-between gap-4">
         <div>
@@ -505,13 +526,6 @@
         <div class="text-[12px] font-medium text-gray-700 dark:text-gray-300 mb-2">
           {$i18n.t('main.getStarted.modelSelection')}
         </div>
-        {#if detectingHardware}
-          <div
-            class="mb-2 rounded-xl bg-gray-50 px-3 py-2 text-[11px] text-gray-400 dark:bg-gray-900 dark:text-gray-500"
-          >
-            正在检测配置，请稍候。
-          </div>
-        {/if}
         <div class="grid grid-cols-2 gap-2 mb-2">
           <button
             type="button"
@@ -690,6 +704,7 @@
       <button
         class="w-full rounded-xl bg-gray-900 dark:bg-white px-4 py-2.5 text-sm font-medium text-white dark:text-gray-900 transition-all duration-200 hover:bg-gray-800 dark:hover:bg-gray-100 active:scale-[0.98] border-none cursor-pointer"
         onclick={continueInstall}
+        disabled={detectingHardware}
       >
         {$i18n.t('main.getStarted.continue')}
       </button>

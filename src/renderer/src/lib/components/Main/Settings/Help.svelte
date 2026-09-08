@@ -68,125 +68,231 @@
   })
 </script>
 
-<div class="mx-auto max-w-[760px] space-y-4 pb-6">
-  <div class="space-y-1">
-    <p class="text-[18px] font-semibold tracking-normal text-[#1d1d1f] dark:text-[#fafafa]">
-      {$i18n.t('settings.tabs.help')}
-    </p>
-    <p class="max-w-[640px] text-[12px] leading-5 text-[#1d1d1f]/55 dark:text-[#fafafa]/55">
-      {getTutorialText(tutorialUiText.intro, language)}
-    </p>
-  </div>
-
-  <label class="block">
+<div class="help-page">
+  <label class="help-search">
     <span class="sr-only">{getTutorialText(tutorialUiText.searchPlaceholder, language)}</span>
     <input
-      class="h-9 w-full rounded-lg border border-black/[0.08] bg-white/80 px-3 text-[12px] outline-none transition placeholder:text-[#1d1d1f]/35 focus:border-black/[0.18] dark:border-white/[0.1] dark:bg-white/[0.05] dark:placeholder:text-white/30 dark:focus:border-white/[0.22]"
       bind:value={search}
       placeholder={getTutorialText(tutorialUiText.searchPlaceholder, language)}
     />
   </label>
 
+  <div class="help-categories" role="group" aria-label={$i18n.t('settings.tabs.help')}>
+    {#each tutorialSections as section}
+      <button
+        type="button"
+        class:active={activeSectionId === section.id}
+        aria-pressed={activeSectionId === section.id}
+        onclick={() => {
+          search = ''
+          activeSectionId = section.id
+        }}
+      >
+        {getTutorialText(section.title, language)}
+      </button>
+    {/each}
+  </div>
+
   {#if localizedSections.length === 0}
-    <div
-      class="rounded-lg border border-black/[0.06] bg-white/60 p-5 text-center text-[12px] text-[#1d1d1f]/55 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-[#fafafa]/55"
-    >
-      {getTutorialText(tutorialUiText.noResults, language)}
-    </div>
+    <p class="help-empty" role="status">{getTutorialText(tutorialUiText.noResults, language)}</p>
   {:else}
-    <div class="grid gap-4 md:grid-cols-[190px_minmax(0,1fr)]">
-      <div class="space-y-1">
-        {#each localizedSections as section (section.id)}
-          <button
-            type="button"
-            class="w-full rounded-lg border border-transparent px-3 py-2 text-left transition {activeSection?.id ===
-            section.id
-              ? 'bg-black/[0.06] text-[#1d1d1f] dark:bg-white/[0.08] dark:text-[#fafafa]'
-              : 'text-[#1d1d1f]/55 hover:bg-black/[0.03] hover:text-[#1d1d1f] dark:text-[#fafafa]/55 dark:hover:bg-white/[0.05] dark:hover:text-[#fafafa]'}"
-            onclick={() => (activeSectionId = section.id)}
-          >
-            <span class="block text-[12px] font-medium">{section.title}</span>
-            <span class="mt-0.5 block text-[10px] opacity-60">{section.description}</span>
-          </button>
-        {/each}
-      </div>
-
-      <div class="space-y-3">
-        {#if activeSection}
-          <div class="space-y-0.5">
-            <h2 class="text-[15px] font-semibold tracking-normal">{activeSection.title}</h2>
-            <p class="text-[12px] text-[#1d1d1f]/50 dark:text-[#fafafa]/50">
-              {activeSection.description}
-            </p>
-          </div>
-
-          {#each activeSection.items as item (item.id)}
-            <article
-              class="rounded-lg border border-black/[0.06] bg-white/70 p-4 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.035]"
-            >
-              <div class="space-y-1">
-                <h3 class="text-[14px] font-semibold tracking-normal">{item.title}</h3>
-                <p class="text-[12px] leading-5 text-[#1d1d1f]/55 dark:text-[#fafafa]/55">
-                  {item.summary}
-                </p>
-              </div>
-
-              <div class="mt-3 space-y-2">
-                <p
-                  class="text-[11px] font-medium uppercase tracking-[0.04em] text-[#1d1d1f]/40 dark:text-[#fafafa]/40"
-                >
-                  {getTutorialText(tutorialUiText.stepsLabel, language)}
-                </p>
-                <ol
-                  class="space-y-1.5 pl-4 text-[12px] leading-5 text-[#1d1d1f]/70 dark:text-[#fafafa]/70"
-                >
-                  {#each item.steps as step, index (index)}
-                    <li class="list-decimal">{step}</li>
+    {#each localizedSections.filter((section) => normalizedSearch || section.id === activeSection?.id) as section (section.id)}
+      <section class="help-section">
+        {#if normalizedSearch}
+          <h2>{section.title}</h2>
+        {/if}
+        <p class="help-description">{section.description}</p>
+        <div class="help-articles">
+          {#each section.items as item (item.id)}
+            <details class="help-article" open={Boolean(normalizedSearch)}>
+              <summary>
+                <span class="help-item-title">{item.title}</span>
+                <span class="help-summary">{item.summary}</span>
+              </summary>
+              <div class="help-body">
+                <ol>
+                  {#each item.steps as step}
+                    <li>{step}</li>
                   {/each}
                 </ol>
-              </div>
-
-              {#if item.tips.length > 0}
-                <div
-                  class="mt-3 rounded-lg border border-black/[0.04] bg-black/[0.025] px-3 py-2 dark:border-white/[0.06] dark:bg-white/[0.04]"
-                >
-                  <p class="text-[11px] font-medium text-[#1d1d1f]/45 dark:text-[#fafafa]/45">
-                    {getTutorialText(tutorialUiText.tipsLabel, language)}
-                  </p>
-                  <ul
-                    class="mt-1 space-y-1 text-[12px] leading-5 text-[#1d1d1f]/65 dark:text-[#fafafa]/65"
-                  >
-                    {#each item.tips as tip, index (index)}
-                      <li>{tip}</li>
-                    {/each}
-                  </ul>
-                </div>
-              {/if}
-
-              {#if item.links.length > 0}
-                <div class="mt-3 space-y-2">
-                  <p
-                    class="text-[11px] font-medium uppercase tracking-[0.04em] text-[#1d1d1f]/40 dark:text-[#fafafa]/40"
-                  >
-                    {getTutorialText(tutorialUiText.linksLabel, language)}
-                  </p>
-                  <div class="flex flex-wrap gap-2">
-                    {#each item.links as link (link.url)}
-                      <button
-                        type="button"
-                        class="rounded-lg border border-black/[0.06] bg-black/[0.025] px-2.5 py-1.5 text-[12px] text-[#1d1d1f]/70 transition hover:border-black/[0.12] hover:bg-black/[0.05] dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-[#fafafa]/70 dark:hover:border-white/[0.16] dark:hover:bg-white/[0.07]"
-                        onclick={() => window.electronAPI.openInBrowser(link.url)}
-                      >
-                        {link.label}
-                      </button>
-                    {/each}
+                {#if item.tips.length > 0}
+                  <aside class="help-tips">
+                    <p>{getTutorialText(tutorialUiText.tipsLabel, language)}</p>
+                    <ul>
+                      {#each item.tips as tip}<li>{tip}</li>{/each}
+                    </ul>
+                  </aside>
+                {/if}
+                {#if item.links.length > 0}
+                  <div class="help-links">
+                    <p>{getTutorialText(tutorialUiText.linksLabel, language)}</p>
+                    <div>
+                      {#each item.links as link}
+                        <button
+                          type="button"
+                          onclick={() => window.electronAPI.openInBrowser(link.url)}
+                          >{link.label}</button
+                        >
+                      {/each}
+                    </div>
                   </div>
-                </div>
-              {/if}
-            </article>
+                {/if}
+              </div>
+            </details>
           {/each}
-        {/if}
-      </div>
-    </div>
+        </div>
+      </section>
+    {/each}
   {/if}
 </div>
+
+<style>
+  .help-page {
+    --help-border: rgba(0, 0, 0, 0.1);
+    --help-muted: #666;
+    --help-accent: #08765a;
+    width: 100%;
+    min-width: 0;
+    padding-bottom: 24px;
+    color: #242424;
+    font-size: 13px;
+    line-height: 1.6;
+    letter-spacing: 0;
+  }
+  :global(.dark) .help-page {
+    --help-border: rgba(255, 255, 255, 0.14);
+    --help-muted: #b3b3b3;
+    --help-accent: #6ee7b7;
+    color: #ededed;
+  }
+  .help-search {
+    display: block;
+    margin-bottom: 16px;
+  }
+  .help-search input {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    padding: 9px 12px;
+    border: 1px solid var(--help-border);
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+  }
+  .help-search input::placeholder {
+    color: var(--help-muted);
+  }
+  .help-search input:focus-visible,
+  .help-categories button:focus-visible,
+  summary:focus-visible {
+    outline: 2px solid var(--help-accent);
+    outline-offset: 2px;
+  }
+  .help-categories {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    border-bottom: 1px solid var(--help-border);
+  }
+  .help-categories button {
+    padding: 8px 0;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    color: var(--help-muted);
+    font: inherit;
+    cursor: pointer;
+  }
+  .help-categories button.active {
+    border-bottom-color: var(--help-accent);
+    color: var(--help-accent);
+  }
+  .help-section {
+    min-width: 0;
+    margin-top: 16px;
+  }
+  h2 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .help-description {
+    margin: 0 0 12px;
+    color: var(--help-muted);
+    font-size: 12px;
+  }
+  .help-article {
+    border-bottom: 1px solid var(--help-border);
+  }
+  summary {
+    padding: 14px 4px;
+    cursor: pointer;
+    overflow-wrap: anywhere;
+  }
+  summary::marker {
+    color: var(--help-muted);
+  }
+  .help-item-title {
+    font-weight: 600;
+  }
+  .help-summary {
+    display: block;
+    padding-left: 16px;
+    margin-top: 3px;
+    font-size: 12px;
+    color: var(--help-muted);
+  }
+  .help-body {
+    padding: 0 4px 20px 20px;
+    overflow-wrap: anywhere;
+  }
+  ol {
+    list-style: decimal;
+    padding-left: 20px;
+    margin: 0;
+  }
+  li + li {
+    margin-top: 8px;
+  }
+  .help-tips {
+    margin-top: 16px;
+    padding-left: 12px;
+    border-left: 2px solid var(--help-border);
+  }
+  .help-tips p,
+  .help-links p {
+    color: var(--help-muted);
+    margin: 0 0 6px;
+    font-size: 12px;
+  }
+  .help-tips ul {
+    list-style: disc;
+    padding-left: 16px;
+    margin: 0;
+  }
+  .help-links {
+    margin-top: 16px;
+  }
+  .help-links div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+  }
+  .help-links button {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--help-accent);
+    text-align: left;
+    font: inherit;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+  }
+  .help-empty {
+    padding: 24px 0;
+    text-align: center;
+    color: var(--help-muted);
+  }
+</style>

@@ -75,7 +75,8 @@
   let systemMemGB = $state<number | null>(null)
   let systemArchitecture = $state('')
   let dedicatedVramGB = $state(0)
-  let detectingHardware = $state(false)
+  let detectingHardware = $state(true)
+  let hardwareDetectionFailed = $state(false)
   let modelPreference = $state<'quality' | 'speed'>('quality')
 
   const AURA_MODELS: AuraModel[] = [
@@ -365,6 +366,7 @@
       dedicatedVramGB = sysInfo?.dedicatedVramGB || 0
       applyRecommendedModel()
     } catch {
+      hardwareDetectionFailed = true
       systemMemGB = 8
       systemArchitecture = ''
       dedicatedVramGB = 0
@@ -642,6 +644,7 @@
         const sysInfo = await window.electronAPI.getSystemInfo()
         llamaCppVariant = detectWindowsLlamaVariant(sysInfo?.gpuName || '')
       } catch {
+        hardwareDetectionFailed = true
         llamaCppVariant = 'cpu'
       }
     } else if (platform === 'darwin') {
@@ -963,6 +966,7 @@
   }
 
   const handleInstallClick = async () => {
+    if (detectingHardware) return
     if (await showBitdefenderWarningIfNeeded()) return
     startCoreInstall()
   }
@@ -978,6 +982,23 @@
   </button>
 
   {#if phase === 'ready'}
+    <div
+      role="status"
+      aria-live="polite"
+      class="mb-4 flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300"
+    >
+      {#if detectingHardware}
+        <span
+          aria-hidden="true"
+          class="size-4 shrink-0 animate-spin motion-reduce:animate-none rounded-full border-2 border-gray-300 border-t-emerald-500"
+        ></span>
+        {$i18n.t('main.getStarted.detectingHardware')}
+      {:else if hardwareDetectionFailed}
+        {$i18n.t('main.getStarted.hardwareDetectionFailed')}
+      {:else}
+        {$i18n.t('main.getStarted.hardwareDetected')}
+      {/if}
+    </div>
     <div class="mb-1 text-sm font-normal opacity-50">{$i18n.t('app.name')}</div>
     <h1 class="text-2xl font-light tracking-tight mb-2">Step 1: Application Setup</h1>
     <p class="text-[12px] opacity-30 mb-6 leading-relaxed">
@@ -1099,6 +1120,7 @@
     <button
       class="w-fit inline-flex items-center gap-2 bg-white px-8 py-2.5 text-black text-[13px] transition hover:bg-gray-100 border-none"
       onclick={handleInstallClick}
+      disabled={detectingHardware}
     >
       Install AuraPro Core
       <svg
@@ -1268,7 +1290,7 @@
         <div
           class="mb-5 rounded-xl bg-black/[0.03] dark:bg-white/[0.04] px-4 py-3 text-[12px] opacity-50"
         >
-          正在检测配置，请稍候。
+          {$i18n.t('main.getStarted.detectingHardware')}
         </div>
       {/if}
 
