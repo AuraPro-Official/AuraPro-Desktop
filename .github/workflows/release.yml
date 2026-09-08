@@ -200,7 +200,10 @@ jobs:
             # ARM64: deb + AppImage only (flatpak BaseApp is not available for arm64)
             npx electron-builder --linux AppImage deb --${{ matrix.arch }} --publish never
           elif [ "${{ steps.flatpak.outcome }}" == "success" ]; then
-            npx electron-builder --linux --${{ matrix.arch }} --publish never
+            # Flatpak and the other Linux targets share linux-unpacked. Building them
+            # concurrently can remove chrome-sandbox while Flatpak is still reading it.
+            npx electron-builder --linux AppImage deb snap --${{ matrix.arch }} --publish never
+            npx electron-builder --linux flatpak --${{ matrix.arch }} --publish never
           else
             echo "Flatpak not available, building without flatpak"
             npx electron-builder --linux AppImage deb snap --${{ matrix.arch }} --publish never
