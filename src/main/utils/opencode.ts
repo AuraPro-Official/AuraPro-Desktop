@@ -1,6 +1,6 @@
 import crypto from 'crypto'
 import * as fs from 'fs'
-import { execFileSync, execSync } from 'child_process'
+import { execFile, execFileSync, execSync } from 'child_process'
 import { homedir } from 'os'
 import * as path from 'path'
 
@@ -137,6 +137,21 @@ const installedVersion = (): string | null => {
   } catch {
     return null
   }
+}
+
+export const getInstalledOpenCodeVersion = async (): Promise<string | null> => {
+  const metadataVersion = readMetadata()?.version
+  if (metadataVersion) return metadataVersion
+  const binary = binaryPath ?? findBinary()
+  if (!binary) return null
+  return new Promise((resolve) => {
+    execFile(
+      binary,
+      ['--version'],
+      { encoding: 'utf8', windowsHide: true, timeout: 10000 },
+      (error, stdout) => resolve(error ? null : stdout.trim().replace(/^v/i, ''))
+    )
+  })
 }
 
 const removeRuntimeDescriptor = (): void => {
@@ -583,6 +598,8 @@ export const uninstallOpenCode = async (): Promise<boolean> => {
 }
 
 export const isOpenCodeInstalled = (): boolean => Boolean(findBinary())
+
+export const getOpenCodeServiceState = () => ({ url, status, pid, username: OPEN_CODE_USERNAME })
 
 export const getOpenCodeInfo = (): OpenCodeInfo => {
   binaryPath = binaryPath ?? findBinary()

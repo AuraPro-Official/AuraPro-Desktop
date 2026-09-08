@@ -142,7 +142,7 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.9.39'
+export const AURAPRO_UI_TARGET_VERSION = '3.9.40'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
 export const AURAPRO_UI_LAST_VERSION = '3.9.3'
@@ -2517,7 +2517,7 @@ const DEFAULT_CONFIG: AppConfig = {
     enabled: false,
     port: 18881,
     version: 'latest',
-    fallbackVersion: 'b9637',
+    fallbackVersion: 'b10809',
     badVersions: [],
     variant: 'auto',
     parallel: 1,
@@ -2642,7 +2642,11 @@ const normalizeConfig = (config: AppConfig): AppConfig => {
     },
     llamaCpp: {
       ...DEFAULT_CONFIG.llamaCpp,
-      ...(config.llamaCpp ?? {})
+      ...(config.llamaCpp ?? {}),
+      fallbackVersion:
+        !config.llamaCpp?.fallbackVersion || config.llamaCpp.fallbackVersion === 'b9637'
+          ? DEFAULT_CONFIG.llamaCpp.fallbackVersion
+          : config.llamaCpp.fallbackVersion
     },
     sherpa: {
       ...DEFAULT_CONFIG.sherpa,

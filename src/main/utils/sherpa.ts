@@ -710,6 +710,8 @@ export const ensureDefaultTtsModel = async (
   return nextSherpaConfig
 }
 
+export const getSherpaServiceState = () => ({ url, status, pid })
+
 export const getSherpaInfo = () => ({
   url,
   status,

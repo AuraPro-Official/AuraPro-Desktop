@@ -2,7 +2,8 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { createHash } from 'crypto'
-import { execFileSync, execSync } from 'child_process'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
 
 import { app } from 'electron'
 import log from 'electron-log'
@@ -19,13 +20,19 @@ import {
 } from './llamacpp'
 import {
   classifyLlamaCppLog,
+  currentLlamaModelLog,
   inspectLlamaCppGpuLog,
   inspectLlamaCppMainModelLog,
   inspectLlamaCppMtpLog,
   inspectLlamaCppMultimodalLog
 } from './llamacpp-log-diagnostics'
-import { getOpenCodeInfo } from './opencode'
+import { getInstalledOpenCodeVersion, getOpenCodeServiceState } from './opencode'
+import { getSherpaServiceState } from './sherpa'
+import { getOpenTerminalInfo } from './open-terminal'
+import { checkOptionalService, type OptionalServiceHealth } from './optional-service-health'
 import { getInstalledOfficialGlossaryVersion } from './official-glossaries'
+import { RepairFiles } from './repair-files'
+import { checkLlamaServiceHealth } from './llamacpp-health'
 
 export type LlamaDiagnosticSeverity = 'error' | 'warning' | 'info'
 export type LlamaRepairAction =
@@ -65,6 +72,7 @@ export interface LlamaDiagnosticReport {
     optionalComponents: Array<{
       id: 'sherpa' | 'official-glossaries' | 'open-terminal' | 'opencode' | 'pytorch'
       version: string
+      health?: OptionalServiceHealth
     }>
   }
   hardware: {
@@ -78,6 +86,7 @@ export interface LlamaDiagnosticReport {
     freeVramMb: number | null
   }
   runtime: {
+    health: 'healthy' | 'loading' | 'starting' | 'unresponsive' | 'stopped'
     status: string | null
     version: string | null
     binaryPath: string | null
@@ -135,21 +144,22 @@ interface CompanionModelSource {
 
 const GB = 1024 * 1024 * 1024
 
-const runTextCommand = (command: string, args: string[]): string | null => {
+const runTextCommand = async (command: string, args: string[]): Promise<string | null> => {
   try {
-    return execFileSync(command, args, {
+    const { stdout } = await execFileAsync(command, args, {
       encoding: 'utf8',
       windowsHide: true,
       timeout: 5000
-    }).trim()
+    })
+    return stdout.trim()
   } catch {
     return null
   }
 }
 
-const getWindowsVersion = (): string => {
+const getWindowsVersion = async (): Promise<string> => {
   const releaseParts = os.release().split('.')
-  const registryOutput = runTextCommand('reg.exe', [
+  const registryOutput = await runTextCommand('reg.exe', [
     'query',
     'HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion'
   ])
@@ -186,10 +196,10 @@ const getLinuxVersion = (): string => {
   return `${distribution} · kernel ${os.release()}`
 }
 
-const getOperatingSystemVersion = (): string => {
+const getOperatingSystemVersion = async (): Promise<string> => {
   if (process.platform === 'win32') return getWindowsVersion()
   if (process.platform === 'darwin') {
-    const productVersion = runTextCommand('/usr/bin/sw_vers', ['-productVersion'])
+    const productVersion = await runTextCommand('/usr/bin/sw_vers', ['-productVersion'])
     return productVersion ? `macOS ${productVersion}` : `macOS · Darwin ${os.release()}`
   }
   if (process.platform === 'linux') return getLinuxVersion()
@@ -214,7 +224,7 @@ const getSoftwareVersions = async (): Promise<LlamaDiagnosticReport['software']>
     'torch'
   ])
   const glossaryVersion = await getInstalledOfficialGlossaryVersion()
-  const openCodeVersion = getOpenCodeInfo().version
+  const openCodeVersion = await getInstalledOpenCodeVersion()
   const optionalComponents: LlamaDiagnosticReport['software']['optionalComponents'] = []
   const addOptional = (
     id: LlamaDiagnosticReport['software']['optionalComponents'][number]['id'],
@@ -391,15 +401,37 @@ const nvidiaSmiPaths = (): string[] => [
   )
 ]
 
-const probeNvidia = (): NvidiaProbe => {
+const execFileAsync = promisify(execFile)
+
+const getMacGpuNames = async (): Promise<string[]> => {
+  try {
+    const { stdout } = await execFileAsync(
+      '/usr/sbin/system_profiler',
+      ['SPDisplaysDataType', '-json'],
+      { encoding: 'utf8', timeout: 10000 }
+    )
+    const data = JSON.parse(stdout) as {
+      SPDisplaysDataType?: Array<{ sppci_model?: string; _name?: string }>
+    }
+    return (data.SPDisplaysDataType ?? [])
+      .map((gpu) => gpu.sppci_model || gpu._name || '')
+      .filter(Boolean)
+  } catch (error) {
+    log.warn('Unable to read macOS GPU information:', error)
+    return []
+  }
+}
+
+const probeNvidia = async (): Promise<NvidiaProbe> => {
   let adapters = ''
   if (process.platform === 'win32') {
     try {
-      adapters = execSync('wmic path win32_VideoController get name', {
+      const result = await execFileAsync('wmic', ['path', 'win32_VideoController', 'get', 'name'], {
         encoding: 'utf8',
         timeout: 5000,
         windowsHide: true
       })
+      adapters = result.stdout
     } catch {
       // Fall back to nvidia-smi when WMIC is unavailable.
     }
@@ -407,7 +439,7 @@ const probeNvidia = (): NvidiaProbe => {
 
   for (const smiPath of nvidiaSmiPaths()) {
     try {
-      const output = execFileSync(
+      const { stdout: output } = await execFileAsync(
         smiPath,
         [
           '--query-gpu=name,driver_version,memory.total,memory.free',
@@ -627,10 +659,13 @@ const listPartialGgufFiles = (root: string): string[] => {
   return files
 }
 
-const probeNvidiaProcessUsage = (probe: NvidiaProbe, pid: number | null): NvidiaProcessUsage => {
+const probeNvidiaProcessUsage = async (
+  probe: NvidiaProbe,
+  pid: number | null
+): Promise<NvidiaProcessUsage> => {
   if (!probe.smiPath) return { active: null, usedMemoryMb: null }
   try {
-    const output = execFileSync(
+    const { stdout: output } = await execFileAsync(
       probe.smiPath,
       ['--query-compute-apps=pid,process_name,used_gpu_memory', '--format=csv,noheader,nounits'],
       { encoding: 'utf8', timeout: 5000, windowsHide: true }
@@ -658,7 +693,7 @@ const probeNvidiaProcessUsage = (probe: NvidiaProbe, pid: number | null): Nvidia
     }
   } catch {
     try {
-      const output = execFileSync(
+      const { stdout: output } = await execFileAsync(
         probe.smiPath,
         ['--query-compute-apps=pid,process_name', '--format=csv,noheader,nounits'],
         { encoding: 'utf8', timeout: 5000, windowsHide: true }
@@ -711,13 +746,53 @@ export const diagnoseLlamaCpp = async (
   trigger = 'manual',
   startupError?: string
 ): Promise<LlamaDiagnosticReport> => {
-  const [config, software] = await Promise.all([getConfig(), getSoftwareVersions()])
+  const [config, software, operatingSystem, probe, macGpuNames] = await Promise.all([
+    getConfig(),
+    getSoftwareVersions(),
+    getOperatingSystemVersion(),
+    probeNvidia(),
+    process.platform === 'darwin' ? getMacGpuNames() : Promise.resolve([])
+  ])
   const system = {
-    operatingSystem: getOperatingSystemVersion(),
+    operatingSystem,
     cpuModel: getCpuModel()
   }
+  await Promise.all(
+    software.optionalComponents.map(async (component) => {
+      const activeProbe = trigger === 'manual'
+      if (component.id === 'sherpa') {
+        component.health = await checkOptionalService({
+          enabled: config.sherpa?.enabled === true,
+          activeProbe,
+          snapshot: getSherpaServiceState,
+          endpoint: '/health',
+          validBody: (body) =>
+            !!body && typeof body === 'object' && 'ok' in body && body.ok === true
+        })
+      } else if (component.id === 'opencode') {
+        component.health = await checkOptionalService({
+          enabled: config.openCode?.enabled === true,
+          activeProbe,
+          snapshot: getOpenCodeServiceState,
+          endpoint: '/global/health',
+          headers: {
+            Authorization:
+              'Basic ' +
+              Buffer.from(
+                getOpenCodeServiceState().username + ':' + (config.openCode?.password ?? '')
+              ).toString('base64')
+          }
+        })
+      } else if (component.id === 'open-terminal') {
+        component.health = await checkOptionalService({
+          enabled: config.openTerminal?.enabled === true,
+          activeProbe,
+          snapshot: getOpenTerminalInfo
+        })
+      }
+    })
+  )
   const configuredVariant = normalizeVariant(config.llamaCpp?.variant)
-  const probe = probeNvidia()
   const recommendedVariant = recommendedVariantFor(probe)
   const variant = configuredVariant === 'auto' ? recommendedVariant : configuredVariant
   const info = getLlamaCppInfo()
@@ -863,15 +938,31 @@ export const diagnoseLlamaCpp = async (
     })
   }
 
+  const { health: runtimeHealth, processAlive } = await checkLlamaServiceHealth(info)
+  const serviceHealthy = runtimeHealth === 'healthy'
+  if (runtimeHealth === 'unresponsive') {
+    addIssue(issues, {
+      id: 'llamacpp-service-unresponsive',
+      severity: 'error',
+      title: 'llama.cpp service is not responding',
+      detail: 'The service health check failed. The running service may need a restart.',
+      repairable: true,
+      action: 'restart'
+    })
+  }
+  evidence.push(`llama.cpp service health: ${runtimeHealth}`)
+  if (serviceHealthy) evidence.push('Running llama.cpp service passed its health check.')
+
   let binaryProbeOutput = ''
-  if (binary) {
+  if (binary && !processAlive && runtimeHealth === 'stopped') {
     try {
-      binaryProbeOutput = execFileSync(binary, ['--version'], {
+      const result = await execFileAsync(binary, ['--version'], {
         cwd: path.dirname(binary),
         encoding: 'utf8',
         timeout: 10000,
         windowsHide: true
       })
+      binaryProbeOutput = result.stdout
     } catch (error: unknown) {
       const details = errorRecord(error)
       binaryProbeOutput = [
@@ -892,20 +983,21 @@ export const diagnoseLlamaCpp = async (
         ].includes(issue.id)
       )
       if (!knownCause) {
+        const timedOut = (error as NodeJS.ErrnoException).code === 'ETIMEDOUT'
         addIssue(issues, {
-          id: 'llamacpp-probe-failed',
-          severity: 'error',
-          title: 'llama.cpp runtime could not start',
+          id: timedOut ? 'llamacpp-probe-timeout' : 'llamacpp-probe-failed',
+          severity: timedOut ? 'warning' : 'error',
+          title: timedOut ? 'llama.cpp self-check timed out' : 'llama.cpp runtime could not start',
           detail: binaryProbeOutput.trim().slice(-500) || 'llama-server --version failed.',
-          repairable: true,
-          action: 'reinstall-llamacpp'
+          repairable: !timedOut,
+          action: timedOut ? undefined : 'reinstall-llamacpp'
         })
       }
     }
   }
 
   const runtimeActive =
-    ['setting-up', 'starting', 'started'].includes(info.status ?? '') && Boolean(info.pid)
+    ['setting-up', 'starting', 'started'].includes(info.status ?? '') && processAlive
   const configuredPort = config.llamaCpp?.port || 18881
   let runtimePort: number | null = null
   if (info.url) {
@@ -938,7 +1030,9 @@ export const diagnoseLlamaCpp = async (
     })
   }
   const startupContext = runtimeActive ? '' : (startupError ?? '')
-  const logs = stripAnsi(`${getLlamaCppLog().join('\n')}\n${binaryProbeOutput}\n${startupContext}`)
+  const logs = currentLlamaModelLog(
+    stripAnsi(`${getLlamaCppLog().join('\n')}\n${binaryProbeOutput}\n${startupContext}`)
+  )
   const gpuLog = inspectLlamaCppGpuLog(logs)
   const mainModelLog = inspectLlamaCppMainModelLog(logs)
   const mtpLog = inspectLlamaCppMtpLog(logs)
@@ -946,7 +1040,7 @@ export const diagnoseLlamaCpp = async (
   const cudaDeviceCount = gpuLog.cudaDeviceCount
   const offloadedLayers = gpuLog.offloadedLayers
   const logFailures = classifyLlamaCppLog(logs)
-  const processUsage = probeNvidiaProcessUsage(probe, info.pid)
+  const processUsage = await probeNvidiaProcessUsage(probe, info.pid)
   const processOnGpu = processUsage.active
   const totalUsedVramMb =
     probe.totalVramMb !== null && probe.freeVramMb !== null
@@ -1303,7 +1397,12 @@ export const diagnoseLlamaCpp = async (
     software,
     hardware: {
       nvidiaDetected: probe.detected,
-      gpuNames: probe.names.length > 0 ? probe.names : adapterNamesFromProbe(probe),
+      gpuNames:
+        process.platform === 'darwin'
+          ? macGpuNames
+          : probe.names.length > 0
+            ? probe.names
+            : adapterNamesFromProbe(probe),
       driverVersion: probe.driverVersion,
       processOnGpu,
       totalRamBytes,
@@ -1312,6 +1411,7 @@ export const diagnoseLlamaCpp = async (
       freeVramMb: probe.freeVramMb
     },
     runtime: {
+      health: runtimeHealth,
       status: info.status,
       version: info.version,
       binaryPath: binary,
@@ -1341,6 +1441,10 @@ const downloadOfficialModel = async (
   onStatus?: (status: string) => void
 ): Promise<void> => {
   const modelKey = path.basename(filepath, '.gguf')
+  const relativeDir = path.relative(getModelsDir(), path.dirname(filepath))
+  if (relativeDir.startsWith('..') || path.isAbsolute(relativeDir)) {
+    throw new Error(`Model repair path is outside the model directory: ${filepath}`)
+  }
   onStatus?.(`Repairing model ${source.saveAs}...`)
   await downloadModel(
     source.repo,
@@ -1350,11 +1454,11 @@ const downloadOfficialModel = async (
     source.expectedSize,
     source.saveAs,
     modelKey,
-    modelKey
+    relativeDir || undefined
   )
 }
 
-export const repairLlamaCpp = async (
+const runLlamaCppRepair = async (
   requestedIssueIds: string[] = [],
   onStatus?: (status: string) => void
 ): Promise<LlamaRepairResult> => {
@@ -1365,126 +1469,179 @@ export const repairLlamaCpp = async (
   )
   const actions: string[] = []
   let restartError: string | null = null
+  const originalConfig = (await getConfig()).llamaCpp
+  const wasRunning = getLlamaCppInfo().status === 'started'
+  const files = new RepairFiles()
 
-  if (selected.length > 0) {
-    onStatus?.('Stopping llama.cpp before repair...')
-    await stopLlamaCpp()
-  }
-
-  const switchIssue = selected.find((issue) => issue.action === 'switch-variant')
-  if (switchIssue?.data?.targetVariant) {
-    const config = await getConfig()
-    const targetVariant = String(switchIssue.data.targetVariant)
-    onStatus?.(`Switching llama.cpp to ${targetVariant}...`)
-    await setConfig({
-      llamaCpp: { ...(config.llamaCpp ?? {}), variant: targetVariant }
-    })
-    actions.push(`Switched llama.cpp variant to ${targetVariant}`)
-  }
-
-  for (const issue of selected.filter((item) => item.action === 'repair-model')) {
-    const source = issue.data?.source as OfficialModelSource | undefined
-    const filepath = String(issue.data?.filepath ?? '')
-    if (!source || !filepath) continue
-    if (issue.data?.removeBeforeDownload && fs.existsSync(filepath)) {
-      fs.unlinkSync(filepath)
+  try {
+    if (selected.length > 0) {
+      onStatus?.('Stopping llama.cpp before repair...')
+      await stopLlamaCpp()
     }
-    await downloadOfficialModel(source, filepath, onStatus)
-    actions.push(`Repaired model ${source.saveAs}`)
-  }
 
-  for (const issue of selected.filter((item) => item.action === 'repair-mmproj')) {
-    const source = issue.data?.source as CompanionModelSource | undefined
-    const filepath = String(issue.data?.filepath ?? '')
-    const modelName = String(issue.data?.modelName ?? '')
-    if (!source || !filepath || !modelName) continue
-    const tmpPath = `${filepath}.tmp`
-    if (issue.data?.removeBeforeDownload) {
-      if (fs.existsSync(filepath)) fs.unlinkSync(filepath)
-      if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath)
-    } else {
+    const switchIssue = selected.find((issue) => issue.action === 'switch-variant')
+    if (switchIssue?.data?.targetVariant) {
+      const config = await getConfig()
+      const targetVariant = String(switchIssue.data.targetVariant)
+      onStatus?.(`Switching llama.cpp to ${targetVariant}...`)
+      await setConfig({
+        llamaCpp: { ...(config.llamaCpp ?? {}), variant: targetVariant }
+      })
+      actions.push(`Switched llama.cpp variant to ${targetVariant}`)
+    }
+
+    for (const issue of selected.filter((item) => item.action === 'repair-model')) {
+      const source = issue.data?.source as OfficialModelSource | undefined
+      const filepath = String(issue.data?.filepath ?? '')
+      if (!source || !filepath) continue
+      if (issue.data?.removeBeforeDownload && fs.existsSync(filepath)) {
+        await files.preserve(filepath)
+      }
+      if (issue.data?.removeBeforeDownload) await files.preserve(`${filepath}.tmp`)
+      await downloadOfficialModel(source, filepath, onStatus)
+      if (!isGgufValid(filepath))
+        throw new Error(`Downloaded model failed its basic check: ${filepath}`)
+      actions.push(`Repaired model ${source.saveAs}`)
+    }
+
+    for (const issue of selected.filter((item) => item.action === 'repair-mmproj')) {
+      const source = issue.data?.source as CompanionModelSource | undefined
+      const filepath = String(issue.data?.filepath ?? '')
+      const modelName = String(issue.data?.modelName ?? '')
+      if (!source || !filepath || !modelName) continue
+      const tmpPath = `${filepath}.tmp`
+      if (issue.data?.removeBeforeDownload) {
+        if (fs.existsSync(filepath)) await files.preserve(filepath)
+        if (fs.existsSync(tmpPath)) await files.preserve(tmpPath)
+      } else {
+        const validFinal = isGgufValid(filepath)
+        if (fs.existsSync(filepath) && !validFinal) await files.preserve(filepath)
+        if (validFinal && fs.existsSync(tmpPath)) await files.preserve(tmpPath)
+      }
+      const modelKey = path.basename(modelName, '.gguf')
+      const relativeDir = path.relative(getModelsDir(), path.dirname(filepath))
+      const subDir =
+        relativeDir && relativeDir !== '.' && !relativeDir.startsWith('..')
+          ? relativeDir
+          : undefined
+      onStatus?.(`Repairing vision projector for ${modelName}...`)
+      await downloadModel(
+        source.repo,
+        source.filename,
+        (progress) => onStatus?.(`Repairing vision projector ${progress.percent.toFixed(0)}%`),
+        undefined,
+        undefined,
+        source.filename,
+        modelKey,
+        subDir
+      )
+      if (!isGgufValid(filepath))
+        throw new Error(`Downloaded projector failed its basic check: ${filepath}`)
+      actions.push(`Repaired vision projector for ${modelName}`)
+    }
+
+    for (const issue of selected.filter((item) => item.action === 'repair-mtp')) {
+      const source = issue.data?.source as { repo: string; filename: string } | undefined
+      const filepath = String(issue.data?.filepath ?? '')
+      const modelName = String(issue.data?.modelName ?? '')
+      if (!source || !filepath || !modelName) continue
       const validFinal = isGgufValid(filepath)
-      if (fs.existsSync(filepath) && !validFinal) fs.unlinkSync(filepath)
-      if (validFinal && fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath)
+      if (fs.existsSync(filepath) && !validFinal) await files.preserve(filepath)
+      if (validFinal && fs.existsSync(`${filepath}.tmp`)) await files.preserve(`${filepath}.tmp`)
+      const modelKey = path.basename(modelName, '.gguf')
+      const relativeDir = path.relative(getModelsDir(), path.dirname(filepath))
+      if (relativeDir.startsWith('..') || path.isAbsolute(relativeDir)) {
+        throw new Error(`MTP repair path is outside the model directory: ${filepath}`)
+      }
+      onStatus?.(`Repairing MTP model ${source.filename}...`)
+      await downloadModel(
+        source.repo,
+        source.filename,
+        (progress) =>
+          onStatus?.(`Repairing MTP model ${source.filename} ${progress.percent.toFixed(0)}%`),
+        undefined,
+        undefined,
+        path.basename(source.filename),
+        modelKey,
+        relativeDir || undefined
+      )
+      if (!isGgufValid(filepath))
+        throw new Error(`Downloaded MTP model failed its basic check: ${filepath}`)
+      actions.push(`Repaired MTP model ${path.basename(source.filename)}`)
     }
-    const modelKey = path.basename(modelName, '.gguf')
-    const relativeDir = path.relative(getModelsDir(), path.dirname(filepath))
-    const subDir =
-      relativeDir && relativeDir !== '.' && !relativeDir.startsWith('..') ? relativeDir : undefined
-    onStatus?.(`Repairing vision projector for ${modelName}...`)
-    await downloadModel(
-      source.repo,
-      source.filename,
-      (progress) => onStatus?.(`Repairing vision projector ${progress.percent.toFixed(0)}%`),
-      undefined,
-      undefined,
-      source.filename,
-      modelKey,
-      subDir
-    )
-    actions.push(`Repaired vision projector for ${modelName}`)
-  }
 
-  for (const issue of selected.filter((item) => item.action === 'repair-mtp')) {
-    const source = issue.data?.source as { repo: string; filename: string } | undefined
-    const filepath = String(issue.data?.filepath ?? '')
-    const modelName = String(issue.data?.modelName ?? '')
-    if (!source || !filepath || !modelName) continue
-    const validFinal = isGgufValid(filepath)
-    if (fs.existsSync(filepath) && !validFinal) fs.unlinkSync(filepath)
-    if (validFinal && fs.existsSync(`${filepath}.tmp`)) fs.unlinkSync(`${filepath}.tmp`)
-    const modelKey = path.basename(modelName, '.gguf')
-    onStatus?.(`Repairing MTP model ${source.filename}...`)
-    await downloadModel(
-      source.repo,
-      source.filename,
-      (progress) =>
-        onStatus?.(`Repairing MTP model ${source.filename} ${progress.percent.toFixed(0)}%`),
-      undefined,
-      undefined,
-      path.basename(source.filename),
-      modelKey,
-      modelKey
-    )
-    actions.push(`Repaired MTP model ${path.basename(source.filename)}`)
-  }
+    if (selected.some((issue) => issue.action === 'disable-mtp')) {
+      const config = await getConfig()
+      onStatus?.('Disabling incompatible MTP acceleration...')
+      await setConfig({
+        llamaCpp: { ...(config.llamaCpp ?? {}), mtpEnabled: false }
+      })
+      actions.push('Disabled MTP acceleration')
+    }
 
-  if (selected.some((issue) => issue.action === 'disable-mtp')) {
-    const config = await getConfig()
-    onStatus?.('Disabling incompatible MTP acceleration...')
-    await setConfig({
-      llamaCpp: { ...(config.llamaCpp ?? {}), mtpEnabled: false }
-    })
-    actions.push('Disabled MTP acceleration')
-  }
+    const needsReinstall = selected.some((issue) => issue.action === 'reinstall-llamacpp')
+    const needsRuntimeRepair = selected.some((issue) => issue.action === 'repair-runtime')
+    if (needsReinstall) {
+      await reinstallLlamaCpp(onStatus)
+      actions.push('Reinstalled llama.cpp runtime')
+    } else if (needsRuntimeRepair || switchIssue) {
+      await stopLlamaCpp()
+      await setupLlamaCpp(onStatus)
+      actions.push(
+        needsRuntimeRepair ? 'Repaired CUDA runtime DLLs' : 'Installed matching llama.cpp variant'
+      )
+    }
 
-  const needsReinstall = selected.some((issue) => issue.action === 'reinstall-llamacpp')
-  const needsRuntimeRepair = selected.some((issue) => issue.action === 'repair-runtime')
-  if (needsReinstall) {
-    await reinstallLlamaCpp(onStatus)
-    actions.push('Reinstalled llama.cpp runtime')
-  } else if (needsRuntimeRepair || switchIssue) {
-    await stopLlamaCpp()
-    await setupLlamaCpp(onStatus)
-    actions.push(
-      needsRuntimeRepair ? 'Repaired CUDA runtime DLLs' : 'Installed matching llama.cpp variant'
-    )
-  }
-
-  if (selected.length > 0) {
-    try {
+    if (selected.length > 0) {
       onStatus?.('Restarting llama.cpp...')
       await startLlamaCppWithFallback(onStatus)
       const config = await getConfig()
       await setConfig({ llamaCpp: { ...(config.llamaCpp ?? {}), enabled: true } })
       actions.push('Restarted llama.cpp')
-    } catch (error: unknown) {
-      restartError = errorRecord(error).message ?? String(error)
-      log.error('llama.cpp repair restart failed:', error)
+    }
+  } catch (error: unknown) {
+    restartError = errorRecord(error).message ?? String(error)
+    log.error('llama.cpp repair failed:', error)
+    try {
+      await stopLlamaCpp()
+      await files.rollback()
+    } catch (restoreError) {
+      restartError += `; File recovery failed: ${String(restoreError)}`
+      log.error('Unable to restore repair backups:', restoreError)
+    }
+    try {
+      await setConfig({ llamaCpp: originalConfig ?? {} })
+      if (wasRunning) {
+        await startLlamaCppWithFallback(onStatus)
+        actions.push('Restored the previous llama.cpp service after repair failure')
+      }
+    } catch (restoreError) {
+      restartError += `; Service recovery failed: ${String(restoreError)}`
+      log.error('Unable to restore previous llama.cpp service:', restoreError)
+    }
+  }
+  if (!restartError) {
+    try {
+      await files.commit()
+    } catch (error) {
+      log.warn('Repair succeeded, but some backup files could not be cleaned up:', error)
     }
   }
 
   onStatus?.('Checking repair results...')
   const report = await diagnoseLlamaCpp('post-repair', restartError ?? undefined)
   return { actions, restartError, report }
+}
+
+let repairInProgress: Promise<LlamaRepairResult> | null = null
+
+export const repairLlamaCpp = (
+  requestedIssueIds: string[] = [],
+  onStatus?: (status: string) => void
+): Promise<LlamaRepairResult> => {
+  if (repairInProgress) return repairInProgress
+  repairInProgress = runLlamaCppRepair(requestedIssueIds, onStatus).finally(() => {
+    repairInProgress = null
+  })
+  return repairInProgress
 }

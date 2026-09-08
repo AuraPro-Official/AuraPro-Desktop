@@ -59,7 +59,16 @@ const inspectComponentLoad = (
   }
 }
 
+export const currentLlamaModelLog = (value: string): string => {
+  const latestLoad = lastMatchIndex(value, [
+    /\bsrv\s+load_model:\s*loading model\b/i,
+    /\bllama_model_load_from_file_impl:\s*using device\b/i
+  ])
+  return latestLoad >= 0 ? value.slice(latestLoad) : value
+}
+
 export const inspectLlamaCppGpuLog = (value: string): LlamaCppGpuLogEvidence => {
+  value = currentLlamaModelLog(value)
   const cudaDeviceCounts = [...value.matchAll(/ggml_cuda_init:\s*found\s+(\d+)\s+CUDA devices?/gi)]
     .map((match) => Number.parseInt(match[1], 10))
     .filter(Number.isFinite)
@@ -159,7 +168,18 @@ export const inspectLlamaCppMainModelLog = (value: string): LlamaCppComponentLoa
 }
 
 export const classifyLlamaCppLog = (value: string): LlamaCppLogFailures => {
-  const outOfMemory = matchesAny(value, [
+  value = currentLlamaModelLog(value)
+  const recoveredAt = lastMatchIndex(value, [
+    /\bmain:\s*model loaded\b/i,
+    /\beval time\s*=/i,
+    /\bdone request:\s*POST\s+\/v1\/(?:chat\/completions|completions|responses)\b[^\r\n]*\b200\b/i
+  ])
+  const unrecovered = recoveredAt >= 0 ? value.slice(recoveredAt) : value
+  const backendRecoveredAt = lastMatchIndex(value, [
+    /\boffloaded\s+[1-9]\d*(?:\/\d+)?\s+layers?\s+to\s+GPU\b/i
+  ])
+  const backendLog = backendRecoveredAt >= 0 ? value.slice(backendRecoveredAt) : value
+  const outOfMemory = matchesAny(unrecovered, [
     /\bout of (?:device |host )?memory\b/i,
     /\b(?:cuda|hip|sycl)?malloc(?:\(\))?\s+failed\b.*\bmemory\b/i,
     /\b(?:failed|unable|cannot|can't)\s+to\s+allocate\b/i,
@@ -174,14 +194,14 @@ export const classifyLlamaCppLog = (value: string): LlamaCppLogFailures => {
 
   const multimodalLoadFailed = inspectLlamaCppMultimodalLog(value).failed
 
-  const modelCompatibilityFailed = matchesAny(value, [
+  const modelCompatibilityFailed = matchesAny(unrecovered, [
     /\bunknown model architecture\b/i,
     /\bunsupported (?:model|model architecture|architecture|GGUF|quantization|tensor type)\b/i,
     /\bmodel.{0,100}\brequires (?:a )?newer\b/i,
     /\bunknown (?:ggml|GGUF) type\b/i
   ])
 
-  const modelFileFailed = matchesAny(value, [
+  const modelFileFailed = matchesAny(unrecovered, [
     /\bfailed to open (?:a )?GGUF\b/i,
     /\binvalid (?:GGUF|magic|model file)\b/i,
     /\bGGUF.{0,100}(?:truncated|corrupt|unexpected end)\b/is,
@@ -191,7 +211,7 @@ export const classifyLlamaCppLog = (value: string): LlamaCppLogFailures => {
 
   const modelLoadFailed = inspectLlamaCppMainModelLog(value).failed
 
-  const backendInitializationFailed = matchesAny(value, [
+  const backendInitializationFailed = matchesAny(backendLog, [
     /\bfailed to initialize CUDA\b/i,
     /\bno CUDA-capable device\b/i,
     /\bCUDA driver version is insufficient\b/i,

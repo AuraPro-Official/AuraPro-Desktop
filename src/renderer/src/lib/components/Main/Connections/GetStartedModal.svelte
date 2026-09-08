@@ -4,6 +4,7 @@
   import i18n from '../../../i18n'
   import { detectWindowsLlamaVariant } from '../../../utils/llamacpp'
   import Switch from '../../common/Switch.svelte'
+  import HardwareDetectionStatus from '../../Setup/HardwareDetectionStatus.svelte'
   import UnsupportedInstallPathDialog from '../../Setup/UnsupportedInstallPathDialog.svelte'
 
   interface Props {
@@ -364,6 +365,8 @@
   }
 </script>
 
+<HardwareDetectionStatus detecting={detectingHardware} failed={hardwareDetectionFailed} />
+
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
@@ -413,23 +416,11 @@
     </div>
 
     <!-- Options -->
-    <div
-      role="status"
-      aria-live="polite"
-      class="flex items-center gap-2 px-6 pt-4 text-xs text-gray-700 dark:text-gray-300"
-    >
-      {#if detectingHardware}
-        <span
-          aria-hidden="true"
-          class="size-4 shrink-0 animate-spin motion-reduce:animate-none rounded-full border-2 border-gray-300 border-t-emerald-500"
-        ></span>
-        {$i18n.t('main.getStarted.detectingHardware')}
-      {:else if hardwareDetectionFailed}
+    {#if !detectingHardware && hardwareDetectionFailed}
+      <div role="status" class="px-6 pt-4 text-sm text-amber-700 dark:text-amber-300">
         {$i18n.t('main.getStarted.hardwareDetectionFailed')}
-      {:else}
-        {$i18n.t('main.getStarted.hardwareDetected')}
-      {/if}
-    </div>
+      </div>
+    {/if}
     <div class="px-6 py-4 flex flex-col divide-y divide-gray-100/30 dark:divide-gray-800/15">
       <div class="py-3 flex items-center justify-between gap-4">
         <div>

@@ -339,7 +339,7 @@ interface LlamaConfig {
   version?: string
 }
 
-const DEFAULT_LLAMA_CPP_FALLBACK_VERSION = 'b9637'
+const DEFAULT_LLAMA_CPP_FALLBACK_VERSION = 'b10809'
 const LLAMA_CPP_RELEASE_FALLBACK_ATTEMPTS = 12
 const LLAMA_CPP_RELEASE_DISCOVERY_LIMIT = 30
 const LLAMA_CPP_RELEASE_CACHE_TTL_MS = 60_000
@@ -1634,6 +1634,8 @@ export const updateLlamaCpp = async (
 export const reinstallLlamaCpp = async (onStatus?: (status: string) => void): Promise<string> => {
   const currentInfo = getLlamaCppInfo()
   await stopLlamaCpp()
+  let preservedDir: string | null = null
+  let originalDir: string | null = null
 
   if (currentInfo.version) {
     const cacheBase = path.join(getInstallDir(), 'llama.cpp')
@@ -1643,14 +1645,45 @@ export const reinstallLlamaCpp = async (onStatus?: (status: string) => void): Pr
       throw new Error(`Refusing to remove invalid llama.cpp cache path: ${versionDir}`)
     }
     if (fs.existsSync(versionDir)) {
-      onStatus?.('Removing damaged llama.cpp runtime...')
-      await deleteWithRetry(versionDir)
+      onStatus?.('Preserving the previous llama.cpp runtime...')
+      const backup = await fs.promises.mkdtemp(path.join(getInstallDir(), '.llamacpp-repair-'))
+      preservedDir = path.join(backup, 'runtime')
+      originalDir = versionDir
+      await fs.promises.rename(versionDir, preservedDir)
     }
   }
 
   binaryPath = null
   onStatus?.('Reinstalling llama.cpp runtime...')
-  return await setupLlamaCpp(onStatus)
+  try {
+    const installed = await setupLlamaCpp(onStatus)
+    if (preservedDir) {
+      try {
+        await deleteWithRetry(preservedDir)
+        await fs.promises.rmdir(path.dirname(preservedDir))
+      } catch (error) {
+        log.warn('Unable to remove the previous runtime backup:', error)
+      }
+    }
+    return installed
+  } catch (error) {
+    if (preservedDir && originalDir) {
+      try {
+        if (fs.existsSync(originalDir)) await deleteWithRetry(originalDir)
+        await fs.promises.rename(preservedDir, originalDir)
+        binaryPath = currentInfo.binaryPath
+        await fs.promises.rmdir(path.dirname(preservedDir))
+      } catch (restoreError) {
+        throw new Error(
+          `Runtime repair failed; backup recovery also failed. Backup: ${preservedDir}`,
+          {
+            cause: new AggregateError([error, restoreError])
+          }
+        )
+      }
+    }
+    throw error
+  }
 }
 
 // -----------------------------------------------------------------------------

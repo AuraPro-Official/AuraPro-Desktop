@@ -11,6 +11,7 @@
   import InstallFailurePanel from './InstallFailurePanel.svelte'
   import UnsupportedInstallPathDialog from './UnsupportedInstallPathDialog.svelte'
   import Switch from '../common/Switch.svelte'
+  import HardwareDetectionStatus from './HardwareDetectionStatus.svelte'
   import {
     createOptionalInstallWarning,
     diagnoseInstallationFailure,
@@ -972,6 +973,8 @@
   }
 </script>
 
+<HardwareDetectionStatus detecting={detectingHardware} failed={hardwareDetectionFailed} />
+
 <div class="flex flex-col" in:fade={{ duration: 200 }}>
   <button
     class="self-start text-[12px] opacity-40 hover:opacity-70 transition mb-6 bg-transparent border-none text-[#1d1d1f] dark:text-[#fafafa] disabled:opacity-20"
@@ -982,23 +985,11 @@
   </button>
 
   {#if phase === 'ready'}
-    <div
-      role="status"
-      aria-live="polite"
-      class="mb-4 flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300"
-    >
-      {#if detectingHardware}
-        <span
-          aria-hidden="true"
-          class="size-4 shrink-0 animate-spin motion-reduce:animate-none rounded-full border-2 border-gray-300 border-t-emerald-500"
-        ></span>
-        {$i18n.t('main.getStarted.detectingHardware')}
-      {:else if hardwareDetectionFailed}
+    {#if !detectingHardware && hardwareDetectionFailed}
+      <div role="status" class="mb-4 text-sm text-amber-700 dark:text-amber-300">
         {$i18n.t('main.getStarted.hardwareDetectionFailed')}
-      {:else}
-        {$i18n.t('main.getStarted.hardwareDetected')}
-      {/if}
-    </div>
+      </div>
+    {/if}
     <div class="mb-1 text-sm font-normal opacity-50">{$i18n.t('app.name')}</div>
     <h1 class="text-2xl font-light tracking-tight mb-2">Step 1: Application Setup</h1>
     <p class="text-[12px] opacity-30 mb-6 leading-relaxed">
@@ -1283,14 +1274,6 @@
               <div class="mt-1 text-[10px] leading-relaxed opacity-40">{warning.detail}</div>
             </div>
           {/each}
-        </div>
-      {/if}
-
-      {#if detectingHardware}
-        <div
-          class="mb-5 rounded-xl bg-black/[0.03] dark:bg-white/[0.04] px-4 py-3 text-[12px] opacity-50"
-        >
-          {$i18n.t('main.getStarted.detectingHardware')}
         </div>
       {/if}
 

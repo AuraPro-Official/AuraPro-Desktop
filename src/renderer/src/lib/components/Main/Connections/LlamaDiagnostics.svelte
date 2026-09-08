@@ -29,6 +29,17 @@
       optionalComponents: Array<{
         id: 'sherpa' | 'official-glossaries' | 'open-terminal' | 'opencode' | 'pytorch'
         version: string
+        health?:
+          | 'disabled'
+          | 'stopped'
+          | 'starting'
+          | 'running'
+          | 'responding'
+          | 'listening'
+          | 'unverified'
+          | 'auth-required'
+          | 'failed'
+          | 'exited'
       }>
     }
     hardware: {
@@ -42,6 +53,7 @@
       freeVramMb: number | null
     }
     runtime: {
+      health?: 'healthy' | 'loading' | 'starting' | 'unresponsive' | 'stopped'
       status: string | null
       version: string | null
       binaryPresent: boolean
@@ -94,6 +106,23 @@
   )
   const formatMemory = (bytes: number): string => `${(bytes / 1024 ** 3).toFixed(1)} GB`
 
+  const serviceHealthText = (health: string): string => {
+    const labels: Record<string, [string, string]> = {
+      disabled: ['未启用', 'Disabled'],
+      stopped: ['未运行', 'Not running'],
+      starting: ['正在启动', 'Starting'],
+      running: ['进程运行中 · 未探测接口', 'Process running · API not checked'],
+      responding: ['健康接口已响应', 'Health endpoint responding'],
+      listening: ['端口可连接 · 未测试终端执行', 'Port reachable · Execution not tested'],
+      unverified: ['暂未确认 · 请稍后重新检测', 'Unconfirmed · Check again later'],
+      'auth-required': ['接口认证未通过', 'Endpoint authentication failed'],
+      failed: ['服务启动失败或异常退出', 'Service failed to start or exited unexpectedly'],
+      exited: ['进程已退出', 'Process exited']
+    }
+    const label = labels[health] ?? labels.unverified
+    return text(label[0], label[1])
+  }
+
   const componentLabel = (
     id: DiagnosticReport['software']['optionalComponents'][number]['id']
   ): string => {
@@ -113,6 +142,8 @@
     if (!isChinese) return issue.title
     const titles: Record<string, string> = {
       'nvidia-not-found': '未检测到 NVIDIA 显卡',
+      'llamacpp-service-unresponsive': 'llama.cpp 服务无响应',
+      'llamacpp-probe-timeout': 'llama.cpp 自检超时',
       'driver-incompatible': 'NVIDIA 驱动版本不兼容',
       'driver-update-recommended': '建议升级 NVIDIA 驱动',
       'driver-version-unknown': '无法读取 NVIDIA 驱动版本',
@@ -145,6 +176,8 @@
     if (!isChinese) return issue.detail
     const details: Record<string, string> = {
       'nvidia-not-found': `当前选择了 CUDA，但系统没有检测到 NVIDIA 显卡。可切换到 ${report?.recommendedVariant ?? 'CPU'}。`,
+      'llamacpp-service-unresponsive': '服务健康检查失败，建议重启 llama.cpp。',
+      'llamacpp-probe-timeout': '未能在限定时间内完成自检，无法据此判断运行库损坏，请稍后重试。',
       'driver-incompatible': '当前显卡驱动低于所选 CUDA 运行库的最低要求。',
       'driver-update-recommended': '当前驱动可能依赖兼容模式，升级驱动可提高稳定性。',
       'driver-version-unknown': 'nvidia-smi 不可用，无法确认驱动是否满足 CUDA 要求。',
@@ -424,6 +457,18 @@
           </div>
 
           <dl class="mt-3 grid grid-cols-[108px_1fr] gap-x-3 gap-y-2 text-[11px]">
+            <dt class="text-black/35 dark:text-white/35">{text('服务状态', 'Service health')}</dt>
+            <dd class="m-0 text-right text-black/65 dark:text-white/65">
+              {report.runtime.health === 'healthy'
+                ? text('正常响应', 'Responding')
+                : report.runtime.health === 'loading'
+                  ? text('模型加载中', 'Loading model')
+                  : report.runtime.health === 'starting'
+                    ? text('启动中', 'Starting')
+                    : report.runtime.health === 'unresponsive'
+                      ? text('无响应', 'Not responding')
+                      : text('未运行', 'Stopped')}
+            </dd>
             <dt class="text-black/35 dark:text-white/35">{text('操作系统', 'Operating system')}</dt>
             <dd
               class="m-0 break-words text-right font-mono text-black/65 dark:text-white/65"
@@ -440,7 +485,10 @@
             </dd>
             <dt class="text-black/35 dark:text-white/35">{text('运行变体', 'Runtime variant')}</dt>
             <dd class="m-0 text-right font-mono text-black/65 dark:text-white/65">
-              {report.variant}
+              {report.system.operatingSystem.startsWith('macOS') &&
+              ['cpu', 'auto'].includes(report.variant)
+                ? 'Metal'
+                : report.variant}
             </dd>
             <dt class="text-black/35 dark:text-white/35">{text('显卡', 'GPU')}</dt>
             <dd class="m-0 truncate text-right text-black/65 dark:text-white/65">
@@ -448,7 +496,9 @@
             </dd>
             <dt class="text-black/35 dark:text-white/35">{text('驱动版本', 'Driver')}</dt>
             <dd class="m-0 text-right font-mono text-black/65 dark:text-white/65">
-              {report.hardware.driverVersion ?? text('未知', 'Unknown')}
+              {report.system.operatingSystem.startsWith('macOS')
+                ? text('随 macOS 提供', 'Included with macOS')
+                : (report.hardware.driverVersion ?? text('未知', 'Unknown'))}
             </dd>
             <dt class="text-black/35 dark:text-white/35">{text('可用内存', 'Available memory')}</dt>
             <dd class="m-0 text-right font-mono text-black/65 dark:text-white/65">
@@ -479,6 +529,20 @@
               <dt class="text-black/35 dark:text-white/35">{componentLabel(component.id)}</dt>
               <dd class="m-0 text-right font-mono text-black/65 dark:text-white/65">
                 {component.version}
+                {#if component.health}
+                  <div
+                    class="mt-1 break-words font-sans text-xs leading-relaxed {[
+                      'unverified',
+                      'auth-required',
+                      'failed',
+                      'exited'
+                    ].includes(component.health)
+                      ? 'text-amber-700 dark:text-amber-300'
+                      : 'text-black/55 dark:text-white/55'}"
+                  >
+                    {serviceHealthText(component.health)}
+                  </div>
+                {/if}
               </dd>
             {/each}
             <dt class="text-black/35 dark:text-white/35">{text('本地模型', 'Local models')}</dt>
