@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '24.18.0'
+  NPM_VERSION: '12.0.1'
+  PYTHON_VERSION: '3.12'
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint + Typecheck + Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Setup npm
+        run: npm install --global npm@${{ env.NPM_VERSION }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Test WebUI package migration
+        run: python scripts/test_migrate_python_distribution.py
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint:ci
+
+      - name: Typecheck and Build
+        run: npm run build
+
+      # scripts/test-runtime-maintenance.mjs is deliberately absent: it is
+      # already red on main.  It lifts ensureOpenWebUIPackage into a VM
+      # sandbox that never defines hasSharedPythonRuntimeImports, a helper
+      # added to src/main/utils/index.ts after the test was written -- which
+      # is precisely what having no CI costs.  Add it back once it is fixed.
+      - name: Test
+        run: npm run test:node
