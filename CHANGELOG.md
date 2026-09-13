@@ -7,6 +7,13 @@ All notable changes to AuraPro Desktop are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- The concept lookup used by index mode now reuses the model llama.cpp is already serving instead of downloading a dedicated one. This saves about 2.1 GB per installation and lets the lookup scale with the model chosen for the machine. Installations that point llama.cpp at their own model or models preset can now use the lookup as well; previously it was unavailable to them.
+- Concept-lookup model files downloaded by earlier versions are deliberately left on disk rather than removed during the upgrade. They are now listed as ordinary models and can be deleted under Settings - Models to reclaim the space.
+
 ## [3.6.5] - 2026-06-19
 
 ### Added
