@@ -95,11 +95,8 @@ export const getLlamaAssetPatterns = (
     }
     if (resolvedVariant === 'cuda-13.3') {
       return {
-        patterns: [
-          `llama-${tag}-bin-win-cuda-13.3-x64.zip`,
-          `llama-${tag}-bin-win-cuda-13.2-x64.zip`,
-          `llama-${tag}-bin-win-cuda-13.1-x64.zip`
-        ],
+        // CUDA minor versions change independently of llama.cpp build tags.
+        patterns: [`llama-${tag}-bin-win-cuda-13.*-x64.zip`],
         isZip: true
       }
     }

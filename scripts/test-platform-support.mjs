@@ -62,3 +62,20 @@ test('accepts the current ROCm version without hard-coding it', () => {
   const [pattern] = getLlamaAssetPatterns('b10603', 'rocm', 'linux', 'x64').patterns
   assert.equal(matchesAssetPattern('llama-b10603-bin-ubuntu-rocm-7.14-x64.tar.gz', pattern), true)
 })
+
+test('accepts CUDA 13 minor releases without selecting another major or architecture', () => {
+  const { patterns } = getLlamaAssetPatterns('b11026', 'cuda-13.3', 'win32', 'x64')
+  const accepts = (name) => patterns.some((pattern) => matchesAssetPattern(name, pattern))
+  for (const minor of [1, 2, 3, 4, 5]) {
+    assert.equal(accepts(`llama-b11026-bin-win-cuda-13.${minor}-x64.zip`), true)
+  }
+  for (const name of [
+    'llama-b11026-bin-win-cuda-12.4-x64.zip',
+    'llama-b11026-bin-win-cuda-14.0-x64.zip',
+    'llama-b11026-bin-win-cuda-13.4-arm64.zip',
+    'cudart-llama-bin-win-cuda-13.4-x64.zip',
+    'llama-b11025-bin-win-cuda-13.4-x64.zip'
+  ]) {
+    assert.equal(accepts(name), false)
+  }
+})
