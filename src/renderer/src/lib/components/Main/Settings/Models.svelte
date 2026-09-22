@@ -278,7 +278,9 @@
         )
       }
 
-      await Promise.all(downloads)
+      const results = await Promise.allSettled(downloads)
+      const failure = results.find((result) => result.status === 'rejected')
+      if (failure?.status === 'rejected') throw failure.reason
     } catch (e) {
       console.error('Failed to download model:', e)
       activeDownloads.delete(key)
@@ -289,13 +291,30 @@
 
   const cancelAuraModelDownload = async (model: AuraModel) => {
     const modelKey = model.name.replace('.gguf', '')
-    await cancelDownload(model.hfRepo, model.filename, modelKey, model.name)
+    const cancellations = [cancelDownload(model.hfRepo, model.filename, modelKey, model.name)]
     if (model.mmprojRepo && model.mmprojFilename) {
-      await cancelDownload(model.mmprojRepo, model.mmprojFilename, modelKey, 'mmproj-F16.gguf')
+      cancellations.push(
+        cancelDownload(model.mmprojRepo, model.mmprojFilename, modelKey, 'mmproj-F16.gguf')
+      )
     }
     if (model.mtpRepo && model.mtpFilename) {
       const mtpSaveAs = model.mtpFilename.split('/').pop() ?? model.mtpFilename
-      await cancelDownload(model.mtpRepo, model.mtpFilename, modelKey, mtpSaveAs)
+      cancellations.push(cancelDownload(model.mtpRepo, model.mtpFilename, modelKey, mtpSaveAs))
+    }
+    await Promise.all(cancellations)
+  }
+
+  const cancelActiveDownload = async (download: ActiveDownload) => {
+    const model = AURA_MODELS.find((item) => item.name.replace('.gguf', '') === download.repo)
+    if (model) {
+      await cancelAuraModelDownload(model)
+    } else {
+      await cancelDownload(
+        download.cancelRepo ?? download.repo,
+        download.cancelFilename ?? download.filename,
+        download.repo,
+        download.filename
+      )
     }
   }
 
@@ -416,13 +435,7 @@
               </div>
               <button
                 class="opacity-0 group-hover:opacity-40 hover:!opacity-70 transition bg-transparent border-none text-[#1d1d1f] dark:text-[#fafafa] p-1 shrink-0"
-                onclick={() =>
-                  cancelDownload(
-                    dl.cancelRepo ?? dl.repo,
-                    dl.cancelFilename ?? dl.filename,
-                    dl.repo,
-                    dl.filename
-                  )}
+                onclick={() => cancelActiveDownload(dl)}
                 title={$i18n.t('settings.models.cancelDownload')}
               >
                 <svg

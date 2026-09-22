@@ -121,6 +121,7 @@ import {
   downloadModel,
   deleteModel,
   cancelDownload,
+  resumeDownload,
   getModelsDir,
   searchModels,
   getRepoFiles
@@ -3633,6 +3634,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
         saveRepoAs?: string,
         subDir?: string
       ) => {
+        resumeDownload(repo, filename)
         const displayRepo = saveRepoAs || repo
         const displayFilename = saveAs || filename
         try {

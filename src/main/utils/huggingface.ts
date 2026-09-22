@@ -115,6 +115,14 @@ interface ActiveDownload {
 
 const activeDownloads = new Map<string, ActiveDownload>()
 const activeDownloadPromises = new Map<string, Promise<string>>()
+const cancelledDownloads = new Set<string>()
+
+export const isDownloadCancelled = (repo: string, filename: string): boolean =>
+  cancelledDownloads.has(downloadKey(repo, filename))
+
+export const resumeDownload = (repo: string, filename: string): void => {
+  cancelledDownloads.delete(downloadKey(repo, filename))
+}
 
 const downloadKey = (repo: string, filename: string): string => `${repo}/${filename}`
 const activeDownloadKey = (repo: string, filename: string, destPath: string): string =>
@@ -179,6 +187,7 @@ const fetchRemoteFileSize = async (
  */
 export const cancelDownload = (repo?: string, filename?: string): void => {
   if (repo && filename) {
+    cancelledDownloads.add(downloadKey(repo, filename))
     for (const [key, active] of activeDownloads.entries()) {
       if (active.repo === repo && active.filename === filename) {
         active.controller.abort()

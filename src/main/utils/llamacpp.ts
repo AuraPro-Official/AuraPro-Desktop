@@ -19,7 +19,7 @@ import {
   formatDownloadEta
 } from './index'
 
-import { downloadModel } from './huggingface'
+import { downloadModel, isDownloadCancelled } from './huggingface'
 import { ServiceLock, isProcessAlive } from './service-lock'
 import { hasLlamaCppRuntimeAnomaly } from './llamacpp-log-diagnostics'
 import { scheduleLlamaCppVersionCleanup } from './cache-cleanup'
@@ -642,6 +642,9 @@ const findBinary = (dir: string): string | null => {
 }
 
 const VARIANT_MARKER_FILENAME = '.aurapro-variant'
+const INSTALL_PENDING_FILENAME = '.aurapro-install-pending'
+
+class CudaRuntimeInstallError extends Error {}
 
 const readInstalledVariant = (versionDir: string): string | null => {
   try {
@@ -666,13 +669,15 @@ const hasBackendLibrary = (versionDir: string, filename: string): boolean => {
 }
 
 const isCachedVariantCompatible = (versionDir: string, variant: string): boolean => {
+  if (fs.existsSync(path.join(versionDir, INSTALL_PENDING_FILENAME))) return false
   const installedVariant = readInstalledVariant(versionDir)
   if (installedVariant) return installedVariant === variant
 
   // Older AuraPro installs did not write a variant marker. Infer their backend
   // from the dynamic backend DLLs so switching variants cannot reuse the wrong build.
   if (variant.startsWith('cuda')) {
-    return variant === 'cuda-13.3' && hasBackendLibrary(versionDir, 'ggml-cuda.dll')
+    // A backend DLL alone cannot distinguish CUDA 12 from CUDA 13.
+    return false
   }
   if (variant === 'vulkan') return hasBackendLibrary(versionDir, 'ggml-vulkan.dll')
   if (variant === 'cpu' && process.platform === 'win32') {
@@ -742,7 +747,7 @@ const downloadAndExtractReleaseAsset = async (
       if (process.platform === 'win32') {
         execFileSync('powershell', [
           '-Command',
-          `Expand-Archive -Path "${downloadPath}" -DestinationPath "${extractDir}" -Force`
+          `Expand-Archive -ErrorAction Stop -Path "${downloadPath}" -DestinationPath "${extractDir}" -Force`
         ])
       } else {
         execFileSync('unzip', ['-o', downloadPath, '-d', extractDir])
@@ -797,6 +802,10 @@ const ensureBundledCudaRuntime = async (
   )
 
   if (!hasBundledCudaRuntime(binary, cudaVersion)) {
+    // Do not reuse an archive that extracted without providing the required DLLs.
+    fs.rmSync(path.join(path.dirname(versionDir), 'runtime-cache', runtimeAssetName), {
+      force: true
+    })
     throw new Error(
       `CUDA ${cudaVersion} runtime DLLs were not found after extracting ${runtimeAssetName}`
     )
@@ -1163,6 +1172,7 @@ const ensureAutoMmproj = async (
       : getMmprojRepoForPrefix(mmprojPrefix)
     if (!repo) continue
 
+    if (isDownloadCancelled(repo, 'mmproj-F16.gguf')) continue
     const saveAs = 'mmproj-F16.gguf'
     const relativeDir = path.relative(modelsDir, dir)
     const subDir =
@@ -1220,7 +1230,7 @@ const ensureAutoMtp = async (
     const mtpPrefix = getMmprojPrefixForModel(path.basename(model.filepath))
     const repo = getMtpRepoForPrefix(mtpPrefix)
     const filename = getMtpFilenameForPrefix(mtpPrefix)
-    if (!repo || !filename) continue
+    if (!repo || !filename || isDownloadCancelled(repo, filename)) continue
 
     const relativeDir = path.relative(modelsDir, dir)
     const subDir =
@@ -1257,6 +1267,7 @@ export const setupLlamaCpp = async (onStatus?: (status: string) => void): Promis
   const config = await getConfig()
   const llamaConfig = config.llamaCpp ?? {}
   const version = llamaConfig.version || 'latest'
+  binaryPath = null
   const configuredVariant = llamaConfig.variant
   const variant = resolveVariant(configuredVariant)
 
@@ -1396,6 +1407,7 @@ export const setupLlamaCpp = async (onStatus?: (status: string) => void): Promis
 
       let resultBinary = findBinary(versionDir)
       if (!resultBinary) {
+        fs.writeFileSync(path.join(versionDir, INSTALL_PENDING_FILENAME), variant, 'utf8')
         await downloadAndExtractReleaseAsset(asset, versionDir, versionDir, isZip, onStatus)
         resultBinary = findBinary(versionDir)
       }
@@ -1412,11 +1424,19 @@ export const setupLlamaCpp = async (onStatus?: (status: string) => void): Promis
         throw new Error(`llama-server binary not found after extraction in ${versionDir}`)
       }
 
+      // Commit the main build before downloading its runtime so an interrupted
+      // runtime download can resume without replacing the main build again.
+      writeInstalledVariant(versionDir, variant)
+      fs.rmSync(path.join(versionDir, INSTALL_PENDING_FILENAME), { force: true })
+
       if (process.platform === 'win32' && variant.startsWith('cuda-')) {
-        await ensureBundledCudaRuntime(assets, asset, versionDir, resultBinary, onStatus)
+        try {
+          await ensureBundledCudaRuntime(assets, asset, versionDir, resultBinary, onStatus)
+        } catch (error) {
+          throw new CudaRuntimeInstallError(getErrorMessage(error))
+        }
       }
 
-      writeInstalledVariant(versionDir, variant)
       log.info(`llama-server binary ready: ${resultBinary}`)
       binaryPath = resultBinary
       onStatus?.('Ready')
@@ -1454,6 +1474,7 @@ export const setupLlamaCpp = async (onStatus?: (status: string) => void): Promis
         }
         return resultBinary
       } catch (error) {
+        if (error instanceof CudaRuntimeInstallError) throw error
         const message = describeGithubError(error)
         failures.push(`${candidateTag}: ${message}`)
         log.warn(`Failed to install llama.cpp ${candidateTag}, trying previous release:`, error)
