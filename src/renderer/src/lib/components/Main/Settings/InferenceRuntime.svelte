@@ -608,6 +608,25 @@
       />
     </div>
 
+    <div class="py-4 flex flex-wrap items-center justify-between gap-3">
+      <label for="kv-cache-type" class="min-w-0">
+        <div class="text-[13px] opacity-70">{$i18n.t('settings.inference.kvCacheType')}</div>
+        <div class="text-[11px] opacity-25 mt-0.5">
+          {$i18n.t('settings.inference.kvCacheTypeDesc')}
+        </div>
+      </label>
+      <select
+        id="kv-cache-type"
+        class="max-w-full bg-black/[0.04] dark:bg-white/[0.06] text-[12px] text-[#1d1d1f] dark:text-[#fafafa] px-3 py-1.5 border-none outline-none rounded-xl opacity-60"
+        value={$config?.llamaCpp?.kvCacheType ?? 'q8_0'}
+        onchange={(e) => updateConfig('kvCacheType', (e.target as HTMLSelectElement).value)}
+      >
+        <option value="q8_0">{$i18n.t('settings.inference.kvCacheQ8')}</option>
+        <option value="q4_0">{$i18n.t('settings.inference.kvCacheQ4')}</option>
+        <option value="f16">{$i18n.t('settings.inference.kvCacheF16')}</option>
+      </select>
+    </div>
+
     <!-- Parallel Slots -->
     <div class="py-4 flex items-center justify-between">
       <div>

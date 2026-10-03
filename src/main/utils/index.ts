@@ -12,6 +12,7 @@ import { app, shell, net as electronNet, session } from 'electron'
 import { execFileSync, spawn, execSync, execFile } from 'child_process'
 
 import log from 'electron-log'
+import type { KvCacheType } from './llamacpp-settings'
 import { getBundledPythonTarget, isBundledPythonMachineCompatible } from './platform-support'
 log.transports.file.resolvePathFn = () => getLogFilePath('main')
 
@@ -142,7 +143,7 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.9.42'
+export const AURAPRO_UI_TARGET_VERSION = '3.9.43'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
 export const AURAPRO_UI_LAST_VERSION = '3.9.3'
@@ -2427,6 +2428,7 @@ export interface AppConfig {
     mtpEnabled?: boolean
     multimodalEnabled?: boolean
     ctxSize?: number
+    kvCacheType?: KvCacheType
     extraArgs: string[]
   }
   sherpa: {
@@ -2523,6 +2525,7 @@ const DEFAULT_CONFIG: AppConfig = {
     parallel: 1,
     mtpEnabled: false,
     multimodalEnabled: true,
+    kvCacheType: 'q8_0',
     extraArgs: []
   },
   sherpa: {

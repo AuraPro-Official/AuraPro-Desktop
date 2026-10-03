@@ -23,6 +23,7 @@ import { downloadModel, isDownloadCancelled } from './huggingface'
 import { ServiceLock, isProcessAlive } from './service-lock'
 import { hasLlamaCppRuntimeAnomaly } from './llamacpp-log-diagnostics'
 import { scheduleLlamaCppVersionCleanup } from './cache-cleanup'
+import { normalizeKvCacheType, type KvCacheType } from './llamacpp-settings'
 import {
   isNewerLlamaBuild,
   parseLlamaBuildTag,
@@ -330,6 +331,7 @@ export const ensureEpubConceptModel = async (
 interface LlamaConfig {
   [key: string]: unknown
   ctxSize?: number
+  kvCacheType?: KvCacheType
   extraArgs?: string[]
   mtpEnabled?: boolean
   multimodalEnabled?: boolean
@@ -1096,6 +1098,7 @@ const writeModelsPreset = async (
   const multimodalEnabled = llamaConfig.multimodalEnabled !== false
 
   const ctxSize = llamaConfig.ctxSize || 16384
+  const kvCacheType = normalizeKvCacheType(llamaConfig.kvCacheType) ?? 'q8_0'
   const parallel = normalizePositiveInteger(llamaConfig.parallel) ?? getDefaultParallel()
   const models = sortModelsForPreset(listLocalLlmModels(modelsDir))
   const usedIds = new Set<string>()
@@ -1104,6 +1107,8 @@ const writeModelsPreset = async (
   const lines: string[] = [
     '[*]',
     `ctx-size = ${ctxSize}`,
+    `cache-type-k = ${kvCacheType}`,
+    `cache-type-v = ${kvCacheType}`,
     `parallel = ${parallel}`,
     'cache-ram = 4096',
     'flash-attn = auto',
@@ -1750,6 +1755,10 @@ const startLlamaCppAttempt = async (
   }
 
   const extraArgs = stripArgsWithValue(llamaConfig.extraArgs ?? [], [
+    '--cache-type-k',
+    '-ctk',
+    '--cache-type-v',
+    '-ctv',
     '--parallel',
     '-np',
     '--spec-type',
@@ -1779,7 +1788,11 @@ const startLlamaCppAttempt = async (
     ...(modelsPreset ? ['--models-preset', modelsPreset] : []),
     '--models-max',
     '1',
-    ...extraArgs
+    ...extraArgs,
+    '--cache-type-k',
+    normalizeKvCacheType(llamaConfig.kvCacheType) ?? 'q8_0',
+    '--cache-type-v',
+    normalizeKvCacheType(llamaConfig.kvCacheType) ?? 'q8_0'
   ]
 
   log.info('Starting llama-server:', binary, commandArgs.join(' '))

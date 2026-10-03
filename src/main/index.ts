@@ -64,6 +64,7 @@ import {
 } from './utils'
 import { installLocalCertificate } from './utils/local-certificate'
 import { scheduleCacheCleanup } from './utils/cache-cleanup'
+import { normalizeKvCacheType, type KvCacheType } from './utils/llamacpp-settings'
 
 import {
   startOpenTerminal,
@@ -1602,12 +1603,14 @@ let glossaryLlamaRestartTimer: NodeJS.Timeout | null = null
 
 interface SharedLlamaRuntimeSettings {
   ctxSize: number
+  kvCacheType: KvCacheType
   mtpEnabled: boolean
   multimodalEnabled: boolean
 }
 
 interface StoredGlossaryLlamaRuntimeSettings {
   ctxSize: number | null
+  kvCacheType: KvCacheType | null
   mtpEnabled: boolean | null
   multimodalEnabled: boolean | null
 }
@@ -1629,6 +1632,7 @@ const getLlamaRuntimeSettingsFromConfig = (
   config: AppConfig | null | undefined
 ): SharedLlamaRuntimeSettings => ({
   ctxSize: normalizeCtxSize(config?.llamaCpp?.ctxSize) ?? 16384,
+  kvCacheType: normalizeKvCacheType(config?.llamaCpp?.kvCacheType) ?? 'q8_0',
   mtpEnabled: config?.llamaCpp?.mtpEnabled === true,
   multimodalEnabled: config?.llamaCpp?.multimodalEnabled !== false
 })
@@ -1640,6 +1644,7 @@ const sameLlamaRuntimeSettings = (
   Boolean(
     left &&
     left.ctxSize === right.ctxSize &&
+    left.kvCacheType === right.kvCacheType &&
     left.mtpEnabled === right.mtpEnabled &&
     left.multimodalEnabled === right.multimodalEnabled
   )
@@ -1647,7 +1652,7 @@ const sameLlamaRuntimeSettings = (
 const getGlossarySettingsPath = () => join(getOpenWebUIDataPath(), 'glossary.settings.json')
 
 const readGlossaryLlamaRuntimeSettings = (): StoredGlossaryLlamaRuntimeSettings => {
-  const empty = { ctxSize: null, mtpEnabled: null, multimodalEnabled: null }
+  const empty = { ctxSize: null, kvCacheType: null, mtpEnabled: null, multimodalEnabled: null }
   const settingsPath = getGlossarySettingsPath()
   if (!existsSync(settingsPath)) return empty
 
@@ -1656,6 +1661,7 @@ const readGlossaryLlamaRuntimeSettings = (): StoredGlossaryLlamaRuntimeSettings 
     const settings = JSON.parse(raw)
     return {
       ctxSize: normalizeCtxSize(settings?.token_limit),
+      kvCacheType: normalizeKvCacheType(settings?.kv_cache_type),
       mtpEnabled: normalizeOptionalBoolean(settings?.mtp_enabled),
       multimodalEnabled: normalizeOptionalBoolean(settings?.multimodal_enabled)
     }
@@ -1681,11 +1687,13 @@ const writeGlossaryLlamaRuntimeSettings = async (runtime: SharedLlamaRuntimeSett
 
   const current: SharedLlamaRuntimeSettings = {
     ctxSize: normalizeCtxSize(settings.token_limit) ?? 16384,
+    kvCacheType: normalizeKvCacheType(settings.kv_cache_type) ?? 'q8_0',
     mtpEnabled: normalizeOptionalBoolean(settings.mtp_enabled) ?? false,
     multimodalEnabled: normalizeOptionalBoolean(settings.multimodal_enabled) ?? true
   }
   const hasAllFields =
     normalizeCtxSize(settings.token_limit) !== null &&
+    normalizeKvCacheType(settings.kv_cache_type) !== null &&
     normalizeOptionalBoolean(settings.mtp_enabled) !== null &&
     normalizeOptionalBoolean(settings.multimodal_enabled) !== null
   if (hasAllFields && sameLlamaRuntimeSettings(current, runtime)) {
@@ -1696,10 +1704,12 @@ const writeGlossaryLlamaRuntimeSettings = async (runtime: SharedLlamaRuntimeSett
   glossarySettingsSyncing = true
   try {
     settings.token_limit = runtime.ctxSize
+    settings.kv_cache_type = runtime.kvCacheType
     settings.mtp_enabled = runtime.mtpEnabled
     settings.multimodal_enabled = runtime.multimodalEnabled
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8')
     lastGlossaryLlamaSettings = runtime
+    sendToRenderer('llamacpp:settings-updated')
   } finally {
     setTimeout(() => {
       glossarySettingsSyncing = false
@@ -1780,6 +1790,7 @@ const applyGlossaryLlamaSettingsToConfig = async (runtime: SharedLlamaRuntimeSet
     llamaCpp: {
       ...config.llamaCpp,
       ctxSize: runtime.ctxSize,
+      kvCacheType: runtime.kvCacheType,
       mtpEnabled: runtime.mtpEnabled,
       multimodalEnabled: runtime.multimodalEnabled
     }
@@ -1798,6 +1809,7 @@ const startGlossaryCtxSizeSync = async () => {
   const stored = readGlossaryLlamaRuntimeSettings()
   const resolved: SharedLlamaRuntimeSettings = {
     ctxSize: stored.ctxSize ?? desktopSettings.ctxSize,
+    kvCacheType: stored.kvCacheType ?? desktopSettings.kvCacheType,
     mtpEnabled: stored.mtpEnabled ?? desktopSettings.mtpEnabled,
     multimodalEnabled: stored.multimodalEnabled ?? desktopSettings.multimodalEnabled
   }
@@ -1807,6 +1819,7 @@ const startGlossaryCtxSizeSync = async () => {
       llamaCpp: {
         ...config.llamaCpp,
         ctxSize: resolved.ctxSize,
+        kvCacheType: resolved.kvCacheType,
         mtpEnabled: resolved.mtpEnabled,
         multimodalEnabled: resolved.multimodalEnabled
       }
@@ -1823,6 +1836,7 @@ const startGlossaryCtxSizeSync = async () => {
     const nextStored = readGlossaryLlamaRuntimeSettings()
     if (
       nextStored.ctxSize === null &&
+      nextStored.kvCacheType === null &&
       nextStored.mtpEnabled === null &&
       nextStored.multimodalEnabled === null
     )
@@ -1832,6 +1846,7 @@ const startGlossaryCtxSizeSync = async () => {
     const current = getLlamaRuntimeSettingsFromConfig(currentConfig)
     const next: SharedLlamaRuntimeSettings = {
       ctxSize: nextStored.ctxSize ?? current.ctxSize,
+      kvCacheType: nextStored.kvCacheType ?? current.kvCacheType,
       mtpEnabled: nextStored.mtpEnabled ?? current.mtpEnabled,
       multimodalEnabled: nextStored.multimodalEnabled ?? current.multimodalEnabled
     }
