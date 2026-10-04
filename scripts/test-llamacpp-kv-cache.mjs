@@ -215,6 +215,12 @@ test('presets apply the selected precision to both K and V for every managed mod
     assert.ok(preset.includes(`cache-type-k = ${kvCacheType ?? 'q8_0'}\n`))
     assert.ok(preset.includes(`cache-type-v = ${kvCacheType ?? 'q8_0'}\n`))
     assert.ok(preset.includes('[high_Q4]'))
+    const globalDefaults = preset.split('[high_Q4]')[0]
+    assert.ok(globalDefaults.startsWith('[*]\n'))
+    assert.ok(globalDefaults.includes('temp = 0.5\n'))
+    assert.ok(globalDefaults.includes('top-p = 0.95\n'))
+    assert.ok(globalDefaults.includes('top-k = 64\n'))
+    assert.ok(globalDefaults.includes('min-p = 0.05\n'))
   }
 })
 
