@@ -91,8 +91,12 @@ export function speechLanguageCode(value = ''): string | undefined {
   const direct = codes.find((code) => code.toLowerCase() === name)
   if (direct) return direct
   if (name.startsWith('zh-')) return 'zh'
-  const names = new Intl.DisplayNames(['en'], { type: 'language' })
-  return codes.find((code) => names.of(code)?.toLowerCase() === name)
+  return codes.find((code) =>
+    ['en', 'zh-CN', 'zh-TW', 'es'].some(
+      (locale) =>
+        new Intl.DisplayNames([locale], { type: 'language' }).of(code)?.toLowerCase() === name
+    )
+  )
 }
 
 export function selectedSpeechLanguages(config: {
@@ -106,7 +110,7 @@ export function selectedSpeechLanguages(config: {
   ttsModel?: string
 }): string[] {
   if (Array.isArray(config.enabledLanguages))
-    return [...new Set(config.enabledLanguages.filter(Boolean))]
+    return [...new Set(['zh', ...config.enabledLanguages.filter(Boolean)])]
   const existing = [
     ...Object.keys(config.asrProfiles ?? {}),
     ...Object.keys(config.ttsProfiles ?? {})
@@ -115,7 +119,27 @@ export function selectedSpeechLanguages(config: {
     config.asrModel || config.asrEncoder ? speechLanguageCode(config.asrLanguage) : undefined,
     config.ttsModel ? speechLanguageCode(config.ttsLanguage) : undefined
   ].filter((code): code is string => Boolean(code))
-  return existing.length || legacy.length ? [...new Set([...existing, ...legacy])] : ['zh', 'en']
+  return [...new Set(['zh', ...existing, ...legacy])]
+}
+
+export function glossarySpeechLanguages(settings: Record<string, unknown>): string[] {
+  const glossaries = Array.isArray(settings.glossaries) ? settings.glossaries : []
+  const active = glossaries.find(
+    (item) => item && typeof item === 'object' && item.id === settings.active_glossary_id
+  )
+  const pair = settings.glossary_mode === 'smart' ? settings : (active ?? settings)
+  const values =
+    settings.glossary_mode === 'smart'
+      ? [pair.smart_source_lang, pair.smart_target_lang]
+      : [pair.source_lang, pair.target_lang || pair.glossary_lang]
+  return [
+    ...new Set(
+      values
+        .filter((value): value is string => typeof value === 'string')
+        .map(speechLanguageCode)
+        .filter((code): code is string => Boolean(code))
+    )
+  ]
 }
 
 export function speechAsrGroup(language: string): string {

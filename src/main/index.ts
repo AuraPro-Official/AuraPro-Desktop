@@ -77,6 +77,7 @@ import {
 import { installLocalCertificate } from './utils/local-certificate'
 import { scheduleCacheCleanup } from './utils/cache-cleanup'
 import { normalizeKvCacheType, type KvCacheType } from './utils/llamacpp-settings'
+import { glossarySpeechLanguages, selectedSpeechLanguages } from './utils/speech-language-presets'
 
 import {
   startOpenTerminal,
@@ -1846,6 +1847,7 @@ const startGlossaryCtxSizeSync = async () => {
 
   const settingsPath = getGlossarySettingsPath()
   watchFile(settingsPath, { interval: 1000 }, async () => {
+    scheduleGlossarySpeechDownloads()
     if (glossarySettingsSyncing) return
 
     const nextStored = readGlossaryLlamaRuntimeSettings()
@@ -1870,6 +1872,51 @@ const startGlossaryCtxSizeSync = async () => {
     lastGlossaryLlamaSettings = next
     await applyGlossaryLlamaSettingsToConfig(next)
   })
+  scheduleGlossarySpeechDownloads()
+}
+
+let glossarySpeechDownloadPending = false
+let glossarySpeechDownloadSignature = ''
+const scheduleGlossarySpeechDownloads = () => {
+  if (glossarySpeechDownloadPending) return
+  glossarySpeechDownloadPending = true
+  void (async () => {
+    try {
+      const cfg = await getConfig()
+      if (!cfg.sherpa?.enabled || !isSherpaInstalled()) return
+      if ((await getSherpaInfo()).status !== 'started') return
+      const settings = JSON.parse(readFileSync(getGlossarySettingsPath(), 'utf8'))
+      const languages = glossarySpeechLanguages(settings)
+      const signature = JSON.stringify(languages.slice().sort())
+      if (!languages.length || signature === glossarySpeechDownloadSignature) return
+      const selected = [...new Set([...selectedSpeechLanguages(cfg.sherpa), ...languages])]
+      const onStatus = (status: string) => sendToRenderer('status:sherpa-setup', status)
+      const asr = await ensureDefaultAsrModel(
+        { ...cfg.sherpa, enabledLanguages: selected },
+        onStatus
+      )
+      const tts = await ensureDefaultTtsModel(asr, onStatus)
+      glossarySpeechDownloadSignature = signature
+      const profilesChanged =
+        JSON.stringify([cfg.sherpa.asrProfiles, cfg.sherpa.ttsProfiles]) !==
+        JSON.stringify([tts.asrProfiles, tts.ttsProfiles])
+      if (profilesChanged && (await getSherpaInfo()).status === 'started') {
+        await stopSherpa()
+        const result = await startSherpa(null, onStatus)
+        sendToRenderer('sherpa:ready', toIpcSafeValue(result))
+      }
+      CONFIG = await getConfig()
+      sendToRenderer('config:updated', CONFIG)
+    } catch (error) {
+      log.warn('Glossary speech model setup failed:', error)
+      sendToRenderer(
+        'status:sherpa-setup',
+        `Speech model download failed: ${getErrorMessage(error)}`
+      )
+    } finally {
+      glossarySpeechDownloadPending = false
+    }
+  })()
 }
 
 const reloadLlamaCppModelsAfterDownload = async (filepath: string | null | undefined) => {

@@ -22,7 +22,7 @@
   "settings.pro.update": "Update",
   "settings.pro.start": "Start",
   "settings.pro.stop": "Stop",
-  "settings.pro.unsupported": "Pro currently supports Windows/Linux x64. macOS is not supported by Strata.",
+  "settings.pro.unsupported": "Pro supports Windows/Linux x64 and macOS (Apple Silicon / Intel). This platform is not supported.",
   "settings.pro.backend": "Variant",
   "settings.pro.auto": "Automatic",
   "settings.pro.model": "Active model",

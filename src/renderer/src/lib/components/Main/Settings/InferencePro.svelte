@@ -67,7 +67,8 @@
       <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div>
           <div class="text-[13px] opacity-70 flex flex-wrap items-center gap-1.5">
-            Strata {info.installed?.version ?? ''}
+            {info.runtime}
+            {info.installed?.version ?? ''}
             <span class="text-[9px] opacity-30 uppercase tracking-wide">
               {$i18n.t('common.experimental')}
             </span>
@@ -143,23 +144,25 @@
         ><span class="text-[13px] opacity-70">{t('backend')}</span><select
           class={controlClass}
           bind:value={settings.backend}
-          ><option value="auto">{t('auto')}</option><option value="cuda">NVIDIA CUDA</option><option
-            value="hip">AMD HIP</option
-          ></select
+          ><option value="auto">{t('auto')}</option>
+          {#if info.runtime === 'llama.cpp'}
+            <option value="metal">Apple Metal</option><option value="cpu">CPU</option>
+          {:else}
+            <option value="cuda">NVIDIA CUDA</option><option value="hip">AMD HIP</option>
+          {/if}</select
         ></label
       >
       <label class="py-4 flex flex-wrap items-center justify-between gap-3"
         ><span class="text-[13px] opacity-70">{t('model')}</span><select
           class="{controlClass} w-[280px] min-w-0"
           bind:value={settings.model}
-          >{#each info.models as model (model.id)}<option value={model.id}
-              >{model.name}{model.experimental ? ` (${t('experimental')})` : ''}</option
+          >{#each info.models as model (model.id)}<option value={model.id}>{model.name}</option
             >{/each}</select
         ></label
       >
       <label class="py-4 flex flex-wrap items-center justify-between gap-3"
         ><span class="text-[13px] opacity-70">{t('context')}</span><input
-          class="{controlClass} w-20 text-right"
+          class="{controlClass} w-24 text-right"
           type="number"
           min="2048"
           max="262144"
@@ -189,11 +192,13 @@
           />
         </fieldset>
       </div>
-      <div class="py-4 flex flex-wrap items-center justify-between gap-3">
-        <span class="text-[13px] opacity-70">MTP</span><span class="text-[11px] opacity-25"
-          >{t('required')}</span
+      {#if info.runtime !== 'llama.cpp'}<div
+          class="py-4 flex flex-wrap items-center justify-between gap-3"
         >
-      </div>
+          <span class="text-[13px] opacity-70">MTP</span><span class="text-[11px] opacity-25"
+            >{t('required')}</span
+          >
+        </div>{/if}
       <div class="py-4 flex flex-wrap justify-end gap-2">
         <button
           class={commandClass}
@@ -217,7 +222,7 @@
           <div class="min-w-0">
             <div class="break-words text-[13px] opacity-70">{model.name}</div>
             <div class="text-[11px] opacity-25 mt-0.5">
-              ~{model.gb} GB · {model.ramInfo}{model.experimental ? ` · ${t('experimental')}` : ''}
+              ~{model.gb} GB · {model.ramInfo}
             </div>
           </div>
           <span class="shrink-0 text-[11px] opacity-30"

@@ -1232,20 +1232,35 @@ const ensureAutoMtp = async (
   }
 }
 
-export const setupLlamaCpp = async (onStatus?: (status: string) => void): Promise<string> => {
-  const config = await getConfig()
+const setupLlamaCppBinary = async (
+  onStatus?: (status: string) => void,
+  isolated?: { version: string; variant: string; cacheDir: string }
+): Promise<string> => {
+  const config = isolated
+    ? {
+        llamaCpp: {
+          ...isolated,
+          badVersions: [] as string[],
+          fallbackVersion: DEFAULT_LLAMA_CPP_FALLBACK_VERSION
+        }
+      }
+    : await getConfig()
+  let binaryPath: string | null = null
   const llamaConfig = config.llamaCpp ?? {}
   const version = llamaConfig.version || 'latest'
   binaryPath = null
   const configuredVariant = llamaConfig.variant
   const variant = resolveVariant(configuredVariant)
 
-  if (!configuredVariant || configuredVariant === 'auto' || configuredVariant !== variant) {
+  if (
+    !isolated &&
+    (!configuredVariant || configuredVariant === 'auto' || configuredVariant !== variant)
+  ) {
     log.info(`Persisting detected variant to config: ${variant}`)
     await setConfig({ llamaCpp: { ...llamaConfig, variant } })
   }
 
-  const cacheBase = path.join(getInstallDir(), 'llama.cpp')
+  const cacheBase = isolated?.cacheDir ?? path.join(getInstallDir(), 'llama.cpp')
   if (!fs.existsSync(cacheBase)) {
     fs.mkdirSync(cacheBase, { recursive: true })
   }
@@ -1368,7 +1383,7 @@ export const setupLlamaCpp = async (onStatus?: (status: string) => void): Promis
       if (existingBinary && !isCachedVariantCompatible(versionDir, variant)) {
         const installedVariant = readInstalledVariant(versionDir) ?? 'legacy/unknown'
         log.info(`Replacing cached llama.cpp ${installedVariant} build with ${variant}`)
-        if (ptyProcess || pid) await stopLlamaCpp()
+        if (!isolated && (ptyProcess || pid)) await stopLlamaCpp()
         fs.rmSync(versionDir, { recursive: true, force: true })
         fs.mkdirSync(versionDir, { recursive: true })
         if (binaryPath === existingBinary) binaryPath = null
@@ -1424,7 +1439,7 @@ export const setupLlamaCpp = async (onStatus?: (status: string) => void): Promis
         }
 
         const resultBinary = await installRelease(releaseData)
-        if (version !== 'latest' && candidateTag !== version) {
+        if (!isolated && version !== 'latest' && candidateTag !== version) {
           await setConfig({
             llamaCpp: {
               ...llamaConfig,
@@ -1432,7 +1447,11 @@ export const setupLlamaCpp = async (onStatus?: (status: string) => void): Promis
               fallbackVersion
             }
           })
-        } else if (version === 'latest' && fallbackVersion !== config.llamaCpp?.fallbackVersion) {
+        } else if (
+          !isolated &&
+          version === 'latest' &&
+          fallbackVersion !== config.llamaCpp?.fallbackVersion
+        ) {
           await setConfig({
             llamaCpp: {
               ...llamaConfig,
@@ -1464,6 +1483,18 @@ export const setupLlamaCpp = async (onStatus?: (status: string) => void): Promis
   }
 
   return await installReleaseWithFallback()
+}
+
+export const setupLlamaCpp = async (onStatus?: (status: string) => void): Promise<string> => {
+  binaryPath = null
+  binaryPath = await setupLlamaCppBinary(onStatus)
+  return binaryPath
+}
+
+export const setupIsolatedLlamaCpp = setupLlamaCppBinary
+
+export async function latestLlamaCppVersion(variant: string): Promise<string> {
+  return (await fetchLatestLlamaRelease(resolveVariant(variant), true)).tag_name
 }
 
 export const startLlamaCppWithFallback = async (onStatus?: (status: string) => void) => {

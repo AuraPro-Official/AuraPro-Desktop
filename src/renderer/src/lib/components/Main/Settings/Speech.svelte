@@ -1235,7 +1235,7 @@
                 class="row-span-2 self-center"
                 type="checkbox"
                 checked={sherpaConfig.enabledLanguages?.includes(language)}
-                disabled={downloading !== null || savingLanguages}
+                disabled={language === 'zh' || downloading !== null || savingLanguages}
                 onchange={(event) => toggleLanguage(language, event.currentTarget.checked)}
               />
               <span class="min-w-0">{languageName(language)}</span>

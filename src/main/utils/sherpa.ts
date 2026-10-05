@@ -6,6 +6,7 @@ import * as pty from 'node-pty'
 import {
   getPythonPath,
   getConfig,
+  getOpenWebUIDataPath,
   setConfig,
   installPackage,
   isPackageInstalled,
@@ -36,7 +37,8 @@ import {
   SPEECH_ASR_LANGUAGES,
   speechLanguageCode,
   selectedSpeechLanguages,
-  speechAsrGroup
+  speechAsrGroup,
+  glossarySpeechLanguages
 } from './speech-language-presets'
 
 let ptyProcess: pty.IPty | null = null
@@ -187,6 +189,18 @@ const buildAsrProfiles = (sherpaConfig: SherpaConfig): Record<string, Record<str
 const cleanModelId = (id: string): string =>
   id.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
 
+const requestedSpeechLanguages = (config: SherpaConfig): string[] => {
+  let dictionaryLanguages: string[] = []
+  try {
+    const file = path.join(getOpenWebUIDataPath(), 'glossary.settings.json')
+    if (fs.existsSync(file))
+      dictionaryLanguages = glossarySpeechLanguages(JSON.parse(fs.readFileSync(file, 'utf8')))
+  } catch (error) {
+    log.warn('Unable to read glossary speech languages:', error)
+  }
+  return [...new Set([...selectedSpeechLanguages(config), ...dictionaryLanguages])]
+}
+
 const speechProfileReady = (profile?: Record<string, string>): boolean => {
   if (!profile?.SHERPA_ASR_MODEL && !profile?.SHERPA_ASR_ENCODER && !profile?.SHERPA_TTS_MODEL)
     return false
@@ -260,7 +274,7 @@ const ensureAsrModels = async (
   persist = true
 ): Promise<SherpaConfig> => {
   const profiles = buildAsrProfiles(sherpaConfig)
-  const selected = selectedSpeechLanguages(sherpaConfig)
+  const selected = requestedSpeechLanguages(sherpaConfig)
   const oldIndicRepo = 'csukuangfj/sherpa-onnx-sense-voice-funasr-nano-int8-2025-12-17'
   for (const key of Object.keys(profiles)) {
     if (
@@ -416,6 +430,18 @@ const ensureAsrModels = async (
   for (const language of selected) {
     const shared = nextProfiles[speechAsrGroup(language)]
     if (shared && (!nextProfiles[language] || nextProfiles[language].SHERPA_ASR_MANAGED === 'true'))
+      nextProfiles[language] = shared
+  }
+  // Share only preset languages, without treating them as requests for unrelated TTS downloads.
+  for (const language of SPEECH_ASR_LANGUAGES) {
+    const group = speechAsrGroup(language)
+    const shared = nextProfiles[group]
+    if (
+      shared &&
+      shared.SHERPA_ASR_INDIC_FALLBACK !== 'true' &&
+      speechProfileReady(shared) &&
+      (!nextProfiles[language] || nextProfiles[language].SHERPA_ASR_MANAGED === 'true')
+    )
       nextProfiles[language] = shared
   }
   updates.asrProfiles = nextProfiles
@@ -714,7 +740,7 @@ const ensureTtsModels = async (
   persist = true
 ): Promise<SherpaConfig> => {
   const profiles = buildTtsProfiles(sherpaConfig)
-  const selected = selectedSpeechLanguages(sherpaConfig)
+  const selected = requestedSpeechLanguages(sherpaConfig)
   const presets: SherpaPreset[] = selected
     .filter(
       (language) =>
@@ -914,7 +940,7 @@ export const startSherpa = async (
 
   const speechConfig = (await getConfig()).sherpa ?? {}
   if (
-    selectedSpeechLanguages(speechConfig).some((language) => speechAsrGroup(language) === 'hindi')
+    requestedSpeechLanguages(speechConfig).some((language) => speechAsrGroup(language) === 'hindi')
   )
     requiredPackages.push('kaldi-native-fbank', 'onnxruntime', 'scipy')
 

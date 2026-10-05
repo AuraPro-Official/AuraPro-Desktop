@@ -145,7 +145,7 @@
   let installOpenTerminal = $state(false)
   let installOpenCode = $state(false)
   let installSherpa = $state(true)
-  let selectedSpeech = $state(['zh', 'en'])
+  let selectedSpeech = $state(['zh'])
   const speechLanguageOptions = [
     ...new Set([...SPEECH_ASR_LANGUAGES, ...Object.keys(SPEECH_TTS_REPOS)])
   ].sort()
@@ -372,7 +372,7 @@
           mmprojRepo: '',
           mmprojFilename: '',
           sizeBytes: (model.gb + 12) * GIB,
-          ramInfo: `${model.ramInfo} · Windows/Linux x64${model.experimental ? ` · ${$i18n.t('common.experimental')}` : ''}`,
+          ramInfo: model.ramInfo,
           proModelId: model.id
         }))
       }
@@ -397,9 +397,9 @@
       installOpenCode,
       installLlamaCpp: !selectedModel.proModelId,
       installSherpa,
-      speechLanguages: selectedSpeech,
+      speechLanguages: $state.snapshot(selectedSpeech),
       installDir,
-      selectedModel,
+      selectedModel: $state.snapshot(selectedModel),
       llamaCppVariant,
       ragHardwareAcceleration: llamaCppVariant.startsWith('cuda-') && ragHardwareAcceleration
     })
@@ -511,7 +511,9 @@
           </div>
         </div>
         {#if selectedModel.proModelId}
-          <span class="text-[12px] text-gray-400 dark:text-gray-500">Strata · 18882</span>
+          <span class="text-[12px] text-gray-400 dark:text-gray-500"
+            >{platform === 'darwin' ? 'llama.cpp' : 'Strata'} · 18882</span
+          >
         {:else}
           <select
             class="bg-gray-50 dark:bg-gray-900 text-[12px] text-gray-700 dark:text-gray-200 px-3 py-1.5 border-none outline-none rounded-xl cursor-pointer"
@@ -573,6 +575,7 @@
                 <input
                   type="checkbox"
                   checked={selectedSpeech.includes(language)}
+                  disabled={language === 'zh'}
                   onchange={(event) => {
                     selectedSpeech = event.currentTarget.checked
                       ? [...new Set([...selectedSpeech, language])]

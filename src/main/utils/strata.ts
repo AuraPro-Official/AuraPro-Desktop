@@ -9,6 +9,7 @@ import * as tar from 'tar'
 import adapterPath from '../../../resources/strata_adapter.py?asset&asarUnpack'
 import { getInstallDir, getPythonPath, portInUse } from './index'
 import { inferenceCoordinator } from './inference-coordinator'
+import { setupIsolatedLlamaCpp, latestLlamaCppVersion } from './llamacpp'
 import {
   DEFAULT_STRATA_SETTINGS,
   STRATA_MODELS,
@@ -17,11 +18,19 @@ import {
   strataConfigName,
   strataHardwareRecommendation,
   strataSetupArgs,
+  nativeProFiles,
+  nativeProArgs,
   validateStrataSettings,
   type StrataSettings
 } from './strata-models'
 
-type Installation = { source: string; revision?: string; version: string; backend: string }
+type Installation = {
+  source: string
+  revision?: string
+  version: string
+  backend: string
+  exe?: string
+}
 let server: ChildProcess | null = null
 let worker: ChildProcess | null = null
 let operation: AbortController | null = null
@@ -45,7 +54,10 @@ const python = (source: string) =>
     '.venv',
     process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python'
   )
-const supported = () => ['win32', 'linux'].includes(process.platform) && process.arch === 'x64'
+const native = () => process.platform === 'darwin'
+const supported = () =>
+  (native() && ['arm64', 'x64'].includes(process.arch)) ||
+  (['win32', 'linux'].includes(process.platform) && process.arch === 'x64')
 
 function readJson<T>(file: string, fallback: T): T {
   return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : fallback
@@ -58,6 +70,99 @@ function writeJson(file: string, value: unknown): void {
 }
 
 const installation = () => readJson<Installation | null>(path.join(root(), 'installed.json'), null)
+
+function proHealthReady(body: { service?: string; loaded?: boolean; status?: string }): boolean {
+  return native() ? body.status === 'ok' : body.service === 'strata' && body.loaded === true
+}
+
+function nativeModelReady(model: string, vision = false): boolean {
+  const dir = path.join(root(), 'native-models', model)
+  const manifest = nativeProFiles(model)
+  const sizes = readJson<Record<string, number>>(path.join(dir, 'prepared.json'), {})
+  const files = [...manifest.files, ...(vision && manifest.projector ? [manifest.projector] : [])]
+  return (
+    (!vision || !!manifest.projector) &&
+    files.every(
+      (file) =>
+        sizes[file] > 0 &&
+        fs.existsSync(path.join(dir, file)) &&
+        fs.statSync(path.join(dir, file)).size === sizes[file]
+    )
+  )
+}
+
+async function prepareNativeModel(settings: StrataSettings, signal: AbortSignal): Promise<void> {
+  nativeProArgs(settings, 'validation.gguf', settings.vision ? 'projector.gguf' : undefined)
+  const manifest = nativeProFiles(settings.model)
+  if (settings.vision && !manifest.projector)
+    throw new Error('Image input is unavailable for this Pro preset')
+  const dir = path.join(root(), 'native-models', settings.model)
+  const preparedFile = path.join(dir, 'prepared.json')
+  const sizes = readJson<Record<string, number>>(preparedFile, {})
+  const metadata = await fetch(
+    `https://huggingface.co/api/models/${manifest.repo}/revision/${manifest.revision}?blobs=true`,
+    { signal }
+  )
+  if (!metadata.ok) throw new Error(`Pro model lookup failed: ${metadata.status}`)
+  const repo = (await metadata.json()) as {
+    siblings: { rfilename: string; size?: number; lfs?: { size: number } }[]
+  }
+  for (const file of [
+    ...manifest.files,
+    ...(settings.vision && manifest.projector ? [manifest.projector] : [])
+  ]) {
+    signal.throwIfAborted()
+    const remote = repo.siblings.find((item) => item.rfilename === file)
+    const expected = remote?.lfs?.size ?? remote?.size
+    if (!expected || expected < 4) throw new Error(`Missing Pro GGUF metadata: ${file}`)
+    const target = path.join(dir, file)
+    if (sizes[file] === expected && fs.existsSync(target) && fs.statSync(target).size === expected)
+      continue
+    fs.mkdirSync(path.dirname(target), { recursive: true })
+    setProgress('model')
+    progress!.detail = file
+    progress!.downloadedBytes = 0
+    progress!.totalBytes = expected
+    const response = await fetch(
+      `https://huggingface.co/${manifest.repo}/resolve/${manifest.revision}/${file}`,
+      { signal }
+    )
+    if (!response.ok || !response.body)
+      throw new Error(`Pro model download failed: ${response.status}`)
+    const current = progress!
+    const meter = new Transform({
+      transform(chunk, _encoding, callback) {
+        current.downloadedBytes! += chunk.length
+        callback(null, chunk)
+      }
+    })
+    const partial = `${target}.part`
+    try {
+      await pipeline(
+        Readable.fromWeb(response.body as never),
+        meter,
+        fs.createWriteStream(partial),
+        { signal }
+      )
+      if (fs.statSync(partial).size !== expected)
+        throw new Error(`Incomplete Pro download: ${file}`)
+      const fd = fs.openSync(partial, 'r')
+      const magic = Buffer.alloc(4)
+      try {
+        fs.readSync(fd, magic, 0, 4, 0)
+      } finally {
+        fs.closeSync(fd)
+      }
+      if (magic.toString() !== 'GGUF') throw new Error(`Invalid Pro GGUF: ${file}`)
+      fs.renameSync(partial, target)
+      sizes[file] = expected
+      writeJson(preparedFile, sizes)
+    } finally {
+      fs.rmSync(partial, { force: true })
+    }
+  }
+}
+
 export const getStrataSettings = (): StrataSettings =>
   validateStrataSettings(readJson(path.join(root(), 'settings.json'), DEFAULT_STRATA_SETTINGS))
 
@@ -147,6 +252,8 @@ export async function getStrataInfo() {
   const dir = installed ? sourceDir(installed.source) : ''
   return {
     supported: supported(),
+    runtime: native() ? 'llama.cpp' : 'Strata',
+    platformLabel: native() ? 'macOS' : 'Windows/Linux x64',
     status,
     error,
     logs: output,
@@ -158,13 +265,15 @@ export async function getStrataInfo() {
       ...model,
       ramInfo: strataHardwareRecommendation(model),
       experimental: model.family === 'unsloth',
-      installed: !!dir && fs.existsSync(path.join(dir, strataConfigName(model.id)))
+      installed: native()
+        ? nativeModelReady(model.id)
+        : !!dir && fs.existsSync(path.join(dir, strataConfigName(model.id)))
     }))
   }
 }
 
 async function exclusiveOperation(action: (signal: AbortSignal) => Promise<void>): Promise<void> {
-  if (!supported()) throw new Error('Pro currently supports Windows/Linux x64 only')
+  if (!supported()) throw new Error('Pro supports macOS and Windows/Linux x64')
   if (operation) throw new Error('Another Pro operation is already running')
   const controller = new AbortController()
   operation = controller
@@ -216,9 +325,12 @@ export async function checkStrataHealth() {
       const response = await fetch(`http://127.0.0.1:${STRATA_PORT}/health`, {
         signal: AbortSignal.timeout(3000)
       })
-      const body = (await response.json()) as { service?: string; loaded?: boolean }
-      if (!response.ok || body.service !== 'strata' || body.loaded !== true)
-        throw new Error('Pro health check failed')
+      const body = (await response.json()) as {
+        service?: string
+        loaded?: boolean
+        status?: string
+      }
+      if (!response.ok || !proHealthReady(body)) throw new Error('Pro health check failed')
       health = 'healthy'
       detail = ''
     }
@@ -230,6 +342,10 @@ export async function checkStrataHealth() {
 }
 
 export async function checkStrataUpdate(): Promise<{ version: string; source: string }> {
+  if (native()) {
+    const version = await latestLlamaCppVersion('auto')
+    return { version, source: version }
+  }
   const response = await fetch('https://api.github.com/repos/Niko1221/Strata/releases/latest', {
     headers: { Accept: 'application/vnd.github+json' },
     signal: AbortSignal.timeout(20000)
@@ -243,6 +359,27 @@ export async function checkStrataUpdate(): Promise<{ version: string; source: st
 export async function installStrata(update = false, requested?: StrataSettings): Promise<void> {
   const settings = validateStrataSettings(requested ?? getStrataSettings())
   await exclusiveOperation(async (signal) => {
+    if (native()) {
+      nativeProArgs(settings, 'validation.gguf', settings.vision ? 'projector.gguf' : undefined)
+      setProgress('runtime')
+      const previous = installation()
+      const version = update ? (await checkStrataUpdate()).version : previous?.version || 'latest'
+      const exe = await setupIsolatedLlamaCpp(
+        (detail) => {
+          if (progress) progress.detail = detail
+        },
+        { version, variant: 'auto', cacheDir: path.join(root(), 'llama.cpp') }
+      )
+      signal.throwIfAborted()
+      writeJson(path.join(root(), 'installed.json'), {
+        source: 'native',
+        version: path.relative(path.join(root(), 'llama.cpp'), exe).split(path.sep)[0],
+        backend: 'metal',
+        exe
+      })
+      writeJson(path.join(root(), 'settings.json'), settings)
+      return
+    }
     const previous = installation()
     const revision = update
       ? (await checkStrataUpdate()).source
@@ -337,6 +474,11 @@ export async function prepareStrataModel(settings: StrataSettings): Promise<void
   await exclusiveOperation(async (signal) => {
     const installed = installation()
     if (!installed) throw new Error('Install Pro before downloading a model')
+    if (native()) {
+      await prepareNativeModel(valid, signal)
+      writeJson(path.join(root(), 'settings.json'), valid)
+      return
+    }
     const dir = sourceDir(installed.source)
     setProgress('model')
     await run(
@@ -359,10 +501,12 @@ export async function prepareStrataModel(settings: StrataSettings): Promise<void
 
 export async function saveStrataSettings(settings: StrataSettings): Promise<void> {
   const valid = validateStrataSettings(settings)
+  if (native()) nativeProArgs(valid, 'validation.gguf', valid.vision ? 'projector.gguf' : undefined)
+  else strataSetupArgs(valid, root())
   if (operation) throw new Error('Wait for the current Pro operation to finish')
   const installed = installation()
   const old = getStrataSettings()
-  if (installed && (old.backend !== valid.backend || old.vision !== valid.vision)) {
+  if (!native() && installed && (old.backend !== valid.backend || old.vision !== valid.vision)) {
     throw new Error('Use Prepare model to apply backend or vision changes')
   }
   if (installed && inferenceCoordinator.current === 'pro') readPreparedConfig(installed, valid)
@@ -375,6 +519,24 @@ function readPreparedConfig(
   installed: Installation,
   settings: StrataSettings
 ): Record<string, unknown> {
+  if (native()) {
+    if (
+      !installed.exe ||
+      !fs.existsSync(installed.exe) ||
+      !nativeModelReady(settings.model, settings.vision)
+    )
+      throw new Error('Prepare the selected Pro model in Desktop settings first')
+    const manifest = nativeProFiles(settings.model)
+    const dir = path.join(root(), 'native-models', settings.model)
+    return {
+      exe: installed.exe,
+      args: nativeProArgs(
+        settings,
+        path.join(dir, manifest.files[0]),
+        manifest.projector ? path.join(dir, manifest.projector) : undefined
+      )
+    }
+  }
   const dir = sourceDir(installed.source)
   const config = readJson<Record<string, unknown> | null>(
     path.join(dir, strataConfigName(settings.model)),
@@ -433,8 +595,10 @@ async function startRaw(): Promise<void> {
     if (index >= 0) args[index + 1] = value
     else args.push(key, value)
   }
-  setArg('--max-context', String(settings.context))
-  setArg('--kv', settings.kv)
+  if (!native()) {
+    setArg('--max-context', String(settings.context))
+    setArg('--kv', settings.kv)
+  }
   // A smaller context or hybrid cache must not inherit a previous KV streaming setup.
   const resident = args.indexOf('--kv-resident')
   if (resident >= 0 && (settings.context < 65536 || settings.kv === 'k8v4'))
@@ -453,20 +617,22 @@ async function startRaw(): Promise<void> {
   const controller = new AbortController()
   startupAbort = controller
   const child = spawn(
-    python(installed.source),
-    [
-      path.join(dir, 'serve', 'server.py'),
-      '--engine',
-      'strata',
-      '--config',
-      runtimeConfig,
-      '--host',
-      '127.0.0.1',
-      '--port',
-      String(STRATA_PORT)
-    ],
+    native() ? (config.exe as string) : python(installed.source),
+    native()
+      ? args
+      : [
+          path.join(dir, 'serve', 'server.py'),
+          '--engine',
+          'strata',
+          '--config',
+          runtimeConfig,
+          '--host',
+          '127.0.0.1',
+          '--port',
+          String(STRATA_PORT)
+        ],
     {
-      cwd: dir,
+      cwd: native() ? path.dirname(config.exe as string) : dir,
       windowsHide: true,
       detached: process.platform !== 'win32',
       env: { ...process.env, PYTHONUNBUFFERED: '1', PYTHONUTF8: '1', PYTHONNOUSERSITE: '1' },
@@ -497,8 +663,12 @@ async function startRaw(): Promise<void> {
           signal: AbortSignal.timeout(1500)
         })
         if (response.ok) {
-          const health = (await response.json()) as { service?: string; loaded?: boolean }
-          if (health.service === 'strata' && health.loaded === true) {
+          const health = (await response.json()) as {
+            service?: string
+            loaded?: boolean
+            status?: string
+          }
+          if (proHealthReady(health)) {
             status = 'started'
             setProgress('complete')
             return
@@ -527,7 +697,7 @@ export async function startStrata(): Promise<void> {
 
 inferenceCoordinator.register('pro', {
   validate: async () => {
-    if (!supported()) throw new Error('Pro currently supports Windows/Linux x64 only')
+    if (!supported()) throw new Error('Pro supports macOS and Windows/Linux x64')
     if (operation) throw new Error('Pro preparation is still running')
     const installed = installation()
     if (!installed) throw new Error('Install Pro in Desktop settings first')

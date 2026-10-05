@@ -19,7 +19,17 @@ const compiled = ts.transpileModule(source, {
 }).outputText
 
 function harness(initial = {}, options = {}) {
-  let config = { sherpa: initial, envVars: options.envVars ?? {} }
+  let config = {
+    sherpa: {
+      ...initial,
+      asrProfiles: { zh: { SHERPA_ASR_MODEL: 'existing-chinese.onnx' }, ...initial.asrProfiles },
+      ttsProfiles: {
+        zh: { SHERPA_TTS_MODEL: 'existing-chinese-voice.onnx' },
+        ...initial.ttsProfiles
+      }
+    },
+    envVars: options.envVars ?? {}
+  }
   let active = 0
   let maximum = 0
   const downloads = []
@@ -37,7 +47,14 @@ function harness(initial = {}, options = {}) {
   const modules = {
     fs: {
       ...fs,
-      existsSync: (file) => files.has(file) || file.endsWith('phontab'),
+      existsSync: (file) =>
+        files.has(file) ||
+        file.endsWith('phontab') ||
+        Boolean(options.glossary && file.endsWith('glossary.settings.json')),
+      readFileSync: (file, ...args) =>
+        options.glossary && file.endsWith('glossary.settings.json')
+          ? JSON.stringify(options.glossary)
+          : fs.readFileSync(file, ...args),
       mkdirSync() {
         return undefined
       },
@@ -64,6 +81,7 @@ function harness(initial = {}, options = {}) {
         config = { ...config, ...updates }
       },
       getInstallDir: () => 'cache',
+      getOpenWebUIDataPath: () => 'webui-data',
       getPackageVersion: () => '1.13.8'
     },
     './sherp_config': presets,
@@ -124,9 +142,42 @@ test('selected European languages download one shared model, not every language'
   assert.ok(cfg.asrProfiles.en, JSON.stringify(cfg.asrProfiles))
   assert.equal(cfg.asrProfiles.en, cfg.asrProfiles.fr)
   assert.equal(cfg.asrProfiles.en, cfg.asrProfiles.es)
+  assert.equal(cfg.asrProfiles.en, cfg.asrProfiles.de)
+  assert.equal(cfg.asrProfiles.en, cfg.asrProfiles.uk)
+  assert.equal(cfg.asrProfiles.ru, undefined)
   const count = h.downloads.length
   await h.api.ensureDefaultAsrModel(cfg)
   assert.equal(h.downloads.length, count)
+})
+
+test('fresh install downloads Chinese even with an empty selection', async () => {
+  const h = harness({ enabledLanguages: [], asrProfiles: { zh: undefined } })
+  const cfg = await h.api.ensureDefaultAsrModel(h.config())
+  assert.equal(h.downloads.length, 4)
+  assert.ok(h.downloads.every(({ repo }) => repo.includes('zipformer-zh')))
+  assert.deepEqual(Array.from(cfg.enabledLanguages), ['zh'])
+})
+
+test('Chinese-Spanish dictionary downloads the shared European STT and only Spanish TTS', async () => {
+  const h = harness(
+    { enabledLanguages: ['zh'] },
+    {
+      glossary: {
+        glossary_mode: 'smart',
+        smart_source_lang: '中文',
+        smart_target_lang: '西班牙语'
+      }
+    }
+  )
+  const asr = await h.api.ensureDefaultAsrModel(h.config())
+  assert.equal(h.downloads.length, 4)
+  assert.equal(asr.asrProfiles.es, asr.asrProfiles.fr)
+  assert.equal(asr.asrProfiles.es, asr.asrProfiles.de)
+  assert.equal(asr.asrProfiles.ja, undefined)
+  const tts = await h.api.ensureDefaultTtsModel(asr)
+  assert.ok(tts.ttsProfiles.es)
+  assert.equal(tts.ttsProfiles.fr, undefined)
+  assert.deepEqual(Array.from(tts.enabledLanguages), ['zh', 'es'])
 })
 test('Chinese and user selected voice models are never overwritten, even with the old delete flag', async () => {
   const original = {
@@ -146,7 +197,7 @@ test('Chinese and user selected voice models are never overwritten, even with th
   assert.equal(tts.ttsModel, original.ttsModel)
 })
 test('Matcha downloads its vocoder, text rules and dictionary without unrelated voices', async () => {
-  const h = harness({ enabledLanguages: ['zh'] })
+  const h = harness({ enabledLanguages: ['zh'], ttsProfiles: { zh: undefined } })
   const cfg = await h.api.ensureDefaultTtsModel(h.config())
   assert.ok(h.downloads.every(({ repo }) => repo.includes('matcha') || repo.includes('hifigan')))
   const profile = cfg.ttsProfiles.zh
@@ -256,6 +307,7 @@ test('Indic metadata failure falls back; failure of both downloads preserves con
   const result = await h.api.ensureDefaultAsrModel(h.config())
   assert.equal(result.asrProfiles.hi.SHERPA_ASR_TYPE, 'sense_voice')
   const broken = harness(original, { failIndic: true, failFallback: true })
+  const before = broken.config()
   await assert.rejects(broken.api.ensureDefaultAsrModel(broken.config()), /Network unavailable/)
-  assert.deepEqual(broken.config(), original)
+  assert.deepEqual(broken.config(), before)
 })

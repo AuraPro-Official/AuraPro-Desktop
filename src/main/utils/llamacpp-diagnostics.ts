@@ -807,6 +807,12 @@ export const diagnoseLlamaCpp = async (
     )
   ) {
     const state = await checkStrataHealth()
+    const proBackend =
+      process.platform === 'darwin'
+        ? state.settings.backend === 'cpu'
+          ? 'cpu'
+          : 'metal'
+        : (state.installed?.backend ?? state.settings.backend)
     const issues: LlamaDiagnosticIssue[] = state.detail
       ? [
           {
@@ -823,13 +829,18 @@ export const diagnoseLlamaCpp = async (
       trigger,
       healthy: issues.length === 0,
       fingerprint: createHash('sha256').update(`pro|${state.detail}`).digest('hex').slice(0, 16),
-      variant: `Pro (${state.installed?.backend ?? state.settings.backend})`,
-      recommendedVariant: state.installed?.backend ?? state.settings.backend,
+      variant: `Pro (${proBackend})`,
+      recommendedVariant: proBackend,
       system,
       software,
       hardware: {
         nvidiaDetected: probe.detected,
-        gpuNames: probe.names.length ? probe.names : adapterNamesFromProbe(probe),
+        gpuNames:
+          process.platform === 'darwin'
+            ? macGpuNames
+            : probe.names.length
+              ? probe.names
+              : adapterNamesFromProbe(probe),
         driverVersion: probe.driverVersion,
         processOnGpu: null,
         totalRamBytes: os.totalmem(),
@@ -842,8 +853,9 @@ export const diagnoseLlamaCpp = async (
         health: state.health,
         status: state.status,
         version: state.installed?.version ?? null,
-        binaryPath: null,
-        binaryPresent: !!state.installed,
+        binaryPath: state.installed?.exe ?? null,
+        binaryPresent:
+          !!state.installed && (!state.installed.exe || fs.existsSync(state.installed.exe)),
         acceleratorBackendPresent: !!state.installed,
         cudaBackendPresent: state.installed?.backend === 'cuda',
         cudaRuntimePresent: !!state.installed,
@@ -854,7 +866,7 @@ export const diagnoseLlamaCpp = async (
         total: state.models.filter((model) => model.installed).length,
         invalid: 0,
         partial: 0,
-        mtpEnabled: true,
+        mtpEnabled: process.platform !== 'darwin',
         mtpMissing: 0,
         visionProjectorMissing: 0
       },

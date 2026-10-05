@@ -22,7 +22,7 @@
   "settings.pro.update": "更新",
   "settings.pro.start": "启动",
   "settings.pro.stop": "停止",
-  "settings.pro.unsupported": "Pro 当前支持 Windows/Linux x64，Strata 暂不支持 macOS。",
+  "settings.pro.unsupported": "Pro 支持 Windows/Linux x64 和 macOS（Apple Silicon / Intel），当前平台暂不支持。",
   "settings.pro.backend": "运行变体",
   "settings.pro.auto": "自动",
   "settings.pro.model": "使用的模型",

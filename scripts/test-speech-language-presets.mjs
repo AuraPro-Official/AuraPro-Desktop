@@ -6,14 +6,19 @@ import ts from 'typescript'
 import {
   SPEECH_TTS_REPOS,
   selectedSpeechLanguages,
-  speechAsrGroup
+  speechAsrGroup,
+  glossarySpeechLanguages
 } from '../src/main/utils/speech-language-presets.ts'
 import { DEFAULT_ASR_PRESETS, RECOMMENDED_ASR_PRESETS } from '../src/main/utils/sherp_config.ts'
 
-test('fresh languages are Chinese and English; explicit empty selection stays empty', () => {
-  assert.deepEqual(selectedSpeechLanguages({}), ['zh', 'en'])
-  assert.deepEqual(selectedSpeechLanguages({ enabledLanguages: [] }), [])
-  assert.deepEqual(selectedSpeechLanguages({ enabledLanguages: ['en', 'en', 'fr'] }), ['en', 'fr'])
+test('Chinese is mandatory; fresh install does not download English automatically', () => {
+  assert.deepEqual(selectedSpeechLanguages({}), ['zh'])
+  assert.deepEqual(selectedSpeechLanguages({ enabledLanguages: [] }), ['zh'])
+  assert.deepEqual(selectedSpeechLanguages({ enabledLanguages: ['en', 'en', 'fr'] }), [
+    'zh',
+    'en',
+    'fr'
+  ])
 })
 test('existing language profiles initialize selection without group keys', () => {
   assert.deepEqual(
@@ -33,8 +38,30 @@ test('legacy user models initialize their actual language instead of fresh defau
       ttsModel: 'voice.onnx',
       ttsLanguage: 'French'
     }),
-    ['es', 'fr']
+    ['zh', 'es', 'fr']
   )
+})
+
+test('fixed and smart dictionary languages resolve only configured speech languages', () => {
+  assert.deepEqual(
+    glossarySpeechLanguages({
+      glossary_mode: 'smart',
+      smart_source_lang: '中文',
+      smart_target_lang: '西班牙语'
+    }),
+    ['zh', 'es']
+  )
+  assert.deepEqual(
+    glossarySpeechLanguages({
+      active_glossary_id: 'a',
+      glossaries: [
+        { id: 'a', source_lang: 'Chinese', target_lang: 'French' },
+        { id: 'b', target_lang: 'Russian' }
+      ]
+    }),
+    ['zh', 'fr']
+  )
+  assert.deepEqual(glossarySpeechLanguages({ target_lang: 'not a configured language' }), [])
 })
 test('language routing shares European models and keeps specialist models', () => {
   for (const language of ['en', 'es', 'fr', 'de', 'pt-BR'])

@@ -20,6 +20,8 @@ const playwrightPath = require.resolve('playwright', {
 const { chromium } = require(playwrightPath)
 const fixture = {
   supported: true,
+  runtime: 'Strata',
+  platformLabel: 'Windows/Linux x64',
   status: 'stopped',
   error: '',
   logs: '',
@@ -50,6 +52,10 @@ server.middlewares.use('/__pro_test', async (_req, res) => {
   import { initI18n } from '/src/renderer/src/lib/i18n/index.ts';
   import '/src/renderer/src/app.css';
   const info = ${JSON.stringify(fixture)};
+  if (new URLSearchParams(location.search).has('mac')) {
+    info.runtime='llama.cpp'; info.platformLabel='macOS';
+    info.models=${JSON.stringify(fixture.models.map((model) => ({ ...model, ramInfo: strataHardwareRecommendation(model, 'darwin') })))};
+  }
   window.calls = [];
   window.electronAPI = {
     getStrataInfo: async () => structuredClone(info),
@@ -83,17 +89,20 @@ server.middlewares.use('/__get_started_test', async (_req, res) => {
     import { initI18n } from '/src/renderer/src/lib/i18n/index.ts';
     import '/src/renderer/src/app.css';
     const info = ${JSON.stringify(fixture)};
-    info.supported = !navigator.userAgent.includes('Mac');
+    const mac = navigator.userAgent.includes('Mac');
+    info.runtime = mac ? 'llama.cpp' : 'Strata';
+    info.platformLabel = mac ? 'macOS' : 'Windows/Linux x64';
+    if (mac) info.models.forEach(model => model.ramInfo = 'UMA 96GB');
     window.selection = null;
     window.electronAPI = {
       getConfig: async () => ({sherpa:{}}),
       getInstallDir: async () => '/test/install',
       checkInstallPreflight: async () => ({free:1024**4,pathSupported:true,writable:true,enoughSpace:true}),
-      getSystemInfo: async () => ({totalMemGB:64,dedicatedVramGB:12,architecture:info.supported?'x64':'arm64'}),
+      getSystemInfo: async () => ({totalMemGB:96,dedicatedVramGB:12,architecture:mac?'arm64':'x64'}),
       getStrataInfo: async () => info
     };
     initI18n();
-    mount(Setup,{target:document.getElementById('app'),props:{onCancel:()=>{},onContinue:options=>{window.selection=options;}}});
+    mount(Setup,{target:document.getElementById('app'),props:{onCancel:()=>{},onContinue:options=>{window.selection=structuredClone(options);}}});
     </script></body></html>`
   )
   res.setHeader('Content-Type', 'text/html')
@@ -137,11 +146,13 @@ for (const proChoice of [true, false]) {
       getStrataInfo: async () => ({ ...fixture, installed: null }),
       getServerInfo: async () => ({ reachable: true, url: 'http://127.0.0.1:8081' }),
       getConnections: async () => [],
-      startLlamaCpp: async () => ({ url: 'http://127.0.0.1:18881' })
+      startLlamaCpp: async () => ({ url: 'http://127.0.0.1:18881' }),
+      startSherpa: async () => ({ url: 'http://127.0.0.1:18883' })
     },
     {
       get(target, key) {
         return async (...args) => {
+          structuredClone(args)
           calls.push([key, ...args])
           return key in target ? target[key](...args) : true
         }
@@ -158,6 +169,9 @@ for (const proChoice of [true, false]) {
     navigator: { platform: 'Win32' },
     $appInfo: { platform: 'win32' },
     $i18n: { t: (key) => key },
+    $state: { snapshot: structuredClone },
+    sherpaInstallStatus: () => 'Starting Sherpa',
+    sherpaStatus: 'stopped',
     config: { set: () => {} },
     connections: { set: () => {} },
     requiredInstallBytes: () => 0,
@@ -190,7 +204,8 @@ for (const proChoice of [true, false]) {
       ...(proChoice ? { proModelId: 'qwen-iq2_xs' } : {})
     },
     installLlamaCpp: !proChoice,
-    installSherpa: false
+    installSherpa: true,
+    speechLanguages: ['zh', 'en']
   })
   assert.equal(context.installPhase, 'idle')
   assert.equal(context.localInstalled, true)
@@ -202,6 +217,9 @@ for (const proChoice of [true, false]) {
   assert.ok(names.indexOf('installPython') < names.indexOf('installPackage'))
   assert.ok(names.includes('startServer'))
   assert.equal(saved.inferenceRuntime, proChoice ? 'pro' : 'standard')
+  assert.deepEqual(Array.from(saved.sherpa.enabledLanguages), ['zh', 'en'])
+  await startInstall()
+  assert.equal(context.installPhase, 'idle')
   if (proChoice) {
     assert.equal(saved.llamaCpp.enabled, false)
     assert.equal(calls.find((call) => call[0] === 'prepareStrataModel')[1].model, 'qwen-iq2_xs')
@@ -271,18 +289,17 @@ try {
     page.on('pageerror', (error) => errors.push(error.message))
     await page.goto(`http://127.0.0.1:${port}/__get_started_test?lang=zh-CN`)
     await page.locator('summary').filter({ hasText: '手动选择' }).click()
-    if (platform !== 'mac') {
-      await page.getByText('Pro_V1 · Qwen3.8-Flash-Next IQ2_XS', { exact: true }).waitFor()
+    {
+      await page.getByText('Pro_V1 · IQ2_XS', { exact: true }).waitFor()
       assert.equal(await page.getByText(/^Pro_V1 · /).count(), 8)
-      await page.getByText('Pro_V1 · Qwen3.8-Flash-Next IQ2_XS', { exact: true }).click()
-      await page.getByText('Strata · 18882', { exact: true }).waitFor()
+      await page.getByText('Pro_V1 · IQ2_XS', { exact: true }).click()
+      await page
+        .getByText(`${platform === 'mac' ? 'llama.cpp' : 'Strata'} · 18882`, { exact: true })
+        .waitFor()
       await page.screenshot({
         path: path.join(screenshots, `get-started-${platform}.png`),
         fullPage: true
       })
-    } else {
-      await page.getByRole('button', { name: '继续', exact: true }).waitFor()
-      assert.equal(await page.getByText(/^Pro_V1 · /).count(), 0)
     }
     assert.equal(
       await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
@@ -291,8 +308,8 @@ try {
     await page.getByRole('button', { name: '继续', exact: true }).click()
     await page.waitForFunction(() => window.selection)
     const selection = await page.evaluate(() => window.selection)
-    assert.equal(selection.installLlamaCpp, platform === 'mac')
-    assert.equal(selection.selectedModel.proModelId, platform === 'mac' ? undefined : 'qwen-iq2_xs')
+    assert.equal(selection.installLlamaCpp, false)
+    assert.equal(selection.selectedModel.proModelId, 'qwen-iq2_xs')
     assert.deepEqual(errors, [])
     await page.close()
   }
@@ -307,8 +324,7 @@ try {
     await page.getByRole('button', { name: 'Download & Finish Setup' }).waitFor()
     await page.locator('summary').click()
     assert.equal(await page.getByText(/^Pro_V1 · /).count(), 8)
-    if (proChoice)
-      await page.getByText('Pro_V1 · Qwen3.8-Flash-Next IQ2_XS', { exact: true }).click()
+    if (proChoice) await page.getByText('Pro_V1 · IQ2_XS', { exact: true }).click()
     await page.waitForTimeout(2200)
     await page.screenshot({
       path: path.join(screenshots, `setup-${proChoice ? 'pro' : 'standard'}.png`),
@@ -397,6 +413,25 @@ try {
       path: path.join(screenshots, `${locale}-${width}${theme ? `-${theme}` : ''}.png`),
       fullPage: true
     })
+    await page.close()
+  }
+  {
+    const page = await browser.newPage({ viewport: { width: 640, height: 1000 } })
+    await page.goto(`http://127.0.0.1:${port}/__pro_test?lang=zh-CN&mac=1`)
+    await page.locator('select').first().waitFor()
+    assert.deepEqual(
+      await page
+        .locator('select')
+        .first()
+        .locator('option')
+        .evaluateAll((options) => options.map((option) => option.value)),
+      ['auto', 'metal', 'cpu']
+    )
+    assert.equal(await page.getByText('MTP', { exact: true }).count(), 0)
+    await page.locator('select').first().selectOption('cpu')
+    await page.getByRole('button', { name: '保存', exact: true }).click()
+    assert.equal(await page.evaluate(() => window.calls[0][1].backend), 'cpu')
+    await page.screenshot({ path: path.join(screenshots, 'pro-macos.png'), fullPage: true })
     await page.close()
   }
   console.log('Pro UI smoke passed: four locales, narrow/desktop layouts, save and start controls.')

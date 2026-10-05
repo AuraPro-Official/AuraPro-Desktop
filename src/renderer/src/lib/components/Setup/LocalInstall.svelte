@@ -684,7 +684,7 @@
         mmprojRepo: '',
         mmprojFilename: '',
         sizeBytes: (model.gb + 12) * 1024 ** 3,
-        ramInfo: `${model.ramInfo} · Windows/Linux x64${model.experimental ? ' · Experimental' : ''}`,
+        ramInfo: model.ramInfo,
         proModelId: model.id
       }))
     }

@@ -329,7 +329,7 @@
   }
 
   const startInstall = async (options?: InstallOptions, automaticRetry = false) => {
-    const resolvedOptions = options ?? lastInstallOptions ?? {}
+    const resolvedOptions = $state.snapshot(options ?? lastInstallOptions ?? {})
     const proModelId = resolvedOptions.selectedModel?.proModelId
     if (!automaticRetry) {
       installAutoRepairAttempts = {}
