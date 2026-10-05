@@ -76,6 +76,7 @@ const setupSync = (kvCacheType, stored = {}) => {
       watcher = callback
     },
     scheduleLlamaCppRuntimeSettingsRestart: (reason) => restarts.push(reason),
+    scheduleGlossarySpeechDownloads: () => undefined,
     updateTray: () => undefined,
     registerShortcuts: () => undefined,
     voiceInputRecording: false
