@@ -39,8 +39,10 @@ def main():
     cards = amd if hip else nvidia
     if not cards:
         raise RuntimeError('No supported GPU/driver for the selected Pro backend')
+    print('AURAPRO_STAGE:dependencies', flush=True)
     setup.pip_install(setup.requirement_lines(), 'Pro Python dependencies')
     gpu = max(cards, key=lambda card: card['vram_gb'])
+    print('AURAPRO_STAGE:runtime', flush=True)
     if hip:
         if not setup.WIN:
             raise RuntimeError(
@@ -50,6 +52,7 @@ def main():
     else:
         engine = setup.get_prebuilt(setup.PREBUILT_URL, gpu, 'none')
         if engine:
+            print('AURAPRO_STAGE:cuda', flush=True)
             setup.pip_install(setup.CUDA_WHEELS, 'Pro CUDA libraries')
     if not engine:
         no_build()

@@ -47,7 +47,7 @@
     server: () => $i18n.t('statusBar.server'),
     'open-terminal': () => $i18n.t('sidebar.openTerminal'),
     'llama-server': () => $i18n.t('sidebar.llamaCpp'),
-    opencode: () => 'OpenCode',
+    opencode: () => 'PI Agent',
     sherpa: () => 'sherpa'
   }
 

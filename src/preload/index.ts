@@ -190,6 +190,9 @@ const api = {
   },
 
   // OpenCode
+  getPiExtensions: () => ipcRenderer.invoke('pi:extensions'),
+  managePiExtension: (id: string, operation: 'install' | 'remove') =>
+    ipcRenderer.invoke('pi:extension:manage', id, operation),
   installOpenCode: () => ipcRenderer.invoke('opencode:install'),
   updateOpenCode: () => ipcRenderer.invoke('opencode:update'),
   startOpenCode: () => ipcRenderer.invoke('opencode:start'),

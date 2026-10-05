@@ -73,7 +73,7 @@
     },
     {
       id: 'opencode',
-      label: () => $i18n.t('settings.tabs.opencode'),
+      label: () => 'PI Agent',
       icon: 'M8.25 6.75L3 12l5.25 5.25M15.75 6.75L21 12l-5.25 5.25M14.25 3.75l-4.5 16.5'
     },
     {

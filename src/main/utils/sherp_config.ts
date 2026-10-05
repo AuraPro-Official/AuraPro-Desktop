@@ -812,6 +812,106 @@ export const DEFAULT_ASR_PRESETS = [
   }
 ]
 
+export const RECOMMENDED_ASR_PRESETS = [
+  DEFAULT_ASR_PRESETS[0],
+  ...[
+    { language: 'ka', repo: 'LukeJacob2023/sherpa-onnx-stt_ka_fastconformer_hybrid_large_pc' },
+    { language: 'hy', repo: 'LukeJacob2023/sherpa-onnx-fastconformer-hybrid-arm-as' }
+  ].map(({ language, repo }) => ({
+    id: repo,
+    repo,
+    asrType: 'nemo_transducer',
+    profileKeys: [language],
+    language,
+    files: [
+      { filename: 'encoder.onnx', saveAs: 'encoder.onnx', field: 'asrEncoder' },
+      { filename: 'decoder.onnx', saveAs: 'decoder.onnx', field: 'asrDecoder' },
+      { filename: 'joiner.onnx', saveAs: 'joiner.onnx', field: 'asrJoiner' },
+      { filename: 'tokens.txt', saveAs: 'tokens.txt', field: 'asrTokens' }
+    ]
+  })),
+  {
+    id: 'ai4bharat/indic-conformer-600m-multilingual',
+    repo: 'ai4bharat/indic-conformer-600m-multilingual',
+    asrType: 'indic_ctc',
+    profileKeys: ['hindi'],
+    language: 'auto',
+    files: [
+      { filename: 'assets/encoder.onnx', saveAs: 'assets/encoder.onnx', field: 'asrModel' },
+      {
+        filename: 'assets/ctc_decoder.onnx',
+        saveAs: 'assets/ctc_decoder.onnx',
+        field: 'asrDecoder'
+      },
+      { filename: 'assets/vocab.json', saveAs: 'assets/vocab.json', field: 'asrTokens' },
+      {
+        filename: 'assets/language_masks.json',
+        saveAs: 'assets/language_masks.json',
+        field: 'asrLanguageMasks'
+      }
+    ]
+  },
+  {
+    ...DEFAULT_ASR_PRESETS.find((preset) => preset.profileKeys.includes('eu'))!,
+    profileKeys: ['eu']
+  },
+  {
+    ...DEFAULT_ASR_PRESETS.find((preset) => preset.profileKeys.includes('tl'))!,
+    profileKeys: ['tl']
+  },
+  {
+    ...DEFAULT_ASR_PRESETS.find((preset) => preset.profileKeys.includes('asia'))!,
+    profileKeys: ['asia']
+  },
+  {
+    id: 'csukuangfj/sherpa-onnx-nemo-transducer-punct-giga-am-v3-russian-2025-12-16',
+    repo: 'csukuangfj/sherpa-onnx-nemo-transducer-punct-giga-am-v3-russian-2025-12-16',
+    asrType: 'nemo_transducer',
+    profileKeys: ['ru'],
+    language: 'ru',
+    files: [
+      { filename: 'encoder.int8.onnx', saveAs: 'encoder.int8.onnx', field: 'asrEncoder' },
+      { filename: 'decoder.onnx', saveAs: 'decoder.onnx', field: 'asrDecoder' },
+      { filename: 'joiner.onnx', saveAs: 'joiner.onnx', field: 'asrJoiner' },
+      { filename: 'tokens.txt', saveAs: 'tokens.txt', field: 'asrTokens' }
+    ]
+  },
+  {
+    id: 'csukuangfj/sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12',
+    repo: 'csukuangfj/sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12',
+    asrType: 'omnilingual_asr_ctc',
+    profileKeys: ['others'],
+    language: 'auto',
+    files: [
+      { filename: 'model.int8.onnx', saveAs: 'model.int8.onnx', field: 'asrModel' },
+      { filename: 'tokens.txt', saveAs: 'tokens.txt', field: 'asrTokens' }
+    ]
+  },
+  {
+    id: 'csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25',
+    repo: 'csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25',
+    asrType: 'qwen3_asr',
+    profileKeys: ['ar'],
+    language: 'ar',
+    files: [
+      { filename: 'conv_frontend.onnx', saveAs: 'conv_frontend.onnx', field: 'asrConvFrontend' },
+      { filename: 'encoder.int8.onnx', saveAs: 'encoder.int8.onnx', field: 'asrEncoder' },
+      { filename: 'decoder.int8.onnx', saveAs: 'decoder.int8.onnx', field: 'asrDecoder' },
+      { filename: 'tokenizer/vocab.json', saveAs: 'tokenizer/vocab.json', field: 'asrTokenizer' },
+      {
+        filename: 'tokenizer/merges.txt',
+        saveAs: 'tokenizer/merges.txt',
+        field: 'asrTokenizerMerges'
+      },
+      {
+        filename: 'tokenizer/tokenizer_config.json',
+        saveAs: 'tokenizer/tokenizer_config.json',
+        field: 'asrTokenizerConfig'
+      }
+    ]
+  }
+]
+
 export const SERVER_SOURCE = String.raw`import argparse
 import io
 import json
@@ -1018,24 +1118,20 @@ def _fallback_asr_profile():
 
 
 def _profile_value(profile, name, default=""):
-    return str(profile.get(name) or os.getenv(name, default) or "")
+    return str(profile.get(name) or default or "")
 
 
 def _profile_configured(profile):
     return bool(
         profile.get("SHERPA_ASR_MODEL")
         or profile.get("SHERPA_ASR_ENCODER")
-        or os.getenv("SHERPA_ASR_MODEL")
-        or os.getenv("SHERPA_ASR_ENCODER")
     )
 
 
-HINDI_LANGS = {"hi", "ur", "bn", "ta", "te", "mr", "gu", "kn", "ml", "pa", "ne", "si"}
-EU_LANGS = {
-    "en", "es", "fr", "de", "it", "pt", "nl", "pl", "tr", "sv", "da", "no", "fi",
-    "el", "ro", "hu", "cs", "sk", "uk", "bg", "ca", "hr", "sr", "sl", "lt", "lv", "et",
-}
-ASIA_LANGS = {"ja", "ko", "vi", "th", "id", "ms", "my", "km", "lo", "fil", "fa", "he"}
+HINDI_LANGS = set("as bn brx doi gu hi kn kok ks mai ml mni mr ne or pa sa sat sd ta te ur".split())
+EU_LANGS = set("bg hr cs da nl en et fi fr de el hu it lv lt mt pl pt ro sk sl es sv uk".split())
+ASIA_LANGS = set("ja ko mn vi th my km lo id ms jv su fa ps ku si".split())
+OTHER_LANGS = set("af ca ka kk lb no sr sw tr cy is hy he bs mk be az am gl ha ht uz so zu".split())
 LANGUAGE_ALIASES = {
     "\u4e2d\u6587": "zh",
     "\u6c49\u8bed": "zh",
@@ -1162,7 +1258,7 @@ LANGUAGE_ALIASES = {
 
 def _normalize_language_code(language):
     value = str(language or "").strip().lower()
-    if not value:
+    if not value or value in {"auto", "automatic", "自动", "自动检测"}:
         return ""
     value = value.replace("_", "-")
     if value in LANGUAGE_ALIASES:
@@ -1198,9 +1294,9 @@ def _parse_language_candidates(value):
 def _profile_key_for_language(language):
     lang = _normalize_language_code(language)
     profiles = _load_asr_profiles()
-    if lang and lang in profiles:
+    if lang and lang != "eu" and lang in profiles:
         return lang
-    if lang in {"zh", "en", "es", "fr", "de", "pt", "vi", "ja", "ko", "th", "tl", "ar", "ru"}:
+    if lang in {"zh", "tl", "ar", "ru", "ka", "hy"}:
         return lang
     if lang in HINDI_LANGS:
         return "hindi"
@@ -1208,7 +1304,9 @@ def _profile_key_for_language(language):
         return "eu"
     if lang in ASIA_LANGS:
         return "asia"
-    return "others"
+    if lang in OTHER_LANGS:
+        return "others"
+    raise HTTPException(status_code=422, detail=f"Unsupported ASR language: {lang or 'unknown'}")
 
 
 def _cleanup_asr_stream_state(now=None):
@@ -1244,12 +1342,13 @@ def _resolve_asr_profile_for_request(
     # full-recording transcription has no stream_id and is always detected fresh
     # on the complete audio (most accurate).
     stream_key = _get_asr_stream_key(request, stream_id) if stream_id else ""
+    explicit_language = _normalize_language_code(language)
 
     if stream_key:
         if reset_stream:
             ASR_STREAM_STATE.pop(stream_key, None)
         state = ASR_STREAM_STATE.get(stream_key)
-        if state and state.get("profile_key"):
+        if state and state.get("profile_key") and (not explicit_language or state.get("language") == explicit_language):
             # Reuse the language detected on the first chunk for every later
             # chunk of the same utterance. This prevents per-chunk language
             # flipping on short segments (which produced mixed-language garbage).
@@ -1257,12 +1356,14 @@ def _resolve_asr_profile_for_request(
             print(f"Reusing stream language: {state.get('language', '')} profile={state['profile_key']}")
             return state.get("language", ""), state["profile_key"], False
 
-    if _truthy(os.getenv("SHERPA_ASR_AUTO_DETECT", "true")):
+    if explicit_language:
+        detected_language = explicit_language
+    elif _truthy(os.getenv("SHERPA_ASR_AUTO_DETECT", "true")):
         candidates = _parse_language_candidates(language_candidates)
         detected_language = detect_language_task(samples, candidates)
         print(f"Auto-detected language: {detected_language}")
     else:
-        detected_language = _normalize_language_code(language)
+        detected_language = _normalize_language_code(os.getenv("SHERPA_ASR_DEFAULT_LANGUAGE", "zh"))
 
     profile_key = _profile_key_for_language(detected_language)
     if stream_key:
@@ -1286,7 +1387,7 @@ def get_whisper_small_model():
 
 @lru_cache(maxsize=1)
 def get_whisper_large_model():
-    model_name = "large-v3-turbo" # os.getenv("SHERPA_LANG_DETECT_MODEL", "tiny")  "large-v3-turbo"
+    model_name = os.getenv("SHERPA_LANG_DETECT_MODEL", "large-v3-turbo")
     print("model_name", model_name)
     device = os.getenv("SHERPA_LANG_DETECT_DEVICE", "cpu")
     compute_type = os.getenv("SHERPA_LANG_DETECT_COMPUTE_TYPE", "int8")
@@ -1428,8 +1529,7 @@ def detect_language_task(samples, candidates=None):
             return picked
         if detected in candidate_set:
             return detected
-        print(f"[LID] detected {detected or 'unknown'} outside candidates {candidates}; using {candidates[0]}")
-        return candidates[0]
+        raise HTTPException(status_code=422, detail="Unable to detect a language among the selected candidates")
 
     # Free detection: try the fast small model first; escalate to the large model
     # when it is not confident, instead of trusting a low-confidence guess that
@@ -1450,6 +1550,78 @@ def detect_language_task(samples, candidates=None):
 
 _recognizer_cache: OrderedDict = OrderedDict()
 MAX_RECOGNIZERS = 4   # 根据服务器内存调整
+
+
+class IndicConformerCTC:
+    # Adapted from speech-translate-local/asr_indic.py (MIT, Copyright 2022 Sahar).
+    def __init__(self, model_path, decoder_path, vocab_path, num_threads=4):
+        import kaldi_native_fbank as knf
+        import onnxruntime as ort
+        self.knf = knf
+        options = ort.SessionOptions()
+        options.intra_op_num_threads = num_threads
+        self.encoder = ort.InferenceSession(model_path, sess_options=options, providers=['CPUExecutionProvider'])
+        self.decoder = ort.InferenceSession(decoder_path, sess_options=options, providers=['CPUExecutionProvider'])
+        with open(vocab_path, encoding='utf-8') as handle:
+            self.vocab = json.load(handle)
+        with open(os.path.join(os.path.dirname(vocab_path), 'language_masks.json'), encoding='utf-8') as handle:
+            self.language_masks = json.load(handle)
+
+    def features(self, samples):
+        options = self.knf.FbankOptions()
+        frame = options.frame_opts
+        frame.samp_freq = 16000
+        frame.frame_shift_ms = 10
+        frame.frame_length_ms = 25
+        frame.dither = 0
+        frame.preemph_coeff = 0
+        frame.remove_dc_offset = False
+        frame.window_type = 'hann'
+        frame.round_to_power_of_two = False
+        options.mel_opts.num_bins = 80
+        options.mel_opts.low_freq = 0
+        options.mel_opts.high_freq = 8000
+        options.use_energy = False
+        options.use_log_fbank = True
+        options.use_power = True
+        waveform = np.append(samples[0], samples[1:] - 0.97 * samples[:-1])
+        fbank = self.knf.OnlineFbank(options)
+        fbank.accept_waveform(16000, waveform.tolist())
+        fbank.input_finished()
+        if not fbank.num_frames_ready:
+            return np.empty((0, 80), dtype=np.float32)
+        mel = np.asarray([fbank.get_frame(i) for i in range(fbank.num_frames_ready)])
+        return ((mel - mel.mean(axis=0, keepdims=True)) / (mel.std(axis=0, keepdims=True) + 1e-5)).astype(np.float32)
+
+    def transcribe(self, samples, sample_rate, language):
+        if language not in self.vocab or language not in self.language_masks:
+            raise HTTPException(status_code=422, detail=f'Unsupported Indic language: {language}')
+        if sample_rate != 16000:
+            import scipy.signal
+            from math import gcd
+            divisor = gcd(int(sample_rate), 16000)
+            samples = scipy.signal.resample_poly(samples, 16000 // divisor, int(sample_rate) // divisor)
+        if not len(samples):
+            return ''
+        features = self.features(samples)
+        if not len(features):
+            return ''
+        encoded, lengths = self.encoder.run(['outputs', 'encoded_lengths'], {
+            'audio_signal': features.T[np.newaxis, :, :],
+            'length': np.array([len(features)], dtype=np.int64),
+        })
+        logits = self.decoder.run(['logprobs'], {'encoder_output': encoded})[0]
+        valid_length = min(int(np.asarray(lengths).reshape(-1)[0]), logits.shape[1])
+        indices = np.argmax(logits[0, :valid_length][:, self.language_masks[language]], axis=-1)
+        vocab = self.vocab[language]
+        previous = -1
+        tokens = []
+        for index in indices:
+            index = int(index)
+            if index != previous and index != 256:
+                tokens.append(vocab[index] if isinstance(vocab, list) else vocab[str(index)])
+            previous = index
+        return ''.join(tokens).replace('\u2581', ' ').strip()
 _recognizer_lock = None
 
 def _get_lock():
@@ -1463,7 +1635,8 @@ def _get_lock():
 def get_recognizer(profile_key="default", detect_language=""):
     import sherpa_onnx
 
-    cache_key = profile_key
+    profile = _load_asr_profiles().get(profile_key, {})
+    cache_key = (json.dumps(profile, sort_keys=True), detect_language if profile.get("SHERPA_ASR_TYPE") == "whisper" else "")
     if cache_key in _recognizer_cache:
         _recognizer_cache.move_to_end(cache_key)
         return _recognizer_cache[cache_key]
@@ -1487,16 +1660,31 @@ def _create_recognizer(profile_key, detect_language):
     import sherpa_onnx
 
     profiles = _load_asr_profiles()
-    profile = profiles.get(profile_key) or profiles.get("others") or profiles.get("default") or _fallback_asr_profile()
+    profile = profiles.get(profile_key) or (_fallback_asr_profile() if profile_key == "default" else {})
     if not _profile_configured(profile):
-        raise HTTPException(status_code=503, detail="No Sherpa ASR model is configured")
+        raise HTTPException(status_code=503, detail=f"Download/configure the Sherpa ASR model for {detect_language or profile_key}")
 
     model_type = _profile_value(profile, "SHERPA_ASR_TYPE", "paraformer").lower()
     num_threads = int(_profile_value(profile, "SHERPA_ASR_NUM_THREADS", "4") or "4")
     provider = _profile_value(profile, "SHERPA_ASR_PROVIDER", "cpu")
     language = _profile_value(profile, "SHERPA_LANGUAGE", "")
 
-    if model_type == "transducer":
+    if model_type == "indic_ctc":
+        return IndicConformerCTC(
+            _require(_profile_value(profile, "SHERPA_ASR_MODEL"), "SHERPA_ASR_MODEL"),
+            _require(_profile_value(profile, "SHERPA_ASR_DECODER"), "SHERPA_ASR_DECODER"),
+            _require(_profile_value(profile, "SHERPA_ASR_TOKENS"), "SHERPA_ASR_TOKENS"),
+            num_threads,
+        )
+    elif model_type == "qwen3_asr":
+        return sherpa_onnx.OfflineRecognizer.from_qwen3_asr(
+            conv_frontend=_require(_profile_value(profile, "SHERPA_ASR_CONV_FRONTEND"), "SHERPA_ASR_CONV_FRONTEND"),
+            encoder=_require(_profile_value(profile, "SHERPA_ASR_ENCODER"), "SHERPA_ASR_ENCODER"),
+            decoder=_require(_profile_value(profile, "SHERPA_ASR_DECODER"), "SHERPA_ASR_DECODER"),
+            tokenizer=_require(_profile_value(profile, "SHERPA_ASR_TOKENIZER"), "SHERPA_ASR_TOKENIZER"),
+            num_threads=num_threads, provider=provider, max_new_tokens=512, max_total_len=1024,
+        )
+    elif model_type == "transducer":
         return sherpa_onnx.OfflineRecognizer.from_transducer(
             encoder=_require(_profile_value(profile, "SHERPA_ASR_ENCODER"), "SHERPA_ASR_ENCODER"),
             decoder=_require(_profile_value(profile, "SHERPA_ASR_DECODER"), "SHERPA_ASR_DECODER"),
@@ -1623,19 +1811,18 @@ def _fallback_tts_profile():
 
 
 def _profile_key_for_tts_language(language: str) -> str:
+    regional = str(language or "").strip().replace("_", "-").lower()
     lang = _normalize_language_code(language)
     profiles = _load_tts_profiles()
+    for key in profiles:
+        if key.lower() == regional:
+            return key
     # 精确匹配
     if lang and lang in profiles:
         return lang
-    # 常见语言直接映射
-    direct = {"zh", "en", "es", "fr", "de", "pt", "ru", "ja", "ko", "vi", "th", "ar", "hi"}
-    if lang in direct:
-        return lang
-    # 印地系兜底
-    if lang in HINDI_LANGS:
-        return "default"
-    return "default"
+    if lang == "pt" and not regional.startswith("pt-") and "pt-PT" in profiles:
+        return "pt-PT"
+    return regional if regional.startswith("pt-") else lang
 
 
 _tts_cache: OrderedDict = OrderedDict()
@@ -1677,14 +1864,9 @@ def _create_tts(profile_key: str = "default"):
     import sherpa_onnx
 
     profiles = _load_tts_profiles()
-    profile = (
-        profiles.get(profile_key)
-        or profiles.get("default")
-        or profiles.get("others")
-        or _fallback_tts_profile()
-    )
+    profile = profiles.get(profile_key) or (_fallback_tts_profile() if profile_key == "default" else {})
     if not profile or not profile.get("SHERPA_TTS_MODEL"):
-        raise HTTPException(status_code=503, detail="No Sherpa TTS model is configured")
+        raise HTTPException(status_code=503, detail=f"Download/configure the Sherpa TTS model for {profile_key}; no other language will be substituted")
 
     tts_type = profile.get("SHERPA_TTS_TYPE", "vits").lower()
     model    = _require(profile.get("SHERPA_TTS_MODEL", ""), "SHERPA_TTS_MODEL")
@@ -1709,6 +1891,15 @@ def _create_tts(profile_key: str = "default"):
             ),
             num_threads=num_threads,
             provider=provider,
+        )
+    elif tts_type == "matcha":
+        model_config = sherpa_onnx.OfflineTtsModelConfig(
+            matcha=sherpa_onnx.OfflineTtsMatchaModelConfig(
+                acoustic_model=model,
+                vocoder=_require(profile.get("SHERPA_TTS_VOCODER", ""), "SHERPA_TTS_VOCODER"),
+                tokens=tokens, lexicon=profile.get("SHERPA_TTS_LEXICON", ""),
+                dict_dir=profile.get("SHERPA_TTS_DICT_DIR", ""),
+            ), num_threads=num_threads, provider=provider,
         )
     elif tts_type == "kitten":
         voices = _require(profile.get("SHERPA_TTS_VOICES", ""), "SHERPA_TTS_VOICES")
@@ -1752,9 +1943,48 @@ def _create_tts(profile_key: str = "default"):
 
     config = sherpa_onnx.OfflineTtsConfig(
         model=model_config,
+        rule_fsts=profile.get("SHERPA_TTS_RULE_FSTS", ""),
         max_num_sentences=int(profile.get("SHERPA_TTS_MAX_SENTENCES") or os.getenv("SHERPA_TTS_MAX_SENTENCES", "1") or 1),
     )
     return sherpa_onnx.OfflineTts(config)
+
+
+def _qwen_audio_chunks(samples, sample_rate):
+    # Use the latest >=200ms quiet run in the last 5s of each window.
+    limit = int(30 * sample_rate)
+    frame = max(1, int(0.02 * sample_rate))
+    start = 0
+    while start < len(samples):
+        end = min(start + limit, len(samples))
+        if end < len(samples):
+            quiet = 0
+            cut = None
+            for pos in range(max(start, end - 5 * sample_rate), end - frame + 1, frame):
+                rms = float(np.sqrt(np.mean(np.square(samples[pos:pos + frame]))))
+                quiet = quiet + 1 if rms < 0.01 else 0
+                if quiet >= 10:
+                    cut = pos + frame
+            if cut is not None:
+                end = cut
+        yield samples[start:end]
+        start = end
+
+
+def _decode_audio(recognizer, samples, sample_rate, language=''):
+    if isinstance(recognizer, IndicConformerCTC):
+        return recognizer.transcribe(samples, sample_rate, language)
+    stream = recognizer.create_stream()
+    stream.accept_waveform(int(sample_rate), samples)
+    if hasattr(recognizer, "is_ready"):
+        stream.accept_waveform(int(sample_rate), np.zeros(int(0.6 * sample_rate), dtype=np.float32))
+        if hasattr(stream, "input_finished"):
+            stream.input_finished()
+        while recognizer.is_ready(stream):
+            recognizer.decode_stream(stream)
+        result = recognizer.get_result(stream)
+        return (getattr(result, "text", result) or "").strip()
+    recognizer.decode_stream(stream)
+    return stream.result.text.strip()
 
 
 @app.post("/audio/transcriptions")
@@ -1800,10 +2030,10 @@ async def transcriptions(
                 stream_id=stream_id or "",
                 reset_stream=reset_stream or chunk_index == 0,
             )
+        except HTTPException:
+            raise
         except Exception as e:
-            print(f"Error resolving ASR profile: {e}")
-            detected_now = False
-            profile_key = "default"
+            raise HTTPException(status_code=503, detail=f"Language detection failed: {e}") from e
 
         print(f"Using ASR profile: {detected_language}")
         recognizer = get_recognizer(profile_key, detected_language)
@@ -1818,22 +2048,11 @@ async def transcriptions(
                 "reason": "audio chunk too short",
             }
 
-        stream = recognizer.create_stream()
-        stream.accept_waveform(int(sample_rate), samples)
-        if hasattr(recognizer, "is_ready"):
-            tail_paddings = np.zeros(int(0.6 * sample_rate), dtype=np.float32)
-            stream.accept_waveform(int(sample_rate), tail_paddings)
-            if hasattr(stream, "input_finished"):
-                stream.input_finished()
-            while recognizer.is_ready(stream):
-                recognizer.decode_stream(stream)
-            result = recognizer.get_result(stream)
-            text = (getattr(result, "text", result) or "").strip()
-        else:
-            if hasattr(stream, "input_finished"):
-                stream.input_finished()
-            recognizer.decode_stream(stream)
-            text = stream.result.text.strip()
+        started = time.perf_counter()
+        profile = _load_asr_profiles().get(profile_key, {})
+        chunks = _qwen_audio_chunks(samples, sample_rate) if profile.get("SHERPA_ASR_TYPE") == "qwen3_asr" else [samples]
+        text = " ".join(filter(None, (_decode_audio(recognizer, chunk, sample_rate, detected_language) for chunk in chunks)))
+        print(f"[ASR] language={detected_language} profile={profile_key} model={profile.get('SHERPA_ASR_NAME', '')} recognition_seconds={time.perf_counter() - started:.3f}")
         return {
             "text": text,
             "language": detected_language,
@@ -1855,7 +2074,7 @@ async def speech(payload: dict):
         raise HTTPException(status_code=400, detail="input is required")
 
     language = payload.get("language") or ""
-    if not language:
+    if not _normalize_language_code(language):
         try:
             language = fast_detect_language(text).lower()
         except Exception:

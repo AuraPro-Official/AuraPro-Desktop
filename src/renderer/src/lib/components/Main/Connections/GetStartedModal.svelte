@@ -6,6 +6,11 @@
   import Switch from '../../common/Switch.svelte'
   import HardwareDetectionStatus from '../../Setup/HardwareDetectionStatus.svelte'
   import UnsupportedInstallPathDialog from '../../Setup/UnsupportedInstallPathDialog.svelte'
+  import {
+    SPEECH_TTS_REPOS,
+    SPEECH_ASR_LANGUAGES,
+    selectedSpeechLanguages
+  } from '../../../../../../main/utils/speech-language-presets'
 
   interface Props {
     onContinue: (options: {
@@ -13,6 +18,7 @@
       installOpenCode: boolean
       installLlamaCpp: boolean
       installSherpa: boolean
+      speechLanguages: string[]
       installDir: string
       selectedModel: AuraModel
       llamaCppVariant?: string
@@ -36,6 +42,7 @@
     sizeBytes: number
     ramInfo: string
     macOnly?: boolean
+    proModelId?: string
   }
 
   interface SystemInfo {
@@ -138,10 +145,22 @@
   let installOpenTerminal = $state(false)
   let installOpenCode = $state(false)
   let installSherpa = $state(true)
+  let selectedSpeech = $state(['zh', 'en'])
+  const speechLanguageOptions = [
+    ...new Set([...SPEECH_ASR_LANGUAGES, ...Object.keys(SPEECH_TTS_REPOS)])
+  ].sort()
+  const speechLanguageName = (language: string) => {
+    try {
+      return new Intl.DisplayNames([$i18n.language], { type: 'language' }).of(language) || language
+    } catch {
+      return language
+    }
+  }
   let installDir = $state('')
   let defaultInstallDir = $state('')
   let advancedOpen = $state(false)
   let selectedModel = $state<AuraModel>(AURA_MODELS[0])
+  let proModels = $state<AuraModel[]>([])
   let llamaCppVariant = $state('cpu')
   let ragHardwareAcceleration = $state(false)
   let systemMemGB = $state<number | null>(null)
@@ -170,7 +189,7 @@
   const isHighOrAboveModel = (model: AuraModel) =>
     model.name.startsWith('high_') || model.name.startsWith('high-')
   const visibleModels = () =>
-    AURA_MODELS.filter((model) => {
+    [...AURA_MODELS, ...proModels].filter((model) => {
       if (platform !== 'darwin' && model.macOnly) return false
       if (platform !== 'darwin' && (systemMemGB ?? 0) < 24 && isHighOrAboveModel(model)) {
         const speedOverride =
@@ -310,6 +329,8 @@
   }
 
   onMount(async () => {
+    const initialConfig = await window.electronAPI.getConfig()
+    selectedSpeech = selectedSpeechLanguages(initialConfig?.sherpa ?? {})
     defaultInstallDir = await window.electronAPI.getInstallDir()
     installDir = defaultInstallDir
     await validateInstallPath()
@@ -339,6 +360,25 @@
       applyRecommendedModel()
       detectingHardware = false
     }
+    try {
+      const pro = await window.electronAPI.getStrataInfo()
+      if (pro.supported) {
+        proModels = pro.models.map((model) => ({
+          name: `Pro_V1 · ${model.name}`,
+          sizeStr: `~${model.gb} GB`,
+          repo: '',
+          hfRepo: '',
+          filename: model.id,
+          mmprojRepo: '',
+          mmprojFilename: '',
+          sizeBytes: (model.gb + 12) * GIB,
+          ramInfo: `${model.ramInfo} · Windows/Linux x64${model.experimental ? ` · ${$i18n.t('common.experimental')}` : ''}`,
+          proModelId: model.id
+        }))
+      }
+    } catch (error) {
+      console.warn('Unable to read Pro setup options:', error)
+    }
   })
 
   const changeInstallDir = async () => {
@@ -355,8 +395,9 @@
     onContinue({
       installOpenTerminal,
       installOpenCode,
-      installLlamaCpp: true,
+      installLlamaCpp: !selectedModel.proModelId,
       installSherpa,
+      speechLanguages: selectedSpeech,
       installDir,
       selectedModel,
       llamaCppVariant,
@@ -461,23 +502,30 @@
           <div
             class="text-[13px] font-medium text-gray-700 dark:text-gray-300 flex items-center gap-1.5"
           >
-            {$i18n.t('main.getStarted.llamaCpp')}
+            {selectedModel.proModelId
+              ? $i18n.t('settings.pro.title')
+              : $i18n.t('main.getStarted.llamaCpp')}
           </div>
           <div class="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
             {$i18n.t('main.getStarted.llamaCppHardwareDesc')}
           </div>
         </div>
-        <select
-          class="bg-gray-50 dark:bg-gray-900 text-[12px] text-gray-700 dark:text-gray-200 px-3 py-1.5 border-none outline-none rounded-xl cursor-pointer"
-          onchange={(e) => {
-            llamaCppVariant = (e.target as HTMLSelectElement).value
-            if (!llamaCppVariant.startsWith('cuda-')) ragHardwareAcceleration = false
-          }}
-        >
-          {#each variantOptions as opt (opt.value)}
-            <option value={opt.value} selected={llamaCppVariant === opt.value}>{opt.label}</option>
-          {/each}
-        </select>
+        {#if selectedModel.proModelId}
+          <span class="text-[12px] text-gray-400 dark:text-gray-500">Strata · 18882</span>
+        {:else}
+          <select
+            class="bg-gray-50 dark:bg-gray-900 text-[12px] text-gray-700 dark:text-gray-200 px-3 py-1.5 border-none outline-none rounded-xl cursor-pointer"
+            onchange={(e) => {
+              llamaCppVariant = (e.target as HTMLSelectElement).value
+              if (!llamaCppVariant.startsWith('cuda-')) ragHardwareAcceleration = false
+            }}
+          >
+            {#each variantOptions as opt (opt.value)}
+              <option value={opt.value} selected={llamaCppVariant === opt.value}>{opt.label}</option
+              >
+            {/each}
+          </select>
+        {/if}
       </div>
 
       {#if llamaCppVariant.startsWith('cuda-')}
@@ -512,6 +560,31 @@
         />
       </div>
 
+      {#if installSherpa}
+        <details class="pb-3">
+          <summary class="text-[12px] cursor-pointer text-gray-600 dark:text-gray-400"
+            >{$i18n.t('settings.speech.enabledLanguages')}: {selectedSpeech
+              .map(speechLanguageName)
+              .join(', ')}</summary
+          >
+          <div class="mt-2 grid grid-cols-2 sm:grid-cols-3 max-h-40 overflow-y-auto gap-2">
+            {#each speechLanguageOptions as language (language)}
+              <label class="text-[12px] flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={selectedSpeech.includes(language)}
+                  onchange={(event) => {
+                    selectedSpeech = event.currentTarget.checked
+                      ? [...new Set([...selectedSpeech, language])]
+                      : selectedSpeech.filter((code) => code !== language)
+                  }}
+                />
+                {speechLanguageName(language)}
+              </label>
+            {/each}
+          </div>
+        </details>
+      {/if}
       <!-- Model Selection -->
       <div class="py-4">
         <div class="text-[12px] font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -579,7 +652,7 @@
                 onclick={() => (selectedModel = model)}
               >
                 <div
-                  class="text-[11px] font-medium {selectedModel.name === model.name
+                  class="text-[11px] font-medium break-words {selectedModel.name === model.name
                     ? 'text-emerald-600 dark:text-emerald-400'
                     : 'text-gray-700 dark:text-gray-300'}"
                 >
@@ -589,7 +662,7 @@
                   {model.sizeStr} · {model.ramInfo}{model.macOnly ? ' · Mac only' : ''}
                 </div>
                 <div class="mt-1 flex flex-wrap gap-1">
-                  {#each modelCapabilities(model.name) as capability (capability)}
+                  {#each model.proModelId ? [] : modelCapabilities(model.name) as capability (capability)}
                     <span
                       class="rounded border border-gray-200/70 px-1.5 py-px text-[9px] text-gray-400 dark:border-gray-700/70 dark:text-gray-500"
                     >
@@ -686,7 +759,7 @@
         <div class="mt-1 text-[10px] leading-relaxed text-gray-400 dark:text-gray-500">
           核心组件 6 GB · 模型 {selectedModel.sizeStr}
           {installSherpa ? ' · Sherpa 约 2 GB' : ''}
-          {installOpenCode ? ' · OpenCode 约 0.5 GB' : ''}
+          {installOpenCode ? ' · PI Agent 预留 0.5 GB（扩展另计）' : ''}
           {llamaCppVariant.startsWith('cuda-') && ragHardwareAcceleration
             ? ' · RAG CUDA 约 3 GB'
             : ''}

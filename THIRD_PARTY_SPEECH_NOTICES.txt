@@ -1,0 +1,54 @@
+The default TTS repository mapping in speech-language-presets.ts and the
+IndicConformer CTC feature extraction / decoding adapter in sherp_config.ts
+are adapted from speech-translate-local.
+
+MIT License
+
+Copyright (c) 2022 Sahar
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Model loading adapters are implemented against the Sherpa public API.
+Downloaded models retain their respective upstream licenses.
+
+Georgian ASR default:
+  ONNX export: LukeJacob2023/sherpa-onnx-stt_ka_fastconformer_hybrid_large_pc
+  Export author: LukeJacob2023
+  Original model: NVIDIA, nvidia/stt_ka_fastconformer_hybrid_large_pc
+  https://huggingface.co/nvidia/stt_ka_fastconformer_hybrid_large_pc
+  Format conversion: NeMo model exported to ONNX by the upstream repository.
+
+Armenian ASR default:
+  ONNX model: LukeJacob2023/sherpa-onnx-fastconformer-hybrid-arm-as
+  Published by: LukeJacob2023
+  https://huggingface.co/LukeJacob2023/sherpa-onnx-fastconformer-hybrid-arm-as
+  The publisher declares CC BY 4.0; the model card does not identify the
+  original training author. No training or conversion was performed by AuraPro.
+
+Both model sources declare CC BY 4.0 (the Georgian export links to the
+original model's declaration). AuraPro downloads their ONNX files unchanged.
+License: https://creativecommons.org/licenses/by/4.0/
+
+Indic ASR default:
+  AI4Bharat, ai4bharat/indic-conformer-600m-multilingual (MIT).
+  https://huggingface.co/ai4bharat/indic-conformer-600m-multilingual
+  Access requires the user's acceptance of the upstream access conditions.
+  AuraPro downloads the original ONNX graphs and external tensors unchanged.
+  The adapter uses the reference project's CTC path; unused RNNT graphs are
+  not downloaded. CPU execution and bounded thread counts are used by default.

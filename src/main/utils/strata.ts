@@ -3,7 +3,7 @@ import * as path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { spawn, execFile, type ChildProcess } from 'node:child_process'
 import { promisify } from 'node:util'
-import { Readable } from 'node:stream'
+import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import * as tar from 'tar'
 import adapterPath from '../../../resources/strata_adapter.py?asset&asarUnpack'
@@ -29,6 +29,12 @@ let startupAbort: AbortController | null = null
 let status = 'stopped'
 let error = ''
 let output = ''
+let progress: {
+  stage: string
+  detail: string
+  downloadedBytes?: number
+  totalBytes?: number
+} | null = null
 const stopping = new WeakMap<ChildProcess, Promise<void>>()
 
 const root = () => path.join(getInstallDir(), 'strata')
@@ -57,6 +63,17 @@ export const getStrataSettings = (): StrataSettings =>
 
 function append(data: Buffer | string): void {
   output = (output + data.toString()).slice(-24000)
+  if ((operation || startupAbort) && progress) {
+    const lines = output.split(/[\r\n]/).filter((line) => line.trim())
+    const marker = [...lines].reverse().find((line) => line.startsWith('AURAPRO_STAGE:'))
+    if (marker) progress.stage = marker.slice('AURAPRO_STAGE:'.length).trim()
+    const detail = [...lines].reverse().find((line) => !line.startsWith('AURAPRO_STAGE:'))
+    if (detail) progress.detail = detail.slice(-500)
+  }
+}
+
+function setProgress(stage: string): void {
+  progress = { stage, detail: '' }
 }
 
 async function terminate(child: ChildProcess | null): Promise<void> {
@@ -133,6 +150,7 @@ export async function getStrataInfo() {
     status,
     error,
     logs: output,
+    progress,
     installed,
     port: STRATA_PORT,
     settings,
@@ -152,6 +170,7 @@ async function exclusiveOperation(action: (signal: AbortSignal) => Promise<void>
   operation = controller
   error = ''
   output = ''
+  setProgress('preparing')
   try {
     await stopStrata()
     controller.signal.throwIfAborted()
@@ -159,9 +178,11 @@ async function exclusiveOperation(action: (signal: AbortSignal) => Promise<void>
     await action(controller.signal)
     controller.signal.throwIfAborted()
     status = 'stopped'
+    setProgress('complete')
   } catch (err) {
     status = controller.signal.aborted ? 'stopped' : 'failed'
     error = controller.signal.aborted ? '' : String(err)
+    setProgress(controller.signal.aborted ? 'cancelled' : 'failed')
     throw err
   } finally {
     operation = null
@@ -231,6 +252,7 @@ export async function installStrata(update = false, requested?: StrataSettings):
     const dir = sourceDir(source)
     fs.mkdirSync(dir, { recursive: true })
     if (!fs.existsSync(path.join(dir, '.source-ready'))) {
+      setProgress('source')
       const archive = path.join(dir, 'source.tar.gz')
       const response = await fetch(
         `https://api.github.com/repos/Niko1221/Strata/tarball/${revision}`,
@@ -238,9 +260,23 @@ export async function installStrata(update = false, requested?: StrataSettings):
       )
       if (!response.ok || !response.body)
         throw new Error(`Strata download failed: ${response.status}`)
-      await pipeline(Readable.fromWeb(response.body as never), fs.createWriteStream(archive), {
-        signal
+      const downloadProgress = progress!
+      const total = Number(response.headers.get('content-length'))
+      downloadProgress.downloadedBytes = 0
+      if (total > 0) downloadProgress.totalBytes = total
+      const meter = new Transform({
+        transform(chunk, _encoding, callback) {
+          downloadProgress.downloadedBytes! += chunk.length
+          callback(null, chunk)
+        }
       })
+      await pipeline(
+        Readable.fromWeb(response.body as never),
+        meter,
+        fs.createWriteStream(archive),
+        { signal }
+      )
+      setProgress('extracting')
       await tar.x({
         file: archive,
         cwd: dir,
@@ -252,8 +288,10 @@ export async function installStrata(update = false, requested?: StrataSettings):
     }
     signal.throwIfAborted()
     if (!fs.existsSync(python(source))) {
+      setProgress('environment')
       await run(getPythonPath(), ['-m', 'venv', path.join(dir, '.venv')], dir, signal)
     }
+    setProgress('dependencies')
     await run(python(source), [adapterPath, dir, 'install', settings.backend], dir, signal)
     const meta = readJson<{ version: string; backend?: string }>(
       path.join(dir, 'engine', 'BUILD.json'),
@@ -300,6 +338,7 @@ export async function prepareStrataModel(settings: StrataSettings): Promise<void
     const installed = installation()
     if (!installed) throw new Error('Install Pro before downloading a model')
     const dir = sourceDir(installed.source)
+    setProgress('model')
     await run(
       python(installed.source),
       [adapterPath, dir, 'model', ...strataSetupArgs(valid, path.join(root(), 'data'))],
@@ -410,6 +449,7 @@ async function startRaw(): Promise<void> {
   })
   error = ''
   status = 'starting'
+  setProgress('starting')
   const controller = new AbortController()
   startupAbort = controller
   const child = spawn(
@@ -460,6 +500,7 @@ async function startRaw(): Promise<void> {
           const health = (await response.json()) as { service?: string; loaded?: boolean }
           if (health.service === 'strata' && health.loaded === true) {
             status = 'started'
+            setProgress('complete')
             return
           }
         }
@@ -473,6 +514,7 @@ async function startRaw(): Promise<void> {
     await stopRaw()
     status = 'failed'
     error = String(err)
+    setProgress(controller.signal.aborted ? 'cancelled' : 'failed')
     throw err
   } finally {
     if (startupAbort === controller) startupAbort = null

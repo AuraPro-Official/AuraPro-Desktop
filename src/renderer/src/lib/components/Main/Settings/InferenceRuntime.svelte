@@ -212,9 +212,6 @@
     <div>
       <div class="text-[13px] opacity-40 flex items-center gap-1.5">
         {$i18n.t('settings.inference.notInstalled')}
-        <span class="text-[9px] opacity-30 uppercase tracking-wide"
-          >{$i18n.t('common.experimental')}</span
-        >
       </div>
       <div class="text-[11px] opacity-20 mt-0.5">
         {$i18n.t('settings.inference.notInstalledDesc')}
@@ -287,9 +284,6 @@
         <div>
           <div class="text-[13px] opacity-70 flex items-center gap-1.5">
             {$i18n.t('settings.inference.llamaServer')}
-            <span class="text-[9px] opacity-30 uppercase tracking-wide"
-              >{$i18n.t('common.experimental')}</span
-            >
           </div>
           <div class="text-[11px] opacity-25 mt-0.5">
             {$i18n.t('settings.inference.llamaServerDesc')}

@@ -29,3 +29,7 @@ Desktop.ini
 data/.key
 data/*.db-shm
 data/*.db-wal
+
+.tmp-speech-test/
+.tmp-speech-ui/
+scripts/__pycache__/

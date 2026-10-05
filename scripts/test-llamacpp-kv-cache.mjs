@@ -241,7 +241,9 @@ test('launch arguments use the selection even with conflicting custom cache argu
       portInUse: async () => false,
       getInstallDir: () => '/test-data',
       hasExplicitArg: (args, arg) => args.includes(arg),
-      ensureEpubConceptModel: async () => {},
+      ensureEpubConceptModel: async () => {
+        throw new Error('EPUB must not download a model')
+      },
       writeModelsPreset: async () => '/test/models.ini',
       log: { info: () => undefined },
       getErrorMessage: (error) => error.message,

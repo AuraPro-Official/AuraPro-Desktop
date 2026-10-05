@@ -98,7 +98,8 @@ import {
   validateOpenCodeProcess,
   setOpenCodeRuntimeStatusHandler,
   isOpenCodeInstalled
-} from './utils/opencode'
+} from './utils/pi-agent'
+import { getPiExtensions, managePiExtension } from './utils/pi-agent'
 
 import {
   setupLlamaCpp,
@@ -3217,6 +3218,17 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     ipcMain.handle('open-terminal:pty:connect', () => connectOpenTerminalPtyPort())
 
     // OpenCode
+    ipcMain.handle('pi:extensions', () => getPiExtensions())
+    ipcMain.handle(
+      'pi:extension:manage',
+      async (_event, id: string, operation: 'install' | 'remove') => {
+        if (!['install', 'remove'].includes(operation))
+          throw new Error('Invalid extension operation.')
+        return managePiExtension(id, operation, (message) =>
+          sendToRenderer('status:opencode-setup', message)
+        )
+      }
+    )
     ipcMain.handle('opencode:install', async () => {
       try {
         sendToRenderer('status:opencode', 'installing')
@@ -3588,7 +3600,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     ipcMain.handle('sherpa:update', async () => {
       try {
         sendToRenderer('status:sherpa-setup', 'Updating sherpa-onnx...')
-        await installPackage('sherpa-onnx', undefined, (status: string) => {
+        await installPackage('sherpa-onnx==1.13.8', undefined, (status: string) => {
           sendToRenderer('status:sherpa-setup', status)
         })
         sendToRenderer('status:sherpa-setup', 'Updating faster-whisper...')
@@ -3613,20 +3625,34 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     ipcMain.handle('sherpa:downloadTTSModel', async (_event, isDelete?: boolean) => {
       const config = await getConfig()
       const sherpaConfig = config.sherpa ?? {}
-      ensureDefaultTtsModel(
+      await ensureDefaultTtsModel(
         sherpaConfig,
         (status) => sendToRenderer('status:sherpa-setup', status),
         isDelete
       )
+      if (sherpaConfig.enabled) {
+        await stopSherpa()
+        const result = await startSherpa(null, (status) =>
+          sendToRenderer('status:sherpa-setup', status)
+        )
+        sendToRenderer('sherpa:ready', toIpcSafeValue(result))
+      }
     })
     ipcMain.handle('sherpa:downloadAsrModel', async (_event, isDelete?: boolean) => {
       const config = await getConfig()
       const sherpaConfig = config.sherpa ?? {}
-      ensureDefaultAsrModel(
+      await ensureDefaultAsrModel(
         sherpaConfig,
         (status) => sendToRenderer('status:sherpa-setup', status),
         isDelete
       )
+      if (sherpaConfig.enabled) {
+        await stopSherpa()
+        const result = await startSherpa(null, (status) =>
+          sendToRenderer('status:sherpa-setup', status)
+        )
+        sendToRenderer('sherpa:ready', toIpcSafeValue(result))
+      }
     })
 
     ipcMain.handle('sherpa:reinit-server-script', () => {

@@ -19,6 +19,7 @@
   import type { InstallationFailureReport } from '../../../utils/install-diagnostics'
   import { getErrorMessage } from '../../../utils/errors'
   import GetStartedModal from './GetStartedModal.svelte'
+  import ProProgress from '../../common/ProProgress.svelte'
   import AddConnectionModal from './AddConnectionModal.svelte'
   import landingVideo from '../../../../assets/landing.mp4'
 
@@ -27,6 +28,7 @@
   interface AuraModel {
     name: string
     filename: string
+    proModelId?: string
     [key: string]: unknown
   }
 
@@ -48,6 +50,7 @@
     installOpenTerminal?: boolean
     installLlamaCpp?: boolean
     installSherpa?: boolean
+    speechLanguages?: string[]
     installDir?: string
     selectedModel?: AuraModel
     llamaCppVariant?: string
@@ -69,6 +72,7 @@
     installFailure: InstallationFailureReport | null
     installAutoRepairing?: boolean
     installProgress?: number
+    proProgress?: Awaited<ReturnType<typeof window.electronAPI.getStrataInfo>>['progress']
     downloadItems?: DownloadItem[]
     totalDownloadProgress?: number
     toastVisible: boolean
@@ -111,6 +115,7 @@
     installFailure = $bindable(null),
     installAutoRepairing = false,
     installProgress = 0,
+    proProgress = null,
     downloadItems = [],
     totalDownloadProgress = 0,
     toastVisible = $bindable(false),
@@ -797,6 +802,9 @@
                         ></div>
                       </div>
 
+                      {#if proProgress}
+                        <ProProgress progress={proProgress} />
+                      {/if}
                       {#if downloadItems.length > 0}
                         <div
                           class="mt-4 border-t border-black/[0.06] pt-3 dark:border-white/[0.08]"

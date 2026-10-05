@@ -5,6 +5,11 @@
   import i18n from '../../../i18n'
   import { getErrorMessage } from '../../../utils/errors'
   import { K2_ASR_MODELS, K2_TTS_MODELS } from './sherpa-model-catalog'
+  import {
+    SPEECH_TTS_REPOS,
+    SPEECH_ASR_LANGUAGES,
+    selectedSpeechLanguages
+  } from '../../../../../../main/utils/speech-language-presets'
 
   type SherpaPresetFile = {
     filename: string
@@ -32,6 +37,7 @@
   interface SherpaConfig {
     [key: string]: unknown
     enabled?: boolean
+    enabledLanguages?: string[]
     language?: string
     asrLanguage?: string
     asrAutoDetect?: boolean
@@ -164,7 +170,42 @@
   }))
 
   let sherpaConfig = $state<SherpaConfig>({})
-  let sherpaInfo = $state<{ url?: string; status?: string; pid?: number } | null>(null)
+  let sherpaInfo = $state<{
+    url?: string
+    status?: string
+    pid?: number
+    version?: string | null
+    languages?: Record<string, { asr: boolean; tts: boolean }>
+  } | null>(null)
+  const speechLanguages = [
+    ...new Set([...SPEECH_ASR_LANGUAGES, ...Object.keys(SPEECH_TTS_REPOS)])
+  ].sort()
+  const languageName = (code: string) => {
+    try {
+      return new Intl.DisplayNames([$i18n.language], { type: 'language' }).of(code) || code
+    } catch {
+      return code
+    }
+  }
+  let savingLanguages = $state(false)
+  const toggleLanguage = async (language: string, checked: boolean) => {
+    if (savingLanguages) return
+    savingLanguages = true
+    const previous = sherpaConfig.enabledLanguages
+    const selected = selectedSpeechLanguages(sherpaConfig)
+    const enabledLanguages = checked
+      ? [...new Set([...selected, language])]
+      : selected.filter((code) => code !== language)
+    sherpaConfig = { ...sherpaConfig, enabledLanguages }
+    try {
+      await saveSherpaConfig({ enabledLanguages })
+    } catch (error) {
+      sherpaConfig = { ...sherpaConfig, enabledLanguages: previous }
+      setupStatus = getErrorMessage(error)
+    } finally {
+      savingLanguages = false
+    }
+  }
   let setupStatus = $state('')
   let downloading = $state<string | null>(null)
   let downloadProgress = $state<Record<string, number>>({})
@@ -338,6 +379,7 @@
     if (sherpaConfig.ttsPreset === 'vits-zh-aishell3-int8') {
       sherpaConfig.ttsPreset = 'csukuangfj/vits-zh-aishell3|174 speakers'
     }
+    sherpaConfig.enabledLanguages = selectedSpeechLanguages(sherpaConfig)
     sherpaInfo = await window.electronAPI.getSherpaInfo()
     sherpaVersion =
       sherpaInfo?.version ?? (await window.electronAPI.getPackageVersion('sherpa-onnx'))
@@ -780,11 +822,29 @@
   }
 
   const downloadTTSModel = async (isDelete?: boolean) => {
-    await window.electronAPI.downloadSherpaTTSModel(isDelete)
+    downloading = 'selected-tts'
+    try {
+      await saveSherpaConfig({ enabledLanguages: selectedSpeechLanguages(sherpaConfig) })
+      await window.electronAPI.downloadSherpaTTSModel(isDelete)
+      await load()
+    } catch (error) {
+      setupStatus = getErrorMessage(error)
+    } finally {
+      downloading = null
+    }
   }
 
   const downloadAsrModel = async (isDelete?: boolean) => {
-    await window.electronAPI.downloadSherpaAsrModel(isDelete)
+    downloading = 'selected-asr'
+    try {
+      await saveSherpaConfig({ enabledLanguages: selectedSpeechLanguages(sherpaConfig) })
+      await window.electronAPI.downloadSherpaAsrModel(isDelete)
+      await load()
+    } catch (error) {
+      setupStatus = getErrorMessage(error)
+    } finally {
+      downloading = null
+    }
   }
 
   const _downloadPreset = async (kind: 'asr' | 'tts', isDelete?: boolean) => {
@@ -1164,6 +1224,43 @@
         </div>
       </div>
 
+      <details class="py-4 border-t border-black/[0.04] dark:border-white/[0.04]" open>
+        <summary class="text-[13px] cursor-pointer"
+          >{$i18n.t('settings.speech.enabledLanguages')}</summary
+        >
+        <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-x-4 max-h-64 overflow-y-auto">
+          {#each speechLanguages as language (language)}
+            <label class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 py-2 text-[12px]">
+              <input
+                class="row-span-2 self-center"
+                type="checkbox"
+                checked={sherpaConfig.enabledLanguages?.includes(language)}
+                disabled={downloading !== null || savingLanguages}
+                onchange={(event) => toggleLanguage(language, event.currentTarget.checked)}
+              />
+              <span class="min-w-0">{languageName(language)}</span>
+              <span class="col-start-2 flex flex-wrap gap-x-3">
+                <span class="text-[11px] opacity-60"
+                  >STT: {$i18n.t(
+                    sherpaInfo?.languages?.[language]?.asr
+                      ? 'settings.speech.modelReady'
+                      : 'settings.speech.notDownloaded'
+                  )}</span
+                >
+                <span class="text-[11px] opacity-60"
+                  >TTS: {$i18n.t(
+                    sherpaInfo?.languages?.[language]?.tts
+                      ? 'settings.speech.modelReady'
+                      : !SPEECH_TTS_REPOS[language]
+                        ? 'settings.speech.unsupported'
+                        : 'settings.speech.notDownloaded'
+                  )}</span
+                >
+              </span>
+            </label>
+          {/each}
+        </div>
+      </details>
       <div class="py-4 border-t border-black/[0.04] dark:border-white/[0.04]">
         <div class="flex items-center justify-between gap-4">
           <div class="min-w-0">
@@ -1177,9 +1274,9 @@
           <button
             class="text-[12px] opacity-60 hover:opacity-90 px-3 py-1.5 bg-black/[0.06] dark:bg-white/[0.08] rounded-xl border-none shrink-0"
             disabled={downloading !== null}
-            onclick={() => downloadAsrModel(true)}
+            onclick={() => downloadAsrModel(false)}
           >
-            {downloading === selectedAsrPreset.id
+            {downloading === 'selected-asr'
               ? $i18n.t('common.downloading')
               : selectedAsrDownloadable
                 ? asrReady
@@ -1237,9 +1334,9 @@
           <button
             class="text-[12px] opacity-60 hover:opacity-90 px-3 py-1.5 bg-black/[0.06] dark:bg-white/[0.08] rounded-xl border-none shrink-0"
             disabled={downloading !== null}
-            onclick={() => downloadTTSModel(true)}
+            onclick={() => downloadTTSModel(false)}
           >
-            {downloading === selectedTtsPreset.id
+            {downloading === 'selected-tts'
               ? $i18n.t('common.downloading')
               : selectedTtsDownloadable
                 ? ttsReady

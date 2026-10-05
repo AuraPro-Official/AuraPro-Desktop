@@ -48,6 +48,7 @@
     mmprojFilename?: string
     mtpRepo?: string
     mtpFilename?: string
+    proModelId?: string
   }
 
   interface InstallOptions {
@@ -55,6 +56,7 @@
     installOpenCode?: boolean
     installLlamaCpp?: boolean
     installSherpa?: boolean
+    speechLanguages?: string[]
     installDir?: string
     selectedModel?: AuraModel
     llamaCppVariant?: string
@@ -100,6 +102,8 @@
   let toastTimeout: ReturnType<typeof setTimeout> | null = null
   let installStatus = $state('')
   let installProgress = $state(0)
+  let proProgress =
+    $state<Awaited<ReturnType<typeof window.electronAPI.getStrataInfo>>['progress']>(null)
   let installFailure = $state<InstallationFailureReport | null>(null)
   let installAutoRepairing = $state(false)
   let installAutoRepairAttempts = $state<Record<string, number>>({})
@@ -326,6 +330,7 @@
 
   const startInstall = async (options?: InstallOptions, automaticRetry = false) => {
     const resolvedOptions = options ?? lastInstallOptions ?? {}
+    const proModelId = resolvedOptions.selectedModel?.proModelId
     if (!automaticRetry) {
       installAutoRepairAttempts = {}
     }
@@ -336,6 +341,7 @@
     installFailure = null
     installStatus = 'Preparing installation...'
     installProgress = 2
+    proProgress = null
     downloadItemsByKey = {}
     activeCoreDownloadKey = ''
     toastVisible = false
@@ -390,7 +396,9 @@
       if (Object.prototype.hasOwnProperty.call(resolvedOptions, 'installSherpa')) {
         configUpdates.sherpa = {
           ...(currentConfig.sherpa || {}),
-          enabled: resolvedOptions.installSherpa === true
+          enabled: resolvedOptions.installSherpa === true,
+          enabledLanguages: resolvedOptions.speechLanguages ??
+            currentConfig.sherpa?.enabledLanguages ?? ['zh', 'en']
         }
       }
       if (resolvedOptions?.installDir) {
@@ -405,7 +413,14 @@
           variant: resolvedOptions.llamaCppVariant
         }
       }
-      if (resolvedOptions?.selectedModel) {
+      if (proModelId) {
+        configUpdates.inferenceRuntime = 'pro'
+        configUpdates.llamaCpp = {
+          ...(currentConfig.llamaCpp || {}),
+          enabled: false
+        }
+      } else if (resolvedOptions?.selectedModel) {
+        configUpdates.inferenceRuntime = 'standard'
         configUpdates.llamaCpp = {
           ...(currentConfig.llamaCpp || {}),
           ...(configUpdates.llamaCpp || {}),
@@ -434,7 +449,34 @@
       if (!ok) throw new Error($i18n.t('error.installFailedGeneric'))
 
       // Download selected model if provided
-      if (resolvedOptions?.selectedModel) {
+      if (proModelId) {
+        currentInstallStage = 'llama-runtime'
+        installStatus = 'Pro_V1: installing runtime and preparing model...'
+        installProgress = 45
+        const pro = await window.electronAPI.getStrataInfo()
+        const settings = { ...pro.settings, model: proModelId }
+        const progressTimer = setInterval(() => {
+          void window.electronAPI
+            .getStrataInfo()
+            .then((info) => {
+              proProgress = info.progress
+              if (info.logs) installStatus = info.logs.trim().split('\n').at(-1) || installStatus
+            })
+            .catch(() => {})
+        }, 1500)
+        try {
+          if (!pro.installed) await window.electronAPI.installStrata(false, settings)
+          currentInstallStage = 'model-download'
+          installProgress = 52
+          await window.electronAPI.prepareStrataModel(settings)
+          currentInstallStage = 'llama-runtime'
+          installStatus = 'Pro_V1: starting model...'
+          installProgress = 72
+          await window.electronAPI.startStrata()
+        } finally {
+          clearInterval(progressTimer)
+        }
+      } else if (resolvedOptions?.selectedModel) {
         installStatus = `Downloading model: ${resolvedOptions.selectedModel.name}...`
         try {
           if (resolvedOptions?.installLlamaCpp) {
@@ -500,7 +542,7 @@
         await window.electronAPI.setupLlamaCpp()
       }
 
-      if (resolvedOptions?.installLlamaCpp) {
+      if (!proModelId && resolvedOptions?.installLlamaCpp) {
         currentInstallStage = 'llama-runtime'
         installStatus = 'Starting llama-server...'
         installProgress = 72
@@ -528,7 +570,7 @@
         await window.electronAPI.installOpenCode()
         const openCodeResult = await window.electronAPI.startOpenCode()
         if (!openCodeResult?.url) {
-          throw new Error('OpenCode did not start. Check the OpenCode log for details.')
+          throw new Error('PI did not start. Check the PI Agent log for details.')
         }
         openCodeInstalled = true
         openCodeStatus = 'started'
@@ -622,7 +664,7 @@
       installError =
         report.technicalDetail || getErrorMessage(error, $i18n.t('error.somethingWentWrong'))
 
-      if (report.autoRepairable && (installAutoRepairAttempts[repairKey] ?? 0) < 1) {
+      if (!proModelId && report.autoRepairable && (installAutoRepairAttempts[repairKey] ?? 0) < 1) {
         installAutoRepairAttempts = {
           ...installAutoRepairAttempts,
           [repairKey]: (installAutoRepairAttempts[repairKey] ?? 0) + 1
@@ -1251,6 +1293,7 @@
       bind:installFailure
       {installAutoRepairing}
       {installProgress}
+      {proProgress}
       {downloadItems}
       {totalDownloadProgress}
       bind:toastVisible
@@ -1296,8 +1339,8 @@
               : ''
           : activeLog === 'opencode'
             ? openCodeStatus === 'stopping'
-              ? 'Stopping OpenCode…'
-              : openCodeSetupStatus || (openCodeStatus === 'starting' ? 'Starting OpenCode…' : '')
+              ? 'Stopping PI…'
+              : openCodeSetupStatus || (openCodeStatus === 'starting' ? 'Starting PI…' : '')
             : activeLog === 'llama-server'
               ? llamaCppStatus === 'stopping'
                 ? 'Stopping llama-server…'

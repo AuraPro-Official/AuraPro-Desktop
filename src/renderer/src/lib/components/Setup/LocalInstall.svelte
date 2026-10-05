@@ -11,6 +11,7 @@
   import InstallFailurePanel from './InstallFailurePanel.svelte'
   import UnsupportedInstallPathDialog from './UnsupportedInstallPathDialog.svelte'
   import Switch from '../common/Switch.svelte'
+  import ProProgress from '../common/ProProgress.svelte'
   import HardwareDetectionStatus from './HardwareDetectionStatus.svelte'
   import {
     createOptionalInstallWarning,
@@ -172,6 +173,8 @@
   let selectedModel = $state<AuraModel>(AURA_MODELS[0])
   let proModels = $state<AuraModel[]>([])
   let proLogs = $state('')
+  let proProgress =
+    $state<Awaited<ReturnType<typeof window.electronAPI.getStrataInfo>>['progress']>(null)
   let proSettings: Awaited<ReturnType<typeof window.electronAPI.getStrataInfo>>['settings']
   let downloadProgress = $state<number | null>(null)
   let coreProgress = $state(0)
@@ -930,6 +933,7 @@
             .getStrataInfo()
             .then((info) => {
               proLogs = info.logs
+              proProgress = info.progress
             })
             .catch(() => {})
         }, 1500)
@@ -1172,7 +1176,7 @@
         核心组件 6 GB{llamaCppVariant.startsWith('cuda-') && ragHardwareAcceleration
           ? ' · RAG CUDA 约 3 GB'
           : ''}
-        {installOpenCode ? ' · OpenCode 约 0.5 GB' : ''}
+        {installOpenCode ? ' · PI Agent' : ''}
       </div>
     </div>
 
@@ -1503,6 +1507,7 @@
 
       {#if selectedModel.proModelId}
         <div class="w-full min-w-0 space-y-3">
+          {#if proProgress}<ProProgress progress={proProgress} />{/if}
           <div class="text-sm opacity-70 break-words">{installStatus}</div>
           <pre
             class="max-h-64 overflow-auto whitespace-pre-wrap break-all text-[11px] opacity-50">{proLogs}</pre>

@@ -21,6 +21,16 @@
   )
   let progress = $state('')
   let error = $state('')
+  type PiExtension = {
+    id: string
+    name: string
+    description: string
+    installed: boolean
+    state: string
+    detail: string
+  }
+  let extensions = $state<PiExtension[]>([])
+  let extensionBusy = $state(false)
 
   const isRunning = $derived(info?.status === 'started')
 
@@ -29,6 +39,7 @@
       window.electronAPI.getOpenCodeStatus(),
       window.electronAPI.getOpenCodeInfo()
     ])
+    extensions = await window.electronAPI.getPiExtensions()
   }
 
   onMount(() => {
@@ -88,9 +99,9 @@
     <section class="py-4">
       <div class="flex items-start justify-between gap-4">
         <div>
-          <div class="text-[13px] font-medium opacity-80">OpenCode</div>
+          <div class="text-[13px] font-medium opacity-80">PI Agent</div>
           <div class="mt-1 text-[11px] leading-5 opacity-35">
-            {$i18n.t('main.getStarted.opencodeDesc')}
+            PI 执行核心与扩展在本机运行。任务、模型配置、确认和结果都在 WebUI 中操作。
           </div>
         </div>
         <div class="flex shrink-0 items-center gap-1.5">
@@ -175,14 +186,14 @@
       <section class="py-4">
         <div class="flex items-center justify-between gap-4">
           <div>
-            <div class="text-[13px] opacity-70">{$i18n.t('settings.opencode.startOnLaunch')}</div>
+            <div class="text-[13px] opacity-70">启动时启用</div>
             <div class="mt-0.5 text-[11px] opacity-30">
-              {$i18n.t('settings.opencode.startOnLaunchDesc')}
+              打开 AuraPro 后允许 WebUI 启动 PI 任务。
             </div>
           </div>
           <Switch
             checked={$config?.openCode?.enabled ?? false}
-            label={$i18n.t('settings.opencode.startOnLaunch')}
+            label="启动时启用 PI"
             onchange={(value) => updateConfig('enabled', value)}
           />
         </div>
@@ -191,36 +202,17 @@
       <section class="space-y-4 py-4">
         <label class="flex items-center justify-between gap-4">
           <span>
-            <span class="block text-[13px] opacity-70">{$i18n.t('settings.opencode.port')}</span>
-            <span class="mt-0.5 block text-[11px] opacity-30">127.0.0.1 only</span>
-          </span>
-          <input
-            class="w-24 rounded-md border-0 bg-black/[0.04] px-3 py-1.5 text-right text-[12px] outline-none dark:bg-white/[0.06]"
-            type="number"
-            min="1024"
-            max="65535"
-            value={$config?.openCode?.port ?? 39484}
-            onchange={(event) =>
-              updateConfig(
-                'port',
-                Math.min(65535, Math.max(1024, Number(event.currentTarget.value) || 39484))
-              )}
-          />
-        </label>
-
-        <label class="flex items-center justify-between gap-4">
-          <span>
             <span class="block text-[13px] opacity-70">{$i18n.t('settings.opencode.version')}</span>
             <span class="mt-0.5 block text-[11px] opacity-30">
-              {$i18n.t('settings.opencode.versionDesc')}
+              使用经过验证的固定发行版本，默认 1.0.3。
             </span>
           </span>
           <input
             class="w-28 rounded-md border-0 bg-black/[0.04] px-3 py-1.5 text-right font-mono text-[12px] outline-none dark:bg-white/[0.06]"
-            value={$config?.openCode?.version ?? 'latest'}
-            placeholder="latest"
+            value={$config?.openCode?.version ?? '1.0.3'}
+            placeholder="1.0.3"
             onchange={(event) =>
-              updateConfig('version', event.currentTarget.value.trim() || 'latest')}
+              updateConfig('version', event.currentTarget.value.trim() || '1.0.3')}
           />
         </label>
 
@@ -249,11 +241,6 @@
         <div class="flex justify-between">
           <span>{$i18n.t('common.version')}</span><span>{info?.version ?? '-'}</span>
         </div>
-        {#if info?.url}
-          <div class="mt-2 flex justify-between">
-            <span>URL</span><span class="font-mono">{info.url}</span>
-          </div>
-        {/if}
         {#if info?.pid}
           <div class="mt-2 flex justify-between">
             <span>PID</span><span class="font-mono">{info.pid}</span>
@@ -263,22 +250,58 @@
 
       <section class="flex items-center justify-between gap-4 py-4">
         <div>
-          <div class="text-[13px] opacity-70">{$i18n.t('settings.opencode.uninstall')}</div>
-          <div class="mt-0.5 text-[11px] opacity-30">
-            {$i18n.t('settings.opencode.uninstallDesc')}
-          </div>
+          <div class="text-[13px] opacity-70">卸载 PI 运行时</div>
+          <div class="mt-0.5 text-[11px] opacity-30">保留模型配置、扩展和会话记录。</div>
         </div>
         <button
           class="rounded-md border-0 bg-red-500/10 px-3 py-1.5 text-[12px] text-red-600 disabled:opacity-35 dark:text-red-300"
           disabled={action !== null}
           onclick={() => {
-            if (confirm($i18n.t('settings.opencode.uninstallConfirm'))) {
+            if (confirm('卸载 AuraPro 管理的 PI 运行时？')) {
               void runAction('uninstall', () => window.electronAPI.uninstallOpenCode())
             }
           }}
         >
           {action === 'uninstall' ? $i18n.t('common.uninstalling') : $i18n.t('common.uninstall')}
         </button>
+      </section>
+      <section class="space-y-3 py-4">
+        <div class="text-[13px] opacity-80">PI 扩展</div>
+        <div class="text-[11px] opacity-45">
+          安装成功后，在 WebUI 的 PI Agent
+          设置中执行功能检查。检查通过后再使用。已有会话需要重置后加载新扩展。
+        </div>
+        {#each extensions as extension (extension.id)}
+          <div class="rounded-lg border border-black/10 p-3 dark:border-white/10">
+            <div class="flex items-center justify-between gap-3">
+              <span class="text-[12px] font-medium">{extension.name}</span>
+              <button
+                class="rounded border px-2 py-1 text-[11px] disabled:opacity-40"
+                disabled={extensionBusy || action !== null}
+                onclick={async () => {
+                  extensionBusy = true
+                  error = ''
+                  try {
+                    extensions = await window.electronAPI.managePiExtension(
+                      extension.id,
+                      extension.installed ? 'remove' : 'install'
+                    )
+                  } catch (cause) {
+                    error = String(cause)
+                    extensions = await window.electronAPI.getPiExtensions()
+                  } finally {
+                    extensionBusy = false
+                    progress = ''
+                  }
+                }}>{extension.installed ? '移除' : '安装'}</button
+              >
+            </div>
+            <div class="mt-1 text-[11px] opacity-50">{extension.description}</div>
+            <div class="mt-1 break-all text-[11px] opacity-50">
+              {extension.state === 'not_installed' ? '未安装' : extension.detail}
+            </div>
+          </div>
+        {/each}
       </section>
     {/if}
   </div>

@@ -3,6 +3,7 @@ productName: AuraPro
 directories:
   buildResources: build
 files:
+  - '!**/.tmp-speech-*/**/*'
   - '!**/.vscode/*'
   - '!**/.idea/*'
   - '!**/.github/**/*'
@@ -15,6 +16,8 @@ files:
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 extraResources:
+  - from: resources/pi-aurapro.mjs
+    to: pi-aurapro.mjs
   - from: CHANGELOG.zh-CN.md
     to: CHANGELOG.zh-CN.md
   - from: data

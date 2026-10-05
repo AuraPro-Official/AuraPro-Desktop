@@ -234,7 +234,7 @@
               ? 'bg-red-400'
               : 'bg-black/15 dark:bg-white/20'}"
       ></div>
-      <span>OpenCode</span>
+      <span>PI Agent</span>
     </button>
   {/if}
 

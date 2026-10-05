@@ -112,9 +112,9 @@ export const getOpenWebUIDataPath = (): string => {
 export const getEpubConceptRuntimeFilePath = (): string =>
   path.join(getInstallDir(), 'epub-concept', 'desktop-llm-runtime.json')
 
-/** Private Desktop-to-WebUI handoff for the local OpenCode service. */
+/** Private Desktop-to-WebUI handoff for the PI RPC runtime. */
 export const getOpenCodeRuntimeFilePath = (): string =>
-  path.join(getInstallDir(), 'opencode', 'desktop-runtime.json')
+  path.join(getInstallDir(), 'pi', 'desktop-runtime.json')
 
 export const getLocalOpenWebUISourcePath = (): string | null => {
   const candidates = [
@@ -144,7 +144,7 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.9.47'
+export const AURAPRO_UI_TARGET_VERSION = '3.9.48'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
 export const AURAPRO_UI_LAST_VERSION = '3.9.3'
@@ -2435,6 +2435,7 @@ export interface AppConfig {
     extraArgs: string[]
   }
   sherpa: {
+    enabledLanguages?: string[]
     enabled: boolean
     port: number
     language: string
@@ -2516,7 +2517,7 @@ const DEFAULT_CONFIG: AppConfig = {
     port: 39484,
     cwd: '',
     password: '',
-    version: 'latest'
+    version: '1.0.3'
   },
   llamaCpp: {
     enabled: false,
@@ -2644,7 +2645,13 @@ const normalizeConfig = (config: AppConfig): AppConfig => {
     },
     openCode: {
       ...DEFAULT_CONFIG.openCode,
-      ...(config.openCode ?? {})
+      ...(config.openCode ?? {}),
+      version:
+        config.openCode?.version === 'latest' ||
+        !config.openCode?.version ||
+        !fs.existsSync(path.join(getInstallDir(), 'pi', 'install.json'))
+          ? '1.0.3'
+          : config.openCode.version
     },
     llamaCpp: {
       ...DEFAULT_CONFIG.llamaCpp,
@@ -2894,6 +2901,7 @@ export const resetApp = async (): Promise<ResetAppResult> => {
   await stopRuntimeProcesses(pythonDir, 'bundled Python')
   await stopRuntimeProcesses(path.join(installDir, 'llama.cpp'), 'llama.cpp')
   await stopRuntimeProcesses(path.join(installDir, 'opencode'), 'OpenCode')
+  await stopRuntimeProcesses(path.join(installDir, 'pi'), 'PI')
 
   const targets = [
     { label: 'Python runtime', path: pythonDir },
@@ -2902,6 +2910,7 @@ export const resetApp = async (): Promise<ResetAppResult> => {
     { label: 'downloaded models', path: path.join(installDir, 'models') },
     { label: 'Sherpa runtime files', path: path.join(installDir, 'sherpa') },
     { label: 'OpenCode runtime', path: path.join(installDir, 'opencode') },
+    { label: 'PI runtime', path: path.join(installDir, 'pi') },
     { label: 'service locks', path: path.join(userDataDir, 'locks') },
     { label: 'Python download', path: getPythonDownloadPath() },
     { label: 'partial Python download', path: `${getPythonDownloadPath()}.tmp` },

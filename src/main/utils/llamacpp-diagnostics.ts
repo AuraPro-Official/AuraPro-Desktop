@@ -26,7 +26,7 @@ import {
   inspectLlamaCppMtpLog,
   inspectLlamaCppMultimodalLog
 } from './llamacpp-log-diagnostics'
-import { getInstalledOpenCodeVersion, getOpenCodeServiceState } from './opencode'
+import { getInstalledOpenCodeVersion, getOpenCodeServiceState } from './pi-agent'
 import { getSherpaServiceState } from './sherpa'
 import { getOpenTerminalInfo } from './open-terminal'
 import { checkOptionalService, type OptionalServiceHealth } from './optional-service-health'
