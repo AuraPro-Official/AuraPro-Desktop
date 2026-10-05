@@ -21,6 +21,7 @@ import {
 
 import { downloadModel, isDownloadCancelled } from './huggingface'
 import { ServiceLock, isProcessAlive } from './service-lock'
+import { inferenceCoordinator } from './inference-coordinator'
 import { hasLlamaCppRuntimeAnomaly } from './llamacpp-log-diagnostics'
 import { scheduleLlamaCppVersionCleanup } from './cache-cleanup'
 import { normalizeKvCacheType, type KvCacheType } from './llamacpp-settings'
@@ -1942,6 +1943,11 @@ const startLlamaCppAttempt = async (
 
 export const startLlamaCpp = async (
   onStatus?: (status: string) => void
+): Promise<LlamaStartResult> =>
+  inferenceCoordinator.start('standard', () => startManagedLlamaCpp(onStatus))
+
+const startManagedLlamaCpp = async (
+  onStatus?: (status: string) => void
 ): Promise<LlamaStartResult> => {
   if (startPromise) {
     log.info('llama.cpp startup already in progress; reusing the active startup task')
@@ -1971,6 +1977,10 @@ type StopLlamaCppOptions = {
 }
 
 export const stopLlamaCpp = async (options: StopLlamaCppOptions = {}): Promise<void> => {
+  return inferenceCoordinator.stop('standard', () => stopManagedLlamaCpp(options))
+}
+
+const stopManagedLlamaCpp = async (options: StopLlamaCppOptions = {}): Promise<void> => {
   removeEpubConceptRuntimeDescriptor()
   const currentPid = pid
   if (ptyProcess) {
@@ -1997,7 +2007,7 @@ export const stopLlamaCpp = async (options: StopLlamaCppOptions = {}): Promise<v
       await terminateProcessTree(currentPid, true)
     }
     if (isPidRunning(currentPid)) {
-      log.error(`Failed to terminate llama-server PID ${currentPid}`)
+      throw new Error(`Failed to terminate llama-server PID ${currentPid}`)
     }
   }
 
@@ -2009,6 +2019,21 @@ export const stopLlamaCpp = async (options: StopLlamaCppOptions = {}): Promise<v
   if (!options.preserveLock) lock.release()
   intentionalStop = false
 }
+
+export const getManagedLlamaModelIds = (): string[] => {
+  const modelsDir = path.join(getInstallDir(), 'models')
+  const usedIds = new Set<string>()
+  return sortModelsForPreset(listLocalLlmModels(modelsDir)).map((model) =>
+    getPresetModelId(model, modelsDir, usedIds)
+  )
+}
+
+inferenceCoordinator.register('standard', {
+  start: async () => {
+    await startLlamaCppWithFallback()
+  },
+  stop: () => stopManagedLlamaCpp()
+})
 
 /**
  * Validate whether the tracked llama.cpp process is still alive.

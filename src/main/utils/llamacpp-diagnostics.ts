@@ -33,6 +33,9 @@ import { checkOptionalService, type OptionalServiceHealth } from './optional-ser
 import { getInstalledOfficialGlossaryVersion } from './official-glossaries'
 import { RepairFiles } from './repair-files'
 import { checkLlamaServiceHealth } from './llamacpp-health'
+import { checkStrataHealth, getStrataInfo } from './strata'
+import { inferenceCoordinator } from './inference-coordinator'
+import { useProDiagnostics } from './strata-models'
 
 export type LlamaDiagnosticSeverity = 'error' | 'warning' | 'info'
 export type LlamaRepairAction =
@@ -86,6 +89,7 @@ export interface LlamaDiagnosticReport {
     freeVramMb: number | null
   }
   runtime: {
+    name?: string
     health: 'healthy' | 'loading' | 'starting' | 'unresponsive' | 'stopped'
     status: string | null
     version: string | null
@@ -792,6 +796,74 @@ export const diagnoseLlamaCpp = async (
       }
     })
   )
+  const pro = await getStrataInfo().catch(() => null)
+  const standardBinary = getLlamaCppInfo().binaryPath
+  if (
+    useProDiagnostics(
+      inferenceCoordinator.current,
+      config.inferenceRuntime,
+      !!standardBinary && fs.existsSync(standardBinary),
+      !!pro?.installed
+    )
+  ) {
+    const state = await checkStrataHealth()
+    const issues: LlamaDiagnosticIssue[] = state.detail
+      ? [
+          {
+            id: 'pro-runtime-failed',
+            severity: 'error',
+            title: 'Pro runtime needs attention',
+            detail: state.detail,
+            repairable: false
+          }
+        ]
+      : []
+    return {
+      checkedAt: new Date().toISOString(),
+      trigger,
+      healthy: issues.length === 0,
+      fingerprint: createHash('sha256').update(`pro|${state.detail}`).digest('hex').slice(0, 16),
+      variant: `Pro (${state.installed?.backend ?? state.settings.backend})`,
+      recommendedVariant: state.installed?.backend ?? state.settings.backend,
+      system,
+      software,
+      hardware: {
+        nvidiaDetected: probe.detected,
+        gpuNames: probe.names.length ? probe.names : adapterNamesFromProbe(probe),
+        driverVersion: probe.driverVersion,
+        processOnGpu: null,
+        totalRamBytes: os.totalmem(),
+        freeRamBytes: os.freemem(),
+        totalVramMb: probe.totalVramMb,
+        freeVramMb: probe.freeVramMb
+      },
+      runtime: {
+        name: 'Pro_V1',
+        health: state.health,
+        status: state.status,
+        version: state.installed?.version ?? null,
+        binaryPath: null,
+        binaryPresent: !!state.installed,
+        acceleratorBackendPresent: !!state.installed,
+        cudaBackendPresent: state.installed?.backend === 'cuda',
+        cudaRuntimePresent: !!state.installed,
+        cudaDeviceCount: null,
+        offloadedLayers: null
+      },
+      models: {
+        total: state.models.filter((model) => model.installed).length,
+        invalid: 0,
+        partial: 0,
+        mtpEnabled: true,
+        mtpMissing: 0,
+        visionProjectorMissing: 0
+      },
+      issues,
+      evidence: [`Pro: ${state.installed?.version ?? 'not installed'}`, state.detail].filter(
+        Boolean
+      )
+    }
+  }
   const configuredVariant = normalizeVariant(config.llamaCpp?.variant)
   const recommendedVariant = recommendedVariantFor(probe)
   const variant = configuredVariant === 'auto' ? recommendedVariant : configuredVariant
@@ -1463,6 +1535,8 @@ const runLlamaCppRepair = async (
   onStatus?: (status: string) => void
 ): Promise<LlamaRepairResult> => {
   const initialReport = await diagnoseLlamaCpp('repair')
+  if (initialReport.runtime.name === 'Pro_V1')
+    return { actions: [], restartError: null, report: initialReport }
   const selected = initialReport.issues.filter(
     (issue) =>
       issue.repairable && (requestedIssueIds.length === 0 || requestedIssueIds.includes(issue.id))

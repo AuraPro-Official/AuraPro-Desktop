@@ -53,6 +53,7 @@
       freeVramMb: number | null
     }
     runtime: {
+      name?: string
       health?: 'healthy' | 'loading' | 'starting' | 'unresponsive' | 'stopped'
       status: string | null
       version: string | null
@@ -141,6 +142,7 @@
   const localizedIssueTitle = (issue: DiagnosticIssue): string => {
     if (!isChinese) return issue.title
     const titles: Record<string, string> = {
+      'pro-runtime-failed': '推理运行时 Pro 需要处理',
       'nvidia-not-found': '未检测到 NVIDIA 显卡',
       'llamacpp-service-unresponsive': 'llama.cpp 服务无响应',
       'llamacpp-probe-timeout': 'llama.cpp 自检超时',
@@ -513,7 +515,7 @@
                 {(report.hardware.totalVramMb / 1024).toFixed(1)} GB
               </dd>
             {/if}
-            <dt class="text-black/35 dark:text-white/35">{text('llama.cpp', 'llama.cpp')}</dt>
+            <dt class="text-black/35 dark:text-white/35">{report.runtime.name ?? 'llama.cpp'}</dt>
             <dd class="m-0 text-right font-mono text-black/65 dark:text-white/65">
               {report.runtime.version ?? text('未安装', 'Not installed')}
             </dd>

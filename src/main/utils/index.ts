@@ -4,6 +4,7 @@ import * as path from 'path'
 import net from 'net'
 import crypto from 'crypto'
 import { createGunzip } from 'zlib'
+import { getInferenceControlEnv } from './inference-control'
 import { pipeline } from 'stream/promises'
 
 import * as tar from 'tar'
@@ -143,7 +144,7 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.9.46'
+export const AURAPRO_UI_TARGET_VERSION = '3.9.47'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
 export const AURAPRO_UI_LAST_VERSION = '3.9.3'
@@ -2150,6 +2151,7 @@ export const startServer = async (
       commandArgs,
       pythonEnv({
         ...(configEnvVars ?? {}),
+        ...(await getInferenceControlEnv()),
         DATA_DIR: dataDir,
         GLOSSARY_PATH: path.join(dataDir, 'glossaries', 'personal.json'),
         WEBUI_SECRET_KEY: secretKey,
@@ -2388,6 +2390,7 @@ export interface AppConfig {
   dataVersion: number
   webuiDistributionMigrationVersion: number
   llamaParallelMigrationVersion: number
+  inferenceRuntime?: 'standard' | 'pro'
   defaultConnectionId: string | null
   connections: Connection[]
   runInBackground: boolean

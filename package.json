@@ -1,6 +1,6 @@
 {
   "name": "aurapro",
-  "version": "3.9.46",
+  "version": "3.9.47",
   "private": true,
   "license": "AGPL-3.0",
   "packageManager": "npm@12.0.1",
@@ -28,7 +28,8 @@
     "test:llamacpp-kv-cache": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/test-llamacpp-kv-cache.mjs",
     "test:optional-service-health": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/test-optional-service-health.mjs",
     "test:platform-support": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/test-platform-support.mjs",
-    "test:node": "npm run test:diagnostic-recovery && npm run test:llamacpp-releases && npm run test:llamacpp-kv-cache && npm run test:optional-service-health && npm run test:platform-support",
+    "test:inference-pro": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/test-inference-coordinator.mjs scripts/test-strata-models.mjs",
+    "test:node": "npm run test:diagnostic-recovery && npm run test:llamacpp-releases && npm run test:llamacpp-kv-cache && npm run test:optional-service-health && npm run test:platform-support && npm run test:inference-pro",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "svelte-check": "svelte-check --tsconfig ./tsconfig.json",
     "typecheck": "npm run typecheck:node && npm run svelte-check",

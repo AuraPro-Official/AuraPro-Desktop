@@ -1,6 +1,8 @@
 import { ipcRenderer, contextBridge } from 'electron'
 import type { IpcRendererEvent } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
+import type { getStrataInfo } from '../main/utils/strata'
+import type { StrataSettings } from '../main/utils/strata-models'
 
 // ─── PTY MessagePort ────────────────────────────────────
 // MessagePorts stay in the preload (cannot cross contextBridge).
@@ -213,6 +215,18 @@ const api = {
   startLlamaCpp: () => ipcRenderer.invoke('llamacpp:start'),
   stopLlamaCpp: () => ipcRenderer.invoke('llamacpp:stop'),
   getLlamaCppInfo: () => ipcRenderer.invoke('llamacpp:info'),
+  getStrataInfo: (): ReturnType<typeof getStrataInfo> => ipcRenderer.invoke('strata:info'),
+  installStrata: (update = false, settings?: StrataSettings): Promise<void> =>
+    ipcRenderer.invoke('strata:install', update, settings),
+  checkStrataUpdate: (): Promise<{ version: string; source: string }> =>
+    ipcRenderer.invoke('strata:check-update'),
+  prepareStrataModel: (settings: StrataSettings): Promise<void> =>
+    ipcRenderer.invoke('strata:prepare', settings),
+  saveStrataSettings: (settings: StrataSettings): Promise<void> =>
+    ipcRenderer.invoke('strata:settings', settings),
+  startStrata: (): Promise<void> => ipcRenderer.invoke('strata:start'),
+  stopStrata: (): Promise<void> => ipcRenderer.invoke('strata:stop'),
+  cancelStrataOperation: (): Promise<void> => ipcRenderer.invoke('strata:cancel'),
   getLlamaCppLogs: () => ipcRenderer.invoke('llamacpp:logs'),
   connectLlamaCppPty: (onOutput: (data: string) => void) => {
     lsCppPtyOutputCallback = onOutput

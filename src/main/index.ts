@@ -1,4 +1,16 @@
 import {
+  getStrataInfo,
+  installStrata,
+  checkStrataUpdate,
+  prepareStrataModel,
+  saveStrataSettings,
+  startStrata,
+  stopStrata,
+  cancelStrataOperation
+} from './utils/strata'
+import { closeInferenceControl } from './utils/inference-control'
+import { inferenceCoordinator } from './utils/inference-coordinator'
+import {
   app,
   shell,
   session,
@@ -1543,6 +1555,7 @@ const runAutomaticLlamaDiagnostic = async (
   trigger: string,
   startupError?: string
 ): Promise<void> => {
+  if (inferenceCoordinator.current === 'pro') return
   try {
     const report = await diagnoseLlamaCpp(trigger, startupError)
     if (report.healthy) {
@@ -1723,6 +1736,7 @@ const syncGlossaryLlamaSettingsFromConfig = async () => {
 }
 
 const restartLlamaCppAfterRuntimeSettingsChange = async (reason: string) => {
+  if (inferenceCoordinator.current === 'pro') return
   const info = getLlamaCppInfo()
   const config = await getConfig()
   const shouldRestart = config?.llamaCpp?.enabled || info.status === 'started'
@@ -1858,6 +1872,7 @@ const startGlossaryCtxSizeSync = async () => {
 }
 
 const reloadLlamaCppModelsAfterDownload = async (filepath: string | null | undefined) => {
+  if (inferenceCoordinator.current === 'pro') return
   if (!filepath || path.extname(filepath).toLowerCase() !== '.gguf') return
 
   const info = getLlamaCppInfo()
@@ -1964,7 +1979,16 @@ const startConfiguredServices = async (defaultConnection?: Connection): Promise<
     )
   }
 
-  if (!isQuiting && CONFIG?.llamaCpp?.enabled) {
+  if (!isQuiting && CONFIG?.inferenceRuntime === 'pro') {
+    startupTasks.push(
+      startStrata().catch((error) => {
+        log.error('Auto-start Pro failed:', error)
+        sendToRenderer('error', { message: `Pro_V1: ${getErrorMessage(error)}` })
+      })
+    )
+  }
+
+  if (!isQuiting && CONFIG?.inferenceRuntime !== 'pro' && CONFIG?.llamaCpp?.enabled) {
     startupTasks.push(
       (async () => {
         try {
@@ -3331,7 +3355,10 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
           // Refresh model list after backend registers the endpoint
           setTimeout(() => sendToRenderer('models:refresh'), 1000)
         }
-        await setConfig({ llamaCpp: { ...CONFIG?.llamaCpp, enabled: true } })
+        await setConfig({
+          inferenceRuntime: 'standard',
+          llamaCpp: { ...CONFIG?.llamaCpp, enabled: true }
+        })
         CONFIG = await getConfig()
         scheduleAutomaticLlamaDiagnostic('startup-check', undefined, 4000)
         return result
@@ -3370,6 +3397,20 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     })
 
     ipcMain.handle('llamacpp:info', () => getLlamaCppInfo())
+    ipcMain.handle('strata:info', () => getStrataInfo())
+    ipcMain.handle('strata:install', (_event, update = false, settings) =>
+      installStrata(update === true, settings)
+    )
+    ipcMain.handle('strata:check-update', () => checkStrataUpdate())
+    ipcMain.handle('strata:prepare', (_event, settings) => prepareStrataModel(settings))
+    ipcMain.handle('strata:settings', (_event, settings) => saveStrataSettings(settings))
+    ipcMain.handle('strata:start', async () => {
+      await startStrata()
+      await setConfig({ inferenceRuntime: 'pro' })
+      CONFIG = await getConfig()
+    })
+    ipcMain.handle('strata:stop', () => stopStrata())
+    ipcMain.handle('strata:cancel', () => cancelStrataOperation())
     ipcMain.handle('llamacpp:logs', () => getLlamaCppLog())
     ipcMain.handle('llamacpp:pty:connect', () => connectLlamaCppPtyPort())
     ipcMain.handle('llamacpp:diagnose', async () => {
@@ -3868,6 +3909,12 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     quitCleanupInProgress = true
     isQuiting = true
     try {
+      await cancelStrataOperation().catch((error) =>
+        log.error('Failed to cancel Pro operation:', error)
+      )
+      await closeInferenceControl().catch((error) =>
+        log.error('Failed to close inference control:', error)
+      )
       await stopSherpa()
       await stopLlamaCpp()
       await stopOpenTerminal()

@@ -22,6 +22,7 @@
     terminal: () => import('./Settings/OpenTerminal.svelte'),
     opencode: () => import('./Settings/OpenCode.svelte'),
     inference: () => import('./Settings/InferenceRuntime.svelte'),
+    'inference-pro': () => import('./Settings/InferencePro.svelte'),
     speech: () => import('./Settings/Speech.svelte'),
     models: () => import('./Settings/Models.svelte'),
     glossaries: () => import('./Settings/OfficialGlossaries.svelte'),
@@ -84,6 +85,11 @@
       id: 'speech',
       label: () => $i18n.t('settings.tabs.speech'),
       icon: 'M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 003-3V5.25a3 3 0 10-6 0v7.5a3 3 0 003 3z'
+    },
+    {
+      id: 'inference-pro',
+      label: () => $i18n.t('settings.pro.title', { defaultValue: 'Inference Runtime Pro' }),
+      icon: 'M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z'
     },
     {
       id: 'models',

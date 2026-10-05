@@ -42,6 +42,7 @@
   type ModelCapability = 'image' | 'video' | 'audio'
 
   interface AuraModel {
+    proModelId?: string
     name: string
     sizeStr: string
     repo: string
@@ -169,6 +170,9 @@
   }
 
   let selectedModel = $state<AuraModel>(AURA_MODELS[0])
+  let proModels = $state<AuraModel[]>([])
+  let proLogs = $state('')
+  let proSettings: Awaited<ReturnType<typeof window.electronAPI.getStrataInfo>>['settings']
   let downloadProgress = $state<number | null>(null)
   let coreProgress = $state(0)
   let downloadItemsByKey = $state<Record<string, DownloadItem>>({})
@@ -288,7 +292,7 @@
   const isHighOrAboveModel = (model: AuraModel) =>
     model.name.startsWith('high_') || model.name.startsWith('high-')
   const visibleModels = () =>
-    AURA_MODELS.filter((model) => {
+    [...AURA_MODELS, ...proModels].filter((model) => {
       if (platform !== 'darwin' && model.macOnly) return false
       if (platform !== 'darwin' && (systemMemGB ?? 0) < 24 && isHighOrAboveModel(model)) {
         const speedOverride =
@@ -553,6 +557,11 @@
 
   const prepareAutomaticRepair = async (stage: InstallationStage): Promise<void> => {
     try {
+      if (selectedModel.proModelId && (stage === 'model-download' || stage === 'llama-runtime')) {
+        await window.electronAPI.cancelStrataOperation()
+        await window.electronAPI.stopStrata()
+        return
+      }
       if (stage === 'model-download') {
         await window.electronAPI.cancelHfDownload()
       } else if (stage === 'llama-runtime') {
@@ -582,7 +591,11 @@
     installFailure = report
     errorMsg = report.technicalDetail
 
-    if (report.autoRepairable && (autoRepairAttempts[repairKey] ?? 0) < 1) {
+    if (
+      !selectedModel.proModelId &&
+      report.autoRepairable &&
+      (autoRepairAttempts[repairKey] ?? 0) < 1
+    ) {
       autoRepairAttempts = {
         ...autoRepairAttempts,
         [repairKey]: (autoRepairAttempts[repairKey] ?? 0) + 1
@@ -653,6 +666,25 @@
     }
 
     await detectHardware()
+    const pro = await window.electronAPI.getStrataInfo().catch((error) => {
+      console.warn('Unable to read Pro setup options:', error)
+      return null
+    })
+    if (pro?.supported) {
+      proSettings = pro.settings
+      proModels = pro.models.map((model) => ({
+        name: `Pro_V1 · ${model.name}`,
+        sizeStr: `~${model.gb} GB`,
+        repo: '',
+        hfRepo: '',
+        filename: model.id,
+        mmprojRepo: '',
+        mmprojFilename: '',
+        sizeBytes: (model.gb + 12) * 1024 ** 3,
+        ramInfo: `${model.ramInfo} · Windows/Linux x64${model.experimental ? ' · Experimental' : ''}`,
+        proModelId: model.id
+      }))
+    }
 
     window.electronAPI.onData((data: MainEvent) => {
       if (data.type === 'status:install') {
@@ -729,7 +761,11 @@
         configUpdates.installDir = installDir
       }
       if (llamaCppVariant) {
-        configUpdates.llamaCpp = { ...(current.llamaCpp || {}), variant: llamaCppVariant }
+        configUpdates.llamaCpp = {
+          ...(current.llamaCpp || {}),
+          enabled: false,
+          variant: llamaCppVariant
+        }
       }
 
       if (Object.keys(configUpdates).length > 0) {
@@ -879,12 +915,44 @@
       }
 
       const current = await window.electronAPI.getConfig()
+      if (selectedModel.proModelId) {
+        await window.electronAPI.setConfig({
+          inferenceRuntime: 'pro',
+          llamaCpp: { ...current.llamaCpp, enabled: false }
+        })
+        config.set(await window.electronAPI.getConfig())
+        currentInstallStage = 'model-download'
+        installStatus = 'Pro_V1: installing runtime and preparing model...'
+        const settings = { ...proSettings, model: selectedModel.proModelId }
+        proLogs = ''
+        const progressTimer = setInterval(() => {
+          void window.electronAPI
+            .getStrataInfo()
+            .then((info) => {
+              proLogs = info.logs
+            })
+            .catch(() => {})
+        }, 1500)
+        try {
+          const pro = await window.electronAPI.getStrataInfo()
+          if (!pro.installed) await window.electronAPI.installStrata(false, settings)
+          await window.electronAPI.prepareStrataModel(settings)
+          installStatus = 'Pro_V1: starting model...'
+          await window.electronAPI.startStrata()
+        } finally {
+          clearInterval(progressTimer)
+        }
+        phase = 'done'
+        await window.electronAPI.connectTo('local')
+        onComplete()
+        return
+      }
       const llamaCpp = {
         ...(current.llamaCpp || {}),
         mtpEnabled: false,
         multimodalEnabled: true
       }
-      await window.electronAPI.setConfig({ llamaCpp })
+      await window.electronAPI.setConfig({ llamaCpp, inferenceRuntime: 'standard' })
       config.set(await window.electronAPI.getConfig())
 
       const modelKey = selectedModel.name.replace('.gguf', '')
@@ -1355,7 +1423,7 @@
                     {model.sizeStr} · {model.ramInfo}{model.macOnly ? ' · Mac only' : ''}
                   </span>
                   <div class="mt-1 flex flex-wrap gap-1">
-                    {#each modelCapabilities(model.name) as capability (capability)}
+                    {#each model.proModelId ? [] : modelCapabilities(model.name) as capability (capability)}
                       <span
                         class="rounded border border-black/[0.06] px-1.5 py-px text-[9px] opacity-30 dark:border-white/[0.08]"
                       >
@@ -1415,7 +1483,7 @@
 
       <button
         class="w-fit inline-flex items-center gap-2 bg-white px-8 py-2.5 text-black text-[13px] transition hover:bg-gray-100 border-none"
-        onclick={startModelDownload}
+        onclick={() => startModelDownload()}
       >
         Download & Finish Setup
         <svg
@@ -1433,7 +1501,20 @@
     <div class="flex flex-col items-center gap-5 py-10" in:fade={{ duration: 250 }}>
       <img src={logoImage} class="size-12 rounded-full dark:invert animate-pulse" alt="logo" />
 
-      {#if modelLoadingPhase}
+      {#if selectedModel.proModelId}
+        <div class="w-full min-w-0 space-y-3">
+          <div class="text-sm opacity-70 break-words">{installStatus}</div>
+          <pre
+            class="max-h-64 overflow-auto whitespace-pre-wrap break-all text-[11px] opacity-50">{proLogs}</pre>
+          <button
+            type="button"
+            class="text-sm opacity-60"
+            onclick={() => window.electronAPI.cancelStrataOperation()}
+          >
+            {$i18n.t('settings.pro.cancel')}
+          </button>
+        </div>
+      {:else if modelLoadingPhase}
         <!-- All files downloaded — model service is starting -->
         <div
           class="flex w-full max-w-[360px] flex-col items-center gap-4 text-center"
