@@ -144,7 +144,7 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.9.49'
+export const AURAPRO_UI_TARGET_VERSION = '3.10.0'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
 export const AURAPRO_UI_LAST_VERSION = '3.9.3'
@@ -642,8 +642,10 @@ export type DownloadProgressCallback = (
 export const downloadFileWithProgress = async (
   url: string,
   downloadPath: string,
-  onProgress?: DownloadProgressCallback | null
+  onProgress?: DownloadProgressCallback | null,
+  signal?: AbortSignal
 ): Promise<string> => {
+  signal?.throwIfAborted()
   const tmpPath = `${downloadPath}.tmp`
   let resumeBytes = 0
   let writeStream: fs.WriteStream | null = null
@@ -665,7 +667,7 @@ export const downloadFileWithProgress = async (
       log.info(`Resuming download from byte ${resumeBytes}: ${url}`)
     }
 
-    let response = await fetch(url, { headers })
+    let response = await fetch(url, { headers, signal })
     if (response?.status === 416 && resumeBytes > 0) {
       const totalFromRange = parseContentRangeTotal(response.headers.get('content-range'))
       if (totalFromRange > 0 && resumeBytes >= totalFromRange) {
@@ -678,7 +680,7 @@ export const downloadFileWithProgress = async (
         fs.unlinkSync(tmpPath)
       } catch {}
       resumeBytes = 0
-      response = await fetch(url)
+      response = await fetch(url, { signal })
     }
 
     if (!response || !response.ok) {
@@ -707,6 +709,7 @@ export const downloadFileWithProgress = async (
     writeStream = fs.createWriteStream(tmpPath, { flags: resumeBytes > 0 ? 'a' : 'w' })
 
     while (true) {
+      signal?.throwIfAborted()
       const { done, value } = await reader.read()
       if (done) break
       writeStream.write(Buffer.from(value))
@@ -731,6 +734,7 @@ export const downloadFileWithProgress = async (
     })
     writeStream = null
 
+    signal?.throwIfAborted()
     fs.renameSync(tmpPath, downloadPath)
     log.info('File downloaded successfully:', downloadPath)
     return downloadPath

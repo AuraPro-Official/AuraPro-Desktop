@@ -2,6 +2,8 @@
   import { onMount } from 'svelte'
   import i18n from '../../../i18n'
 
+  let { onInstalled, startup = false }: { onInstalled?: () => void; startup?: boolean } = $props()
+
   interface GlossaryStatus {
     installed: boolean
     version: string | null
@@ -97,6 +99,7 @@
         ? $i18n.t('settings.glossaries.installComplete', { version: result.version })
         : $i18n.t('settings.glossaries.upToDate', { version: result.version })
       accessCode = ''
+      if (status.installed) onInstalled?.()
     } catch (error: unknown) {
       errorMessage = getErrorMessage(error, $i18n.t('settings.glossaries.installFailed'))
     } finally {
@@ -127,55 +130,56 @@
   <div class="py-6 text-[12px] opacity-20 text-center">{$i18n.t('common.loading')}</div>
 {:else}
   <div class="flex flex-col divide-y divide-black/[0.04] dark:divide-white/[0.04]">
-    <div class="py-4">
-      <div class="flex items-center justify-between gap-4">
-        <div>
-          <div class="flex items-center gap-2">
-            <div class="text-[13px] opacity-70">{$i18n.t('settings.glossaries.package')}</div>
-            <span
-              class="rounded-[4px] bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium text-amber-700 dark:bg-amber-400/10 dark:text-amber-300/80"
-            >
-              {$i18n.t('settings.glossaries.betaBadge')}
+    {#if !startup}
+      <div class="py-4">
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <div class="flex items-center gap-2">
+              <div class="text-[13px] opacity-70">{$i18n.t('settings.glossaries.package')}</div>
+              <span
+                class="rounded-[4px] bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium text-amber-700 dark:bg-amber-400/10 dark:text-amber-300/80"
+              >
+                {$i18n.t('settings.glossaries.betaBadge')}
+              </span>
+            </div>
+            <div class="text-[11px] opacity-25 mt-0.5">
+              {$i18n.t('settings.glossaries.packageDesc')}
+            </div>
+          </div>
+          <div class="flex items-center gap-1.5 shrink-0">
+            <div
+              class="w-1.5 h-1.5 rounded-full {status.installed && status.healthy
+                ? 'bg-emerald-400'
+                : status.installed
+                  ? 'bg-amber-400'
+                  : 'bg-black/15 dark:bg-white/20'}"
+            ></div>
+            <span class="text-[12px] opacity-50">
+              {#if status.installed}
+                v{status.version} · {status.fileCount}
+              {:else}
+                {$i18n.t('settings.glossaries.notInstalled')}
+              {/if}
             </span>
           </div>
-          <div class="text-[11px] opacity-25 mt-0.5">
-            {$i18n.t('settings.glossaries.packageDesc')}
+        </div>
+
+        {#if status.installed && !status.healthy}
+          <div class="mt-3 text-[11px] text-amber-600 dark:text-amber-400/80 leading-relaxed">
+            {$i18n.t('settings.glossaries.damaged', {
+              count: status.missingFiles.length + status.corruptedFiles.length
+            })}
           </div>
-        </div>
-        <div class="flex items-center gap-1.5 shrink-0">
-          <div
-            class="w-1.5 h-1.5 rounded-full {status.installed && status.healthy
-              ? 'bg-emerald-400'
-              : status.installed
-                ? 'bg-amber-400'
-                : 'bg-black/15 dark:bg-white/20'}"
-          ></div>
-          <span class="text-[12px] opacity-50">
-            {#if status.installed}
-              v{status.version} · {status.fileCount}
-            {:else}
-              {$i18n.t('settings.glossaries.notInstalled')}
-            {/if}
-          </span>
-        </div>
+        {/if}
+        {#if status.installed && status.updateAvailable && status.latestVersion}
+          <div class="mt-3 text-[11px] text-amber-600 dark:text-amber-400/80 leading-relaxed">
+            {$i18n.t('settings.glossaries.updateAvailable', {
+              version: status.latestVersion
+            })}
+          </div>
+        {/if}
       </div>
-
-      {#if status.installed && !status.healthy}
-        <div class="mt-3 text-[11px] text-amber-600 dark:text-amber-400/80 leading-relaxed">
-          {$i18n.t('settings.glossaries.damaged', {
-            count: status.missingFiles.length + status.corruptedFiles.length
-          })}
-        </div>
-      {/if}
-      {#if status.installed && status.updateAvailable && status.latestVersion}
-        <div class="mt-3 text-[11px] text-amber-600 dark:text-amber-400/80 leading-relaxed">
-          {$i18n.t('settings.glossaries.updateAvailable', {
-            version: status.latestVersion
-          })}
-        </div>
-      {/if}
-    </div>
-
+    {/if}
     <div class="py-4">
       <label class="block text-[13px] opacity-70 mb-1.5" for="official-glossary-access-code">
         {$i18n.t('settings.glossaries.password')}

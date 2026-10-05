@@ -139,6 +139,10 @@ const api = {
 
   // Official glossary package
   getOfficialGlossaryStatus: () => ipcRenderer.invoke('official-glossaries:status'),
+  getOfficialGlossaryStartupPending: (): Promise<boolean> =>
+    ipcRenderer.invoke('official-glossaries:startup-pending'),
+  dismissOfficialGlossaryStartup: (): Promise<boolean> =>
+    ipcRenderer.invoke('official-glossaries:startup-dismiss'),
   installOfficialGlossaries: (password: string) =>
     ipcRenderer.invoke('official-glossaries:install', password),
   uninstallOfficialGlossaries: () => ipcRenderer.invoke('official-glossaries:uninstall'),

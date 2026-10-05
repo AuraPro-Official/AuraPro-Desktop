@@ -1,4 +1,5 @@
 {
+  "settings.pro.customContext": "自定义",
   "settings.pro.progress.preparing": "正在准备 Pro",
   "settings.pro.progress.source": "正在下载 Pro 源码",
   "settings.pro.progress.extracting": "正在解压 Pro",

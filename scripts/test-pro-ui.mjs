@@ -60,8 +60,17 @@ server.middlewares.use('/__pro_test', async (_req, res) => {
   window.electronAPI = {
     getStrataInfo: async () => structuredClone(info),
     saveStrataSettings: async (settings) => { window.calls.push(['save',settings]); info.settings=settings; },
-    prepareStrataModel: async (settings) => { window.calls.push(['prepare',settings]); },
-    installStrata: async () => {
+    prepareStrataModel: async (settings) => {
+      window.calls.push(['prepare',settings]); info.settings=settings;
+      if (new URLSearchParams(location.search).has('fail')) throw new Error('Pro model preparation failed');
+      if (new URLSearchParams(location.search).has('cancel')) {
+        info.status='installing'; info.progress={stage:'model',detail:'Downloading selected model'};
+        await new Promise(resolve => window.finishPrepare = resolve);
+        info.status='stopped';
+      }
+    },
+    installStrata: async (update, settings) => {
+      window.calls.push(['install', update, settings]);
       info.status='installing';
       info.progress={stage:'source',detail:'',downloadedBytes:64*1024**2,totalBytes:128*1024**2};
       await new Promise(resolve=>setTimeout(resolve,2500));
@@ -69,8 +78,8 @@ server.middlewares.use('/__pro_test', async (_req, res) => {
       await new Promise(resolve=>setTimeout(resolve,2500));
       info.progress={stage:'complete',detail:''}; info.status='stopped';
     }, checkStrataUpdate: async () => ({ version:'test-next' }),
-    startStrata: async () => { info.status='started'; }, stopStrata: async () => { info.status='stopped'; },
-    cancelStrataOperation: async () => {}
+    startStrata: async () => { window.calls.push(['start',info.settings]); info.status='started'; }, stopStrata: async () => { info.status='stopped'; },
+    cancelStrataOperation: async () => { window.calls.push(['cancel']); window.finishPrepare?.(); }
   };
   initI18n();
   mount(Pro, {target:document.getElementById('app')});
@@ -372,7 +381,7 @@ try {
     if (theme === 'dark') await page.evaluate(() => document.documentElement.classList.add('dark'))
     await page.locator('select').first().waitFor()
     await page.waitForTimeout(600)
-    assert.equal(await page.locator('select').count(), 3)
+    assert.equal(await page.locator('select').count(), 4)
     assert.equal(await page.locator('select').nth(1).locator('option').count(), 8)
     assert.equal(
       await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth),
@@ -386,13 +395,29 @@ try {
       false
     )
     if (locale === 'zh-CN') {
+      const presets = page.getByRole('combobox', { name: '上下文长度', exact: true })
+      for (const [label, value] of [
+        ['32K', '32768'],
+        ['64K', '65536'],
+        ['128K', '131072'],
+        ['256K', '262144']
+      ]) {
+        await presets.selectOption({ label })
+        assert.equal(await page.locator('input[type=number]').inputValue(), value)
+      }
       await page.locator('input[type=number]').fill('16384')
+      assert.equal(await presets.inputValue(), 'custom')
       await page.getByRole('button', { name: '图片输入', exact: true }).click()
       await page.getByRole('button', { name: '保存', exact: true }).click()
       assert.equal(await page.evaluate(() => window.calls[0][1].context), 16384)
       assert.equal(await page.evaluate(() => window.calls[0][1].vision), true)
+      await page.locator('select').nth(1).selectOption('qwen-q2_0')
       await page.getByRole('button', { name: '启动', exact: true }).click()
       await page.getByRole('button', { name: '停止', exact: true }).waitFor()
+      assert.equal(
+        await page.evaluate(() => window.calls.find((call) => call[0] === 'prepare')[1].model),
+        'qwen-q2_0'
+      )
       if (!theme) {
         await page.getByRole('button', { name: '安装 / 修复', exact: true }).click()
         await page.getByText('正在下载 Pro 源码', { exact: true }).waitFor()
@@ -406,6 +431,12 @@ try {
           .getByRole('button', { name: '安装 / 修复', exact: true })
           .waitFor({ state: 'visible' })
         await page.waitForFunction(() => !document.querySelector('fieldset').disabled)
+        await page.getByRole('button', { name: '停止', exact: true }).waitFor()
+        assert.deepEqual(await page.evaluate(() => window.calls.slice(-3).map((call) => call[0])), [
+          'install',
+          'prepare',
+          'start'
+        ])
       }
     }
     assert.deepEqual(errors, [])
@@ -432,6 +463,28 @@ try {
     await page.getByRole('button', { name: '保存', exact: true }).click()
     assert.equal(await page.evaluate(() => window.calls[0][1].backend), 'cpu')
     await page.screenshot({ path: path.join(screenshots, 'pro-macos.png'), fullPage: true })
+    await page.close()
+  }
+  {
+    const page = await browser.newPage({ viewport: { width: 640, height: 1000 } })
+    await page.goto(`http://127.0.0.1:${port}/__pro_test?lang=zh-CN&fail=1`)
+    await page.getByRole('button', { name: '启动', exact: true }).click()
+    await page.getByRole('alert').filter({ hasText: 'Pro model preparation failed' }).waitFor()
+    assert.equal(await page.evaluate(() => window.calls.some((call) => call[0] === 'start')), false)
+    assert.ok(
+      await page.getByRole('alert').evaluate((element) => element.getBoundingClientRect().top < 500)
+    )
+    await page.close()
+  }
+  {
+    const page = await browser.newPage({ viewport: { width: 640, height: 1000 } })
+    await page.goto(`http://127.0.0.1:${port}/__pro_test?lang=zh-CN&cancel=1`)
+    await page.getByRole('button', { name: '启动', exact: true }).click()
+    await page.waitForFunction(() => window.finishPrepare)
+    await page.getByRole('button', { name: '取消准备', exact: true }).click()
+    await page.waitForFunction(() => window.calls.some((call) => call[0] === 'cancel'))
+    await page.getByRole('button', { name: '启动', exact: true }).waitFor()
+    assert.equal(await page.evaluate(() => window.calls.some((call) => call[0] === 'start')), false)
     await page.close()
   }
   console.log('Pro UI smoke passed: four locales, narrow/desktop layouts, save and start controls.')

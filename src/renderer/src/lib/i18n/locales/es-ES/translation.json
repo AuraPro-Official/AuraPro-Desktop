@@ -1,4 +1,5 @@
 {
+  "settings.pro.customContext": "Personalizado",
   "settings.pro.progress.preparing": "Preparando Pro",
   "settings.pro.progress.source": "Descargando el código fuente de Pro",
   "settings.pro.progress.extracting": "Extrayendo Pro",

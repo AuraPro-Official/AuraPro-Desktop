@@ -683,8 +683,10 @@ const downloadAndExtractReleaseAsset = async (
   extractDir: string,
   isZip: boolean,
   onStatus?: (status: string) => void,
-  keepArchive = false
+  keepArchive = false,
+  signal?: AbortSignal
 ): Promise<void> => {
+  signal?.throwIfAborted()
   fs.mkdirSync(downloadDir, { recursive: true })
   fs.mkdirSync(extractDir, { recursive: true })
 
@@ -701,10 +703,12 @@ const downloadAndExtractReleaseAsset = async (
           `Downloading... ${progress.toFixed(0)}% ` +
             `(${formatDownloadBytes(downloaded)}/${formatDownloadBytes(total)} · ${formatDownloadSpeed(bytesPerSecond)} · ETA ${formatDownloadEta(etaSeconds)})`
         )
-      }
+      },
+      signal
     )
   }
 
+  signal?.throwIfAborted()
   onStatus?.(`Extracting ${asset.name}...`)
   log.info(`Extracting ${downloadPath} to ${extractDir}`)
 
@@ -1234,8 +1238,9 @@ const ensureAutoMtp = async (
 
 const setupLlamaCppBinary = async (
   onStatus?: (status: string) => void,
-  isolated?: { version: string; variant: string; cacheDir: string }
+  isolated?: { version: string; variant: string; cacheDir: string; signal?: AbortSignal }
 ): Promise<string> => {
+  isolated?.signal?.throwIfAborted()
   const config = isolated
     ? {
         llamaCpp: {
@@ -1311,6 +1316,7 @@ const setupLlamaCppBinary = async (
     try {
       initialReleaseData = await resolveLlamaRelease(version, variant)
     } catch (error) {
+      isolated?.signal?.throwIfAborted()
       if (version === 'latest') {
         try {
           log.warn(
@@ -1392,7 +1398,15 @@ const setupLlamaCppBinary = async (
       let resultBinary = findBinary(versionDir)
       if (!resultBinary) {
         fs.writeFileSync(path.join(versionDir, INSTALL_PENDING_FILENAME), variant, 'utf8')
-        await downloadAndExtractReleaseAsset(asset, versionDir, versionDir, isZip, onStatus)
+        await downloadAndExtractReleaseAsset(
+          asset,
+          versionDir,
+          versionDir,
+          isZip,
+          onStatus,
+          false,
+          isolated?.signal
+        )
         resultBinary = findBinary(versionDir)
       }
 
@@ -1428,6 +1442,7 @@ const setupLlamaCppBinary = async (
     }
 
     for (const candidateTag of candidates) {
+      isolated?.signal?.throwIfAborted()
       try {
         const releaseData =
           candidateTag === initialTag
@@ -1462,6 +1477,7 @@ const setupLlamaCppBinary = async (
         }
         return resultBinary
       } catch (error) {
+        isolated?.signal?.throwIfAborted()
         if (error instanceof CudaRuntimeInstallError) throw error
         const message = describeGithubError(error)
         failures.push(`${candidateTag}: ${message}`)

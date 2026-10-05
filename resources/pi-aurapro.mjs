@@ -3,16 +3,47 @@ import fs from 'node:fs'
 
 // This extension runs in Pi; every dialog is forwarded over RPC to WebUI.
 export default async function (pi, factories = []) {
+  if (process.env.AURAPRO_WEBUI_MODEL) {
+    const model = JSON.parse(process.env.AURAPRO_WEBUI_MODEL)
+    pi.registerProvider('aurapro-webui', {
+      baseUrl: model.baseUrl,
+      apiKey: model.apiKey,
+      api: 'openai-completions',
+      models: [
+        {
+          id: model.id,
+          name: model.id,
+          reasoning: false,
+          input: ['text', 'image'],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: model.contextWindow ?? 32768,
+          maxTokens: model.maxTokens ?? 8192
+        }
+      ]
+    })
+  }
   const tools = new Map()
   const commands = new Map()
   const startup = []
   let initialized = false
+  let browserAttempted = false
   const adapter = new Proxy(pi, {
     get(target, key) {
       if (key === 'registerTool')
         return (tool) => {
           tools.set(tool.name, tool)
-          target.registerTool(tool)
+          target.registerTool({
+            ...tool,
+            execute: async (...args) => {
+              const ctx = args[4]
+              await initialize(ctx)
+              if (tool.name.startsWith('browser_') && !browserAttempted) {
+                browserAttempted = true
+                await commands.get('browser')?.handler('connect 9222', ctx)
+              }
+              return tool.execute(...args)
+            }
+          })
         }
       if (key === 'registerCommand')
         return (name, command) => {
@@ -20,18 +51,26 @@ export default async function (pi, factories = []) {
           target.registerCommand(name, {
             ...command,
             handler: async (args, ctx) => {
-              if (process.env.AURAPRO_PI_PLAN === '1') {
-                ctx.ui.notify('Extension commands are unavailable in plan mode.', 'warning')
-                return
+              try {
+                if (process.env.AURAPRO_PI_PLAN === '1') {
+                  ctx.ui.notify('Extension commands are unavailable in plan mode.', 'warning')
+                  return
+                }
+                await initialize(ctx)
+                if (
+                  name === 'browser' &&
+                  !['status', ''].includes(args.trim()) &&
+                  !(await ctx.ui.confirm('PI · browser', args))
+                )
+                  return
+                return await command.handler(args, ctx)
+              } catch (error) {
+                ctx.ui.notify(
+                  `PI · /${name}: ${error.message || 'Extension command failed.'}`,
+                  'error'
+                )
+                throw error
               }
-              await initialize(ctx)
-              if (
-                name === 'browser' &&
-                !['status', ''].includes(args.trim()) &&
-                !(await ctx.ui.confirm('PI · browser', args))
-              )
-                return
-              return command.handler(args, ctx)
             }
           })
         }
@@ -63,8 +102,6 @@ export default async function (pi, factories = []) {
   pi.on('before_agent_start', async (_event, ctx) => {
     if (!initialized) {
       await initialize(ctx)
-      if (process.env.AURAPRO_PI_PLAN !== '1' && commands.has('browser'))
-        await commands.get('browser').handler('connect 9222', ctx)
     }
   })
   pi.registerCommand('aurapro-check', {

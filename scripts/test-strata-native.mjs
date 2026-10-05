@@ -14,6 +14,7 @@ const require = createRequire(import.meta.url)
 test('Mac Pro installs, downloads, starts, diagnoses and stops without global llama config', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aurapro-native-pro-'))
   const calls = []
+  let downloadMode = 'success'
   let registered
   const exe = path.join(dir, 'strata', 'llama.cpp', 'b12000', 'llama-server')
   const coordinator = {
@@ -82,6 +83,11 @@ test('Mac Pro installs, downloads, starts, diagnoses and stops without global ll
             .nativeProFiles('qwen-iq2_xs')
             .files.map((rfilename) => ({ rfilename, lfs: { size: 8 } }))
         })
+      if (downloadMode === 'failed') return new Response('unavailable', { status: 503 })
+      if (downloadMode === 'cancelled') {
+        await exports.cancelStrataOperation()
+        throw new Error('download cancelled')
+      }
       return new Response(Buffer.from('GGUFtest'))
     }
   }
@@ -135,6 +141,19 @@ test('Mac Pro installs, downloads, starts, diagnoses and stops without global ll
       false
     )
     await assert.rejects(exports.startStrata(), /Prepare the selected Pro model/)
+    downloadMode = 'failed'
+    await assert.rejects(exports.prepareStrataModel(info.settings), /download failed: 503/)
+    assert.equal((await exports.getStrataInfo()).status, 'failed')
+    downloadMode = 'cancelled'
+    await assert.rejects(exports.prepareStrataModel(info.settings), /download cancelled/)
+    assert.equal((await exports.getStrataInfo()).progress.stage, 'cancelled')
+    assert.equal((await exports.getStrataInfo()).status, 'stopped')
+    downloadMode = 'success'
+    await exports.prepareStrataModel(info.settings)
+    assert.equal(
+      (await exports.getStrataInfo()).models.find((model) => model.id === 'qwen-iq2_xs').installed,
+      true
+    )
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }

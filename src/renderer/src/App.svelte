@@ -12,6 +12,7 @@
     webuiStartup
   } from './lib/stores'
   import Main from './lib/components/Main.svelte'
+  import OfficialGlossaryStartup from './lib/components/Setup/OfficialGlossaryStartup.svelte'
 
   let themeMediaQuery: MediaQueryList
   let themeChangeHandler: ((event: MediaQueryListEvent) => void) | null = null
@@ -120,6 +121,7 @@
 </script>
 
 <main class="w-full h-full bg-[#f5f5f7] dark:bg-[#0a0a0a]">
+  <OfficialGlossaryStartup />
   {#if bootstrapped}
     <Main />
   {/if}

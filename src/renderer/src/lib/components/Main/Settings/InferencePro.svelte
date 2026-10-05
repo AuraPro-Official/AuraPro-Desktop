@@ -16,6 +16,8 @@
   let busy = $state(false)
   let error = $state('')
   let latest = $state('')
+  const contextPresets = [32768, 65536, 131072, 262144]
+  let workflow: AbortController | null = null
   const t = (key: string) => $i18n.t(`settings.pro.${key}`)
   const refresh = async () => {
     info = await window.electronAPI.getStrataInfo()
@@ -30,6 +32,31 @@
       error = String(err)
     } finally {
       busy = false
+    }
+  }
+  const startSelected = async (install = false, update = false) => {
+    const selected = $state.snapshot(settings)
+    const controller = new AbortController()
+    workflow = controller
+    try {
+      if (install || !info?.installed) {
+        await window.electronAPI.installStrata(update, selected)
+        controller.signal.throwIfAborted()
+      }
+      await window.electronAPI.prepareStrataModel(selected)
+      controller.signal.throwIfAborted()
+      await window.electronAPI.startStrata()
+      controller.signal.throwIfAborted()
+    } finally {
+      if (workflow === controller) workflow = null
+    }
+  }
+  const cancel = async () => {
+    workflow?.abort()
+    try {
+      await window.electronAPI.cancelStrataOperation()
+    } catch (err) {
+      error = String(err)
     }
   }
   onMount(() => {
@@ -91,25 +118,24 @@
       <div class="flex flex-wrap gap-2">
         <button
           class={commandClass}
-          disabled={working || !info.installed}
+          disabled={working || !info.supported}
           onclick={() =>
             action(() =>
-              info?.status === 'started'
-                ? window.electronAPI.stopStrata()
-                : window.electronAPI.startStrata()
+              info?.status === 'started' ? window.electronAPI.stopStrata() : startSelected()
             )}>{t(info.status === 'started' ? 'stop' : 'start')}</button
         >
         <button
           class={commandClass}
           disabled={working || !info.supported}
-          onclick={() =>
-            action(() => window.electronAPI.installStrata(false, $state.snapshot(settings)))}
-          >{t('install')}</button
+          onclick={() => action(() => startSelected(true))}>{t('install')}</button
         >
       </div>
       {#if working || (info.progress && info.status === 'failed')}
         <ProProgress progress={info.progress ?? { stage: 'preparing', detail: '' }} />
       {/if}
+      {#if error || info.error}<p role="alert" class="mt-3 break-words text-[11px] text-red-400/60">
+          {error || info.error}
+        </p>{/if}
     </div>
     {#if !info.supported}<p class="py-4 text-[11px] opacity-25">{t('unsupported')}</p>{/if}
     <div class="py-4 flex flex-wrap items-center justify-between gap-3">
@@ -127,8 +153,7 @@
           <button
             class={commandClass}
             disabled={working}
-            onclick={() =>
-              action(() => window.electronAPI.installStrata(true, $state.snapshot(settings)))}
+            onclick={() => action(() => startSelected(true, true))}
           >
             {t('update')}
             {latest}
@@ -160,16 +185,33 @@
             >{/each}</select
         ></label
       >
-      <label class="py-4 flex flex-wrap items-center justify-between gap-3"
-        ><span class="text-[13px] opacity-70">{t('context')}</span><input
-          class="{controlClass} w-24 text-right"
-          type="number"
-          min="2048"
-          max="262144"
-          step="1"
-          bind:value={settings.context}
-        /></label
-      >
+      <div class="py-4 flex flex-wrap items-center justify-between gap-3">
+        <span class="text-[13px] opacity-70">{t('context')}</span>
+        <div class="flex flex-wrap items-center gap-2">
+          <select
+            class={controlClass}
+            aria-label={t('context')}
+            value={contextPresets.includes(settings.context) ? String(settings.context) : 'custom'}
+            onchange={(event) => {
+              if (event.currentTarget.value !== 'custom')
+                settings.context = Number(event.currentTarget.value)
+            }}
+          >
+            {#each contextPresets as size (size)}<option value={String(size)}>{size / 1024}K</option
+              >{/each}
+            <option value="custom" disabled>{t('customContext')}</option>
+          </select>
+          <input
+            class="{controlClass} w-24 text-right"
+            aria-label={t('customContext')}
+            type="number"
+            min="2048"
+            max="262144"
+            step="1"
+            bind:value={settings.context}
+          />
+        </div>
+      </div>
       <label class="py-4 flex flex-wrap items-center justify-between gap-3"
         ><span class="text-[13px] opacity-70">{t('cache')}</span><select
           class={controlClass}
@@ -231,14 +273,9 @@
         </div>
       {/each}
     </div>
-    {#if info.status === 'installing' || info.status === 'starting'}<button
-        class="{commandClass} self-start my-4"
-        onclick={() => action(() => window.electronAPI.cancelStrataOperation())}
+    {#if working}<button class="{commandClass} self-start my-4" onclick={cancel}
         >{t('cancel')}</button
       >{/if}
-    {#if error || info.error}<p role="alert" class="py-4 break-words text-[11px] text-red-400/60">
-        {error || info.error}
-      </p>{/if}
     {#if info.logs}<details class="py-4">
         <summary class="cursor-pointer text-[12px] opacity-40 hover:opacity-70">{t('logs')}</summary
         >

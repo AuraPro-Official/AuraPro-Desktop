@@ -368,7 +368,7 @@ export async function installStrata(update = false, requested?: StrataSettings):
         (detail) => {
           if (progress) progress.detail = detail
         },
-        { version, variant: 'auto', cacheDir: path.join(root(), 'llama.cpp') }
+        { version, variant: 'auto', cacheDir: path.join(root(), 'llama.cpp'), signal }
       )
       signal.throwIfAborted()
       writeJson(path.join(root(), 'installed.json'), {
