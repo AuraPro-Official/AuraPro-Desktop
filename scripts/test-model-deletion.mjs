@@ -48,7 +48,7 @@ for (const shared of [false, true]) {
         name === './index'
           ? { getInstallDir: () => dir }
           : name === 'electron-log'
-            ? { info() {}, warn() {}, error() {} }
+            ? { info: () => undefined, warn: () => undefined, error: () => undefined }
             : require(name)
     })
     try {
