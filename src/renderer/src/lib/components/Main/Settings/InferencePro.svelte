@@ -14,6 +14,7 @@
     vision: false
   })
   let busy = $state(false)
+  let uninstalling = $state(false)
   let error = $state('')
   let latest = $state('')
   const contextPresets = [32768, 65536, 131072, 262144]
@@ -130,7 +131,7 @@
           onclick={() => action(() => startSelected(true))}>{t('install')}</button
         >
       </div>
-      {#if working || (info.progress && info.status === 'failed')}
+      {#if !uninstalling && (working || (info.progress && info.status === 'failed'))}
         <ProProgress progress={info.progress ?? { stage: 'preparing', detail: '' }} />
       {/if}
       {#if error || info.error}<p role="alert" class="mt-3 break-words text-[11px] text-red-400/60">
@@ -270,10 +271,45 @@
           <span class="shrink-0 text-[11px] opacity-30"
             >{t(model.installed ? 'ready' : 'notInstalled')}</span
           >
+          {#if model.removable || model.installed}
+            <button
+              class={commandClass}
+              disabled={working}
+              onclick={() => {
+                if (confirm(t('deleteModelConfirm').replace('{{model}}', model.name)))
+                  void action(() => window.electronAPI.deleteStrataModel(model.id))
+              }}>{t('deleteModel')}</button
+            >
+          {/if}
         </div>
       {/each}
     </div>
-    {#if working}<button class="{commandClass} self-start my-4" onclick={cancel}
+    {#if info.installed}
+      <div class="py-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div class="text-[13px] opacity-70">{t('uninstall')}</div>
+          <div class="text-[11px] opacity-25 mt-0.5">{t('uninstallDesc')}</div>
+        </div>
+        <button
+          class={commandClass}
+          disabled={working}
+          onclick={async () => {
+            if (!confirm(t('uninstallConfirm'))) return
+            uninstalling = true
+            try {
+              await action(() => window.electronAPI.uninstallStrata())
+              if (info && !info.installed) {
+                settings = { ...info.settings }
+                latest = ''
+              }
+            } finally {
+              uninstalling = false
+            }
+          }}>{$i18n.t(uninstalling ? 'common.uninstalling' : 'common.uninstall')}</button
+        >
+      </div>
+    {/if}
+    {#if working && !uninstalling}<button class="{commandClass} self-start my-4" onclick={cancel}
         >{t('cancel')}</button
       >{/if}
     {#if info.logs}<details class="py-4">

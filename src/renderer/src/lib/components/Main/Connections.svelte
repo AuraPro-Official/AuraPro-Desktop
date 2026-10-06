@@ -512,7 +512,8 @@
               resolvedOptions.selectedModel.mmprojFilename,
               undefined,
               undefined,
-              'mmproj-F16.gguf',
+              resolvedOptions.selectedModel.mmprojFilename.split('/').pop() ??
+                resolvedOptions.selectedModel.mmprojFilename,
               modelKey,
               modelKey
             )

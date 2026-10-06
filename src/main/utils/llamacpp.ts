@@ -789,8 +789,11 @@ const ensureBundledCudaRuntime = async (
 const getMmprojPrefixForModel = (modelName: string): string => {
   const base = path.basename(modelName, '.gguf').toLowerCase()
   if (base.startsWith('high-code')) return 'high-code'
+  if (base.startsWith('lowest_v2')) return 'lowest-v2'
   if (base.startsWith('lowest')) return 'lowest'
   if (base.startsWith('low')) return 'low'
+  if (base.startsWith('medium_q4_v2')) return 'medium-v2'
+  if (base === 'high_q4_2') return 'high-2'
   if (base.startsWith('medium_q4')) return 'medium-12b'
   if (base.startsWith('medium_iq2')) return 'medium-26b'
   if (base.startsWith('high')) return 'high'
@@ -799,6 +802,9 @@ const getMmprojPrefixForModel = (modelName: string): string => {
 
 const getMmprojRepoForPrefix = (prefix: string): string | null => {
   if (prefix === 'high-code') return 'unsloth/Qwen3.8-27B-GGUF'
+  if (prefix === 'lowest-v2') return 'IndexTeam/Index-Translate-2B-GGUF'
+  if (prefix === 'medium-v2') return 'IndexTeam/Index-Translate-9B-GGUF'
+  if (prefix === 'high-2') return 'IndexTeam/Index-Translate-35B-A3B-preview-GGUF'
   if (prefix === 'lowest') return 'unsloth/gemma-4-E2B-it-qat-GGUF'
   if (prefix === 'low') return 'unsloth/gemma-4-E4B-it-qat-GGUF'
   if (prefix === 'medium-12b') return 'unsloth/gemma-4-12B-it-qat-GGUF'
@@ -827,11 +833,14 @@ const getMtpFilenameForPrefix = (prefix: string): string | null => {
 }
 
 const AURA_MODEL_FILENAMES = [
+  'lowest_V2.gguf',
   'lowest.gguf',
   'low_E4.gguf',
   'medium_IQ2.gguf',
   'medium_Q4.gguf',
+  'medium_Q4_V2.gguf',
   'high_Q4.gguf',
+  'high_Q4_2.gguf',
   'high-code_IQ4.gguf',
   'high-code_Q4.gguf'
 ]
@@ -944,7 +953,13 @@ const getPresetModelId = (
 
 const findModelMmproj = (modelPath: string): string | null => {
   const dir = path.dirname(modelPath)
-  const preferred = [path.join(dir, 'mmproj-F16.gguf'), path.join(dir, 'mmproj.gguf')]
+  const preferred = [
+    path.join(dir, 'Index-Translate-35B-A3B-preview.mmproj-Q8_0.gguf'),
+    path.join(dir, 'Index-Translate-9B.mmproj-Q8_0.gguf'),
+    path.join(dir, 'Index-Translate-2B.mmproj-Q8_0.gguf'),
+    path.join(dir, 'mmproj-F16.gguf'),
+    path.join(dir, 'mmproj.gguf')
+  ]
 
   for (const candidate of preferred) {
     if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate
@@ -955,9 +970,7 @@ const findModelMmproj = (modelPath: string): string | null => {
       .readdirSync(dir, { withFileTypes: true })
       .filter((entry) => entry.isFile())
       .map((entry) => entry.name)
-      .find(
-        (name) => name.toLowerCase().startsWith('mmproj') && name.toLowerCase().endsWith('.gguf')
-      )
+      .find((name) => name.toLowerCase().includes('mmproj') && name.toLowerCase().endsWith('.gguf'))
 
     return fallback ? path.join(dir, fallback) : null
   } catch {
@@ -968,6 +981,7 @@ const findModelMmproj = (modelPath: string): string | null => {
 const findModelDraft = (modelPath: string): string | null => {
   const dir = path.dirname(modelPath)
   const mtpPrefix = getMmprojPrefixForModel(path.basename(modelPath))
+  if (['lowest-v2', 'medium-v2', 'high-2'].includes(mtpPrefix)) return null
   const mtpFilename = getMtpFilenameForPrefix(mtpPrefix)
   const preferred = mtpFilename ? [path.join(dir, path.basename(mtpFilename))] : []
 
@@ -1135,8 +1149,7 @@ const ensureAutoMmproj = async (
   const modelFiles = listLocalLlmModels(modelsDir)
   for (const model of modelFiles) {
     const dir = path.dirname(model.filepath)
-    const candidates = [path.join(dir, 'mmproj-F16.gguf'), path.join(dir, 'mmproj.gguf')]
-    if (candidates.some((candidate) => fs.existsSync(candidate))) continue
+    if (findModelMmproj(model.filepath)) continue
 
     const mmprojPrefix = getMmprojPrefixForModel(path.basename(model.filepath))
     const repo = hasInternalMtpSupport(model.filepath)
@@ -1144,8 +1157,15 @@ const ensureAutoMmproj = async (
       : getMmprojRepoForPrefix(mmprojPrefix)
     if (!repo) continue
 
-    if (isDownloadCancelled(repo, 'mmproj-F16.gguf')) continue
-    const saveAs = 'mmproj-F16.gguf'
+    const saveAs =
+      mmprojPrefix === 'lowest-v2'
+        ? 'Index-Translate-2B.mmproj-Q8_0.gguf'
+        : mmprojPrefix === 'medium-v2'
+          ? 'Index-Translate-9B.mmproj-Q8_0.gguf'
+          : mmprojPrefix === 'high-2'
+            ? 'Index-Translate-35B-A3B-preview.mmproj-Q8_0.gguf'
+            : 'mmproj-F16.gguf'
+    if (isDownloadCancelled(repo, saveAs)) continue
     const relativeDir = path.relative(modelsDir, dir)
     const subDir =
       relativeDir && relativeDir !== '.' && !relativeDir.startsWith('..') ? relativeDir : undefined
@@ -1155,7 +1175,7 @@ const ensureAutoMmproj = async (
       onStatus?.(`Downloading vision projector for ${modelName}...`)
       const downloaded = await downloadModel(
         repo,
-        'mmproj-F16.gguf',
+        saveAs,
         (progress) => {
           if (progress.totalBytes > 0) {
             onStatus?.(

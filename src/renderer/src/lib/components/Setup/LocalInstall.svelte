@@ -84,16 +84,14 @@
 
   const AURA_MODELS: AuraModel[] = [
     {
-      name: 'lowest.gguf',
-      sizeStr: '~3GB',
+      name: 'lowest_V2.gguf',
+      sizeStr: '~2GB',
       repo: 'AuraPro',
-      hfRepo: 'unsloth/gemma-4-E2B-it-qat-GGUF',
-      filename: 'gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf',
-      mmprojRepo: 'unsloth/gemma-4-E2B-it-qat-GGUF',
-      mmprojFilename: 'mmproj-F16.gguf',
-      mtpRepo: 'unsloth/gemma-4-E2B-it-qat-GGUF',
-      mtpFilename: 'mtp-gemma-4-E2B-it.gguf',
-      sizeBytes: 3 * 1024 * 1024 * 1024,
+      hfRepo: 'IndexTeam/Index-Translate-2B-GGUF',
+      filename: 'Index-Translate-2B.Q8_0.gguf',
+      mmprojRepo: 'IndexTeam/Index-Translate-2B-GGUF',
+      mmprojFilename: 'Index-Translate-2B.mmproj-Q8_0.gguf',
+      sizeBytes: 2_076_674_560,
       ramInfo: 'RAM 8G+'
     },
     {
@@ -123,6 +121,17 @@
       ramInfo: 'RAM+VRAM 24G+4G / UMA 18G'
     },
     {
+      name: 'medium_Q4_V2.gguf',
+      sizeStr: '~5.8GB',
+      repo: 'AuraPro',
+      hfRepo: 'IndexTeam/Index-Translate-9B-GGUF',
+      filename: 'Index-Translate-9B.Q4_K_M.gguf',
+      mmprojRepo: 'IndexTeam/Index-Translate-9B-GGUF',
+      mmprojFilename: 'Index-Translate-9B.mmproj-Q8_0.gguf',
+      sizeBytes: 5_780_090_304,
+      ramInfo: 'RAM+VRAM 16G+8G / UMA 10G'
+    },
+    {
       name: 'medium_Q4.gguf',
       sizeStr: '~7GB',
       repo: 'AuraPro',
@@ -149,6 +158,17 @@
       ramInfo: 'RAM+VRAM 32G+4G / UMA 24G'
     },
     {
+      name: 'high_Q4_2.gguf',
+      sizeStr: '~21.7GB',
+      repo: 'AuraPro',
+      hfRepo: 'IndexTeam/Index-Translate-35B-A3B-preview-GGUF',
+      filename: 'Index-Translate-35B-A3B-preview.Q4_K_M.gguf',
+      mmprojRepo: 'IndexTeam/Index-Translate-35B-A3B-preview-GGUF',
+      mmprojFilename: 'Index-Translate-35B-A3B-preview.mmproj-Q8_0.gguf',
+      sizeBytes: 21_713_462_400,
+      ramInfo: 'RAM+VRAM 32G+6G / UMA 32G'
+    },
+    {
       name: 'high-code_IQ4.gguf',
       sizeStr: '~14GB',
       repo: 'AuraPro',
@@ -163,7 +183,7 @@
     }
   ]
 
-  const AUDIO_CAPABLE_MODELS = new Set(['lowest.gguf', 'low_E4.gguf', 'medium_Q4.gguf'])
+  const AUDIO_CAPABLE_MODELS = new Set(['low_E4.gguf', 'medium_Q4.gguf'])
   const modelCapabilities = (modelName: string): ModelCapability[] => {
     const capabilities: ModelCapability[] = ['image', 'video']
     if (AUDIO_CAPABLE_MODELS.has(modelName)) capabilities.push('audio')
@@ -301,7 +321,7 @@
         const speedOverride =
           modelPreference === 'speed' &&
           ((model.name === 'high_Q4.gguf' && dedicatedVramGB >= 12) ||
-            (model.name === 'medium_Q4.gguf' && dedicatedVramGB >= 8))
+            (model.name === 'medium_Q4_V2.gguf' && dedicatedVramGB >= 8))
         if (!speedOverride) return false
       }
       return true
@@ -312,13 +332,13 @@
     const mem = systemMemGB ?? 8
     if (platform === 'darwin') {
       if (!isAppleSiliconMac())
-        return mem >= 16 ? modelByName('low_E4.gguf') : modelByName('lowest.gguf')
+        return mem >= 16 ? modelByName('low_E4.gguf') : modelByName('lowest_V2.gguf')
       if (mem >= 20) return modelByName('high_Q4.gguf')
-      if (mem >= 10) return modelByName('medium_Q4.gguf')
+      if (mem >= 10) return modelByName('medium_Q4_V2.gguf')
       return modelByName('low_E4.gguf')
     }
 
-    if (mem < 15) return modelByName('lowest.gguf')
+    if (mem < 15) return modelByName('lowest_V2.gguf')
     if (mem > 48) return modelByName('high_Q4.gguf')
     if (mem > 31 && dedicatedVramGB >= 4) return modelByName('high_Q4.gguf')
     if (mem >= 24 && dedicatedVramGB >= 4) return modelByName('medium_IQ2.gguf')
@@ -330,7 +350,7 @@
     if (platform === 'darwin') {
       if (!isAppleSiliconMac()) {
         if (modelPreference === 'speed')
-          return mem >= 24 ? modelByName('low_E4.gguf') : modelByName('lowest.gguf')
+          return mem >= 24 ? modelByName('low_E4.gguf') : modelByName('lowest_V2.gguf')
         return qualityRecommendation()
       }
       if (modelPreference === 'speed') {
@@ -344,8 +364,8 @@
     if (modelPreference === 'speed') {
       if (dedicatedVramGB >= 12) return modelByName('high_Q4.gguf')
       if (mem > 31 && dedicatedVramGB >= 4) return modelByName('high_Q4.gguf')
-      if (dedicatedVramGB >= 8) return modelByName('medium_Q4.gguf')
-      if (mem < 15) return modelByName('lowest.gguf')
+      if (dedicatedVramGB >= 8) return modelByName('medium_Q4_V2.gguf')
+      if (mem < 15) return modelByName('lowest_V2.gguf')
       if (mem >= 24 && dedicatedVramGB >= 4) return modelByName('medium_IQ2.gguf')
       return modelByName('low_E4.gguf')
     }
@@ -977,7 +997,7 @@
               selectedModel.mmprojFilename,
               undefined,
               undefined,
-              'mmproj-F16.gguf',
+              selectedModel.mmprojFilename.split('/').pop() ?? selectedModel.mmprojFilename,
               modelKey,
               modelKey
             )

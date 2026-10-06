@@ -7,6 +7,8 @@ import {
   saveStrataSettings,
   startStrata,
   stopStrata,
+  uninstallStrata,
+  deleteStrataModel,
   cancelStrataOperation
 } from './utils/strata'
 import { closeInferenceControl } from './utils/inference-control'
@@ -3511,6 +3513,8 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
       CONFIG = await getConfig()
     })
     ipcMain.handle('strata:stop', () => stopStrata())
+    ipcMain.handle('strata:uninstall', () => uninstallStrata())
+    ipcMain.handle('strata:model:delete', (_event, modelId: string) => deleteStrataModel(modelId))
     ipcMain.handle('strata:cancel', () => cancelStrataOperation())
     ipcMain.handle('llamacpp:logs', () => getLlamaCppLog())
     ipcMain.handle('llamacpp:pty:connect', () => connectLlamaCppPtyPort())

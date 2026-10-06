@@ -686,22 +686,73 @@ export const deleteModel = (repo: string, filename: string): boolean => {
   const filepath = path.isAbsolute(model.filepath)
     ? model.filepath
     : path.join(installDir, model.filepath)
+  const repoDir = path.dirname(filepath)
+  const cacheDir = path.resolve(getHfCacheDir())
+  const relative = path.relative(cacheDir, path.resolve(filepath))
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    log.error(`[huggingface] Refusing to delete a model outside the cache: ${filepath}`)
+    return false
+  }
+  let parent = path.resolve(repoDir)
+  while (parent === cacheDir || parent.startsWith(cacheDir + path.sep)) {
+    if (fs.existsSync(parent) && fs.lstatSync(parent).isSymbolicLink()) return false
+    if (parent === cacheDir) break
+    parent = path.dirname(parent)
+  }
+  const deletedPaths = new Set([path.normalize(filepath)])
+  if (
+    [...activeDownloads.values()].some(
+      (download) =>
+        path.normalize(download.destPath) === path.normalize(filepath) ||
+        path.normalize(path.dirname(download.destPath)) === path.normalize(repoDir)
+    )
+  )
+    return false
 
   try {
+    // Attachments belong to the model directory, not the upstream HF repository.
+    // A directory with another main model may still need its shared attachments.
+    if (isGgufModel(model) && path.resolve(repoDir) !== cacheDir && fs.existsSync(repoDir)) {
+      const entries = fs.readdirSync(repoDir, { withFileTypes: true })
+      const hasOtherModel = entries.some((entry) => {
+        const name = entry.name.replace(/\.tmp$/, '')
+        return (
+          entry.isFile() &&
+          name.toLowerCase().endsWith('.gguf') &&
+          !isVisionProjector(name) &&
+          !isMtpDraftModel(name) &&
+          path.normalize(path.join(repoDir, name)) !== path.normalize(filepath)
+        )
+      })
+      if (!hasOtherModel) {
+        for (const entry of entries) {
+          const name = entry.name.replace(/\.tmp$/, '')
+          if (
+            entry.isFile() &&
+            name.toLowerCase().endsWith('.gguf') &&
+            (isVisionProjector(name) || isMtpDraftModel(name))
+          ) {
+            const attachment = path.join(repoDir, entry.name)
+            fs.unlinkSync(attachment)
+            deletedPaths.add(path.normalize(attachment))
+          }
+        }
+      }
+    }
     if (fs.existsSync(filepath)) {
       fs.unlinkSync(filepath)
     }
+    if (fs.existsSync(`${filepath}.tmp`)) fs.unlinkSync(`${filepath}.tmp`)
   } catch (e) {
     log.error(`[huggingface] Failed to delete ${filepath}:`, e)
     return false
   }
 
   // Remove from manifest
-  const updated = manifest.filter((m) => !(m.repo === repo && m.filename === filename))
+  const updated = manifest.filter((m) => !deletedPaths.has(normalizeModelPath(m, installDir)))
   writeManifest(updated)
 
   // Clean up empty repo dir if it was in a subfolder
-  const repoDir = path.dirname(filepath)
   try {
     const remaining = fs.readdirSync(repoDir)
     if (remaining.length === 0 && repoDir !== getHfCacheDir()) {

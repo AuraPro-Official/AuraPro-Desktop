@@ -32,7 +32,7 @@ const fixture = {
   models: STRATA_MODELS.map((model) => ({
     ...model,
     ramInfo: strataHardwareRecommendation(model),
-    installed: false,
+    installed: true,
     experimental: model.family === 'unsloth'
   }))
 }
@@ -79,6 +79,8 @@ server.middlewares.use('/__pro_test', async (_req, res) => {
       info.progress={stage:'complete',detail:''}; info.status='stopped';
     }, checkStrataUpdate: async () => ({ version:'test-next' }),
     startStrata: async () => { window.calls.push(['start',info.settings]); info.status='started'; }, stopStrata: async () => { info.status='stopped'; },
+    uninstallStrata: async () => { window.calls.push(['uninstall']); info.installed=null; info.status='stopped'; info.progress=null; },
+    deleteStrataModel: async (id) => { window.calls.push(['delete',id]); info.models.find(model=>model.id===id).installed=false; info.status='stopped'; },
     cancelStrataOperation: async () => { window.calls.push(['cancel']); window.finishPrepare?.(); }
   };
   initI18n();
@@ -395,6 +397,14 @@ try {
       false
     )
     if (locale === 'zh-CN') {
+      const deleteModel = page.getByRole('button', { name: '删除模型', exact: true }).first()
+      page.once('dialog', (dialog) => dialog.accept())
+      await deleteModel.click()
+      await page.waitForFunction(() => window.calls.some((call) => call[0] === 'delete'))
+      assert.equal(
+        await page.evaluate(() => window.calls.find((call) => call[0] === 'delete')[1]),
+        'qwen-q2_0'
+      )
       const presets = page.getByRole('combobox', { name: '上下文长度', exact: true })
       for (const [label, value] of [
         ['32K', '32768'],
@@ -409,8 +419,14 @@ try {
       assert.equal(await presets.inputValue(), 'custom')
       await page.getByRole('button', { name: '图片输入', exact: true }).click()
       await page.getByRole('button', { name: '保存', exact: true }).click()
-      assert.equal(await page.evaluate(() => window.calls[0][1].context), 16384)
-      assert.equal(await page.evaluate(() => window.calls[0][1].vision), true)
+      assert.equal(
+        await page.evaluate(() => window.calls.find((call) => call[0] === 'save')[1].context),
+        16384
+      )
+      assert.equal(
+        await page.evaluate(() => window.calls.find((call) => call[0] === 'save')[1].vision),
+        true
+      )
       await page.locator('select').nth(1).selectOption('qwen-q2_0')
       await page.getByRole('button', { name: '启动', exact: true }).click()
       await page.getByRole('button', { name: '停止', exact: true }).waitFor()
@@ -444,6 +460,25 @@ try {
       path: path.join(screenshots, `${locale}-${width}${theme ? `-${theme}` : ''}.png`),
       fullPage: true
     })
+    if (locale === 'zh-CN') {
+      const uninstall = page.getByRole('button', { name: '卸载', exact: true })
+      page.once('dialog', (dialog) => dialog.dismiss())
+      await uninstall.click()
+      assert.equal(
+        await page.evaluate(() => window.calls.some((call) => call[0] === 'uninstall')),
+        false
+      )
+      page.once('dialog', (dialog) => {
+        assert.match(dialog.message(), /将删除所有 Pro 模型/)
+        return dialog.accept()
+      })
+      await uninstall.click()
+      await uninstall.waitFor({ state: 'detached' })
+      assert.equal(
+        await page.evaluate(() => window.calls.filter((call) => call[0] === 'uninstall').length),
+        1
+      )
+    }
     await page.close()
   }
   {

@@ -42,16 +42,14 @@
 
   const AURA_MODELS: AuraModel[] = [
     {
-      name: 'lowest.gguf',
-      sizeStr: '~3GB',
+      name: 'lowest_V2.gguf',
+      sizeStr: '~2GB',
       repo: 'AuraPro',
-      hfRepo: 'unsloth/gemma-4-E2B-it-qat-GGUF',
-      filename: 'gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf',
-      mmprojRepo: 'unsloth/gemma-4-E2B-it-qat-GGUF',
-      mmprojFilename: 'mmproj-F16.gguf',
-      mtpRepo: 'unsloth/gemma-4-E2B-it-qat-GGUF',
-      mtpFilename: 'mtp-gemma-4-E2B-it.gguf',
-      sizeBytes: 3 * 1024 * 1024 * 1024,
+      hfRepo: 'IndexTeam/Index-Translate-2B-GGUF',
+      filename: 'Index-Translate-2B.Q8_0.gguf',
+      mmprojRepo: 'IndexTeam/Index-Translate-2B-GGUF',
+      mmprojFilename: 'Index-Translate-2B.mmproj-Q8_0.gguf',
+      sizeBytes: 2_076_674_560,
       ramInfo: 'RAM 8G+'
     },
     {
@@ -81,6 +79,17 @@
       ramInfo: 'RAM+VRAM 24G+4G / UMA 18G'
     },
     {
+      name: 'medium_Q4_V2.gguf',
+      sizeStr: '~5.8GB',
+      repo: 'AuraPro',
+      hfRepo: 'IndexTeam/Index-Translate-9B-GGUF',
+      filename: 'Index-Translate-9B.Q4_K_M.gguf',
+      mmprojRepo: 'IndexTeam/Index-Translate-9B-GGUF',
+      mmprojFilename: 'Index-Translate-9B.mmproj-Q8_0.gguf',
+      sizeBytes: 5_780_090_304,
+      ramInfo: 'RAM+VRAM 16G+8G / UMA 10G'
+    },
+    {
       name: 'medium_Q4.gguf',
       sizeStr: '~7GB',
       repo: 'AuraPro',
@@ -107,6 +116,17 @@
       ramInfo: 'RAM+VRAM 32G+4G / UMA 24G'
     },
     {
+      name: 'high_Q4_2.gguf',
+      sizeStr: '~21.7GB',
+      repo: 'AuraPro',
+      hfRepo: 'IndexTeam/Index-Translate-35B-A3B-preview-GGUF',
+      filename: 'Index-Translate-35B-A3B-preview.Q4_K_M.gguf',
+      mmprojRepo: 'IndexTeam/Index-Translate-35B-A3B-preview-GGUF',
+      mmprojFilename: 'Index-Translate-35B-A3B-preview.mmproj-Q8_0.gguf',
+      sizeBytes: 21_713_462_400,
+      ramInfo: 'RAM+VRAM 32G+6G / UMA 32G'
+    },
+    {
       name: 'high-code_IQ4.gguf',
       sizeStr: '~14GB',
       repo: 'AuraPro',
@@ -121,7 +141,7 @@
     }
   ]
 
-  const AUDIO_CAPABLE_MODELS = new Set(['lowest.gguf', 'low_E4.gguf', 'medium_Q4.gguf'])
+  const AUDIO_CAPABLE_MODELS = new Set(['low_E4.gguf', 'medium_Q4.gguf'])
   const modelCapabilities = (modelName: string): ModelCapability[] => {
     const capabilities: ModelCapability[] = ['image', 'video']
     if (AUDIO_CAPABLE_MODELS.has(modelName)) capabilities.push('audio')
@@ -129,7 +149,7 @@
   }
 
   const SOURCE_MIGRATED_MODELS = new Set([
-    'lowest.gguf',
+    'lowest_V2.gguf',
     'low_E4.gguf',
     'medium_Q4.gguf',
     'high_Q4.gguf'
@@ -214,7 +234,7 @@
       cancelRepo: repo,
       cancelFilename: originalFilename
     })
-    const mmprojFilename = 'mmproj-F16.gguf'
+    const mmprojFilename = model?.mmprojFilename?.split('/').pop() ?? 'mmproj-F16.gguf'
     const mmprojKey =
       model?.mmprojRepo && model.mmprojFilename ? dlKey(modelKey, mmprojFilename) : null
     const mtpSaveAs = model?.mtpFilename?.split('/').pop()
@@ -294,7 +314,12 @@
     const cancellations = [cancelDownload(model.hfRepo, model.filename, modelKey, model.name)]
     if (model.mmprojRepo && model.mmprojFilename) {
       cancellations.push(
-        cancelDownload(model.mmprojRepo, model.mmprojFilename, modelKey, 'mmproj-F16.gguf')
+        cancelDownload(
+          model.mmprojRepo,
+          model.mmprojFilename,
+          modelKey,
+          model.mmprojFilename.split('/').pop() ?? model.mmprojFilename
+        )
       )
     }
     if (model.mtpRepo && model.mtpFilename) {

@@ -245,6 +245,9 @@ const api = {
     ipcRenderer.invoke('strata:settings', settings),
   startStrata: (): Promise<void> => ipcRenderer.invoke('strata:start'),
   stopStrata: (): Promise<void> => ipcRenderer.invoke('strata:stop'),
+  uninstallStrata: (): Promise<void> => ipcRenderer.invoke('strata:uninstall'),
+  deleteStrataModel: (modelId: string): Promise<void> =>
+    ipcRenderer.invoke('strata:model:delete', modelId),
   cancelStrataOperation: (): Promise<void> => ipcRenderer.invoke('strata:cancel'),
   connectStrataLogs: (callback: (data: string) => void) => {
     strataLogCallback = callback

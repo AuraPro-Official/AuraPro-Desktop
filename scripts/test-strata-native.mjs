@@ -165,6 +165,59 @@ test('Mac Pro installs, downloads, starts, diagnoses and stops without global ll
       (await exports.getStrataInfo()).models.find((model) => model.id === 'qwen-iq2_xs').installed,
       true
     )
+    const sharedData = path.join(dir, 'strata', 'data', 'model.gguf')
+    const ordinaryRuntime = path.join(dir, 'llama.cpp', 'llama-server')
+    for (const file of [sharedData, ordinaryRuntime]) {
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      fs.writeFileSync(file, 'preserved')
+    }
+    fs.mkdirSync(path.join(dir, 'strata', 'versions', 'old'), { recursive: true })
+    const deletedWeight = path.join(dir, 'strata', 'data', 'models', 'IQ2_XS', 'weight.gguf')
+    const keptWeight = path.join(dir, 'strata', 'data', 'models', 'Q2_0', 'weight.gguf')
+    const sharedMtp = path.join(dir, 'strata', 'data', 'mtp', 'rt', 'experts.bin')
+    const deletedPack = path.join(dir, 'strata', 'data', 'packs', 'iq2_xs', 'experts.bin')
+    const oldConfig = path.join(
+      dir,
+      'strata',
+      'versions',
+      'old',
+      models.strataConfigName('qwen-iq2_xs')
+    )
+    for (const file of [deletedWeight, keptWeight, sharedMtp, deletedPack, oldConfig]) {
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      fs.writeFileSync(file, 'test')
+    }
+    child.exitCode = null
+    await exports.startStrata()
+    await assert.rejects(exports.deleteStrataModel('../outside'), /Unknown Pro model/)
+    await exports.deleteStrataModel('qwen-iq2_xs')
+    assert.equal(child.exitCode, 0)
+    assert.equal(fs.existsSync(shard), false)
+    assert.equal(fs.existsSync(exe), true)
+    assert.equal(fs.existsSync(sharedData), true)
+    assert.equal(fs.existsSync(deletedWeight), false)
+    assert.equal(fs.existsSync(deletedPack), false)
+    assert.equal(fs.existsSync(oldConfig), false)
+    assert.equal(fs.existsSync(keptWeight), true)
+    assert.equal(fs.existsSync(sharedMtp), true)
+    assert.equal(
+      (await exports.getStrataInfo()).models.find((model) => model.id === 'qwen-iq2_xs').installed,
+      false
+    )
+    await exports.uninstallStrata()
+    assert.equal(child.exitCode, 0)
+    const removed = await exports.getStrataInfo()
+    assert.equal(removed.installed, null)
+    assert.equal(removed.status, 'stopped')
+    assert.equal(removed.progress, null)
+    assert.equal(fs.existsSync(exe), false)
+    assert.equal(fs.existsSync(path.join(dir, 'strata', 'versions')), false)
+    assert.equal(fs.existsSync(shard), false)
+    assert.equal(fs.existsSync(sharedData), false)
+    assert.equal(fs.existsSync(ordinaryRuntime), true)
+    assert.equal(removed.settings.context, models.DEFAULT_STRATA_SETTINGS.context)
+    assert.equal(fs.existsSync(path.join(dir, 'strata')), false)
+    await exports.uninstallStrata()
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }

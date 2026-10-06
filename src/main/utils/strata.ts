@@ -275,6 +275,9 @@ export async function getStrataInfo() {
       ...model,
       ramInfo: strataHardwareRecommendation(model),
       experimental: model.family === 'unsloth',
+      removable:
+        fs.existsSync(path.join(root(), 'native-models', model.id)) ||
+        fs.existsSync(path.join(root(), 'data', 'models', modelTag(model.id))),
       installed: native()
         ? nativeModelReady(model.id)
         : !!dir && fs.existsSync(path.join(dir, strataConfigName(model.id)))
@@ -582,6 +585,75 @@ async function stopRaw(): Promise<void> {
 
 export async function stopStrata(): Promise<void> {
   await inferenceCoordinator.stop('pro', stopRaw)
+}
+
+export async function uninstallStrata(): Promise<void> {
+  await exclusiveOperation(async (signal) => {
+    const base = path.resolve(root())
+    if (fs.existsSync(base) && fs.lstatSync(base).isSymbolicLink())
+      throw new Error('Refusing to uninstall Pro through a linked installation directory')
+    signal.throwIfAborted()
+    await removeProPath(base)
+  })
+  progress = null
+}
+
+function modelTag(modelId: string): string {
+  const model = STRATA_MODELS.find((item) => item.id === modelId)
+  if (!model) throw new Error('Unknown Pro model')
+  return `${model.family === 'qwen' ? '' : `${model.family}-`}${model.quant}`
+}
+
+async function removeProPath(target: string): Promise<void> {
+  const base = path.resolve(root())
+  const resolved = path.resolve(target)
+  const relative = path.relative(base, resolved)
+  if (relative.startsWith('..') || path.isAbsolute(relative))
+    throw new Error('Invalid Pro deletion path')
+  // Reject linked parents so cleanup cannot reach a directory outside Pro.
+  let parent = path.dirname(resolved)
+  while (parent.startsWith(base + path.sep) || parent === base) {
+    if (fs.existsSync(parent) && fs.lstatSync(parent).isSymbolicLink())
+      throw new Error('Refusing to delete Pro files through a linked directory')
+    if (parent === base) break
+    parent = path.dirname(parent)
+  }
+  await fs.promises.rm(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 1000 })
+}
+
+export async function deleteStrataModel(modelId: string): Promise<void> {
+  const tag = modelTag(modelId)
+  const config = strataConfigName(modelId)
+  await exclusiveOperation(async (signal) => {
+    const targets = [
+      path.join(root(), 'native-models', modelId),
+      path.join(root(), 'data', 'models', tag),
+      path.join(root(), 'data', 'packs', tag.toLowerCase())
+    ]
+    const versions = path.join(root(), 'versions')
+    if (fs.existsSync(versions)) {
+      if (fs.lstatSync(versions).isSymbolicLink()) throw new Error('Invalid Pro versions directory')
+      for (const entry of fs.readdirSync(versions, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue
+        targets.push(path.join(versions, entry.name, config))
+        targets.push(path.join(versions, entry.name, `${config}.tmp`))
+        targets.push(path.join(versions, entry.name, 'aurapro-active.json'))
+      }
+    }
+    for (const target of targets) {
+      signal.throwIfAborted()
+      await removeProPath(target)
+    }
+    const modelsDir = path.join(root(), 'data', 'models')
+    const remaining = STRATA_MODELS.filter((model) =>
+      fs.existsSync(path.join(modelsDir, modelTag(model.id)))
+    )
+    if (!remaining.length) await removeProPath(path.join(root(), 'data', 'mtp'))
+    const projector = nativeProFiles(modelId).projector
+    if (projector && !remaining.some((model) => nativeProFiles(model.id).projector === projector))
+      await removeProPath(path.join(modelsDir, projector))
+  })
+  progress = null
 }
 
 async function startRaw(): Promise<void> {

@@ -255,11 +255,11 @@ const getSoftwareVersions = async (): Promise<LlamaDiagnosticReport['software']>
 }
 
 const OFFICIAL_MODEL_SOURCES: Record<string, OfficialModelSource> = {
-  'lowest.gguf': {
-    repo: 'unsloth/gemma-4-E2B-it-qat-GGUF',
-    filename: 'gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf',
-    saveAs: 'lowest.gguf',
-    expectedSize: 3 * GB
+  'lowest_V2.gguf': {
+    repo: 'IndexTeam/Index-Translate-2B-GGUF',
+    filename: 'Index-Translate-2B.Q8_0.gguf',
+    saveAs: 'lowest_V2.gguf',
+    expectedSize: 2_076_674_560
   },
   'low_E4.gguf': {
     repo: 'unsloth/gemma-4-E4B-it-qat-GGUF',
@@ -279,11 +279,23 @@ const OFFICIAL_MODEL_SOURCES: Record<string, OfficialModelSource> = {
     saveAs: 'medium_Q4.gguf',
     expectedSize: 7 * GB
   },
+  'medium_Q4_V2.gguf': {
+    repo: 'IndexTeam/Index-Translate-9B-GGUF',
+    filename: 'Index-Translate-9B.Q4_K_M.gguf',
+    saveAs: 'medium_Q4_V2.gguf',
+    expectedSize: 5_780_090_304
+  },
   'high_Q4.gguf': {
     repo: 'unsloth/gemma-4-26B-A4B-it-qat-GGUF',
     filename: 'gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf',
     saveAs: 'high_Q4.gguf',
     expectedSize: 15 * GB
+  },
+  'high_Q4_2.gguf': {
+    repo: 'IndexTeam/Index-Translate-35B-A3B-preview-GGUF',
+    filename: 'Index-Translate-35B-A3B-preview.Q4_K_M.gguf',
+    saveAs: 'high_Q4_2.gguf',
+    expectedSize: 21_713_462_400
   },
   'high-code_IQ4.gguf': {
     repo: 'unsloth/Qwen3.8-27B-GGUF',
@@ -300,10 +312,6 @@ const OFFICIAL_MODEL_SOURCES: Record<string, OfficialModelSource> = {
 }
 
 const MTP_SOURCES: Record<string, { repo: string; filename: string }> = {
-  'lowest.gguf': {
-    repo: 'unsloth/gemma-4-E2B-it-qat-GGUF',
-    filename: 'mtp-gemma-4-E2B-it.gguf'
-  },
   'low_E4.gguf': {
     repo: 'unsloth/gemma-4-E4B-it-qat-GGUF',
     filename: 'mtp-gemma-4-E4B-it.gguf'
@@ -331,9 +339,17 @@ const MTP_SOURCES: Record<string, { repo: string; filename: string }> = {
 }
 
 const MMPROJ_SOURCES: Record<string, CompanionModelSource> = {
-  'lowest.gguf': {
-    repo: 'unsloth/gemma-4-E2B-it-qat-GGUF',
-    filename: 'mmproj-F16.gguf'
+  'high_Q4_2.gguf': {
+    repo: 'IndexTeam/Index-Translate-35B-A3B-preview-GGUF',
+    filename: 'Index-Translate-35B-A3B-preview.mmproj-Q8_0.gguf'
+  },
+  'medium_Q4_V2.gguf': {
+    repo: 'IndexTeam/Index-Translate-9B-GGUF',
+    filename: 'Index-Translate-9B.mmproj-Q8_0.gguf'
+  },
+  'lowest_V2.gguf': {
+    repo: 'IndexTeam/Index-Translate-2B-GGUF',
+    filename: 'Index-Translate-2B.mmproj-Q8_0.gguf'
   },
   'low_E4.gguf': {
     repo: 'unsloth/gemma-4-E4B-it-qat-GGUF',
