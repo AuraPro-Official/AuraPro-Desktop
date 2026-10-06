@@ -1244,7 +1244,9 @@
                   >STT: {$i18n.t(
                     sherpaInfo?.languages?.[language]?.asr
                       ? 'settings.speech.modelReady'
-                      : 'settings.speech.notDownloaded'
+                      : !SPEECH_ASR_LANGUAGES.includes(language.split('-')[0])
+                        ? 'settings.speech.unsupported'
+                        : 'settings.speech.notDownloaded'
                   )}</span
                 >
                 <span class="text-[11px] opacity-60"

@@ -680,9 +680,9 @@ const getTtsFiles = (preset: SherpaPreset, repoFiles: HfFileInfo[]): SherpaPrese
       saveAs: 'hifigan_v2.onnx',
       field: 'ttsVocoder'
     })
-    for (const file of files.filter((file) => file.filename.endsWith('.fst'))) {
-      result.push({ filename: file.filename, saveAs: basename(file.filename), field: 'ttsRuleFst' })
-    }
+  }
+  for (const file of files.filter((file) => file.filename.endsWith('.fst'))) {
+    result.push({ filename: file.filename, saveAs: basename(file.filename), field: 'ttsRuleFst' })
   }
 
   if (!definedFields.has('ttsVoices')) {
@@ -782,7 +782,9 @@ const ensureTtsModels = async (
       const modelFiles = getTtsFiles(preset, repoFiles)
       const needsEspeak =
         modelFiles.some((file) => file.field === 'ttsDataDirFile') ||
-        (preset.ttsType === 'vits' && !modelFiles.some((file) => file.field === 'ttsLexicon'))
+        (preset.ttsType === 'vits' &&
+          !preset.repo.includes('vits-mms-') &&
+          !modelFiles.some((file) => file.field === 'ttsLexicon'))
       let espeakDataDir = ''
       if (needsEspeak) {
         try {

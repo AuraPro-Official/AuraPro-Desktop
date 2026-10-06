@@ -97,6 +97,18 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(route('pt'), 'pt-PT')
         self.assertEqual(route('ja'), 'ja')
 
+    def test_additional_reference_tts_routes(self):
+        route = env['_profile_key_for_tts_language']
+        for name, expected in [('ga', 'ga'), ('tn', 'tn'), ('Cantonese', 'yue'),
+                               ('zh-yue', 'yue'), ('粤语', 'yue'), ('Min-nan', 'nan'),
+                               ('zh-min-nan', 'nan'), ('閩南語', 'nan')]:
+            self.assertEqual(route(name), expected)
+        for language in ('ga', 'tn'):
+            self.assertEqual(env['_profile_key_for_language'](language), 'others')
+        for language in ('yue', 'nan'):
+            with self.assertRaises(HTTPException):
+                env['_profile_key_for_language'](language)
+
     def test_long_audio_no_overlap_and_no_loss(self):
         audio = np.ones(16000 * 75, dtype=np.float32)
         chunks = list(env['_qwen_audio_chunks'](audio, 16000))

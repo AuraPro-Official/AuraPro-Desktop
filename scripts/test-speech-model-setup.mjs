@@ -89,6 +89,8 @@ function harness(initial = {}, options = {}) {
     './huggingface': {
       getHfCacheDir: () => 'cache',
       getRepoFiles: async (repo, token) => {
+        if (options.ttsFiles?.[repo])
+          return options.ttsFiles[repo].map((filename) => ({ filename }))
         if (repo.includes('indic-conformer')) assert.equal(token, undefined)
         if (repo.includes('indic-conformer') && options.failMetadata) throw new Error('HTTP 401')
         return (
@@ -205,6 +207,45 @@ test('Matcha downloads its vocoder, text rules and dictionary without unrelated 
   assert.match(profile.SHERPA_TTS_VOCODER, /hifigan_v2/)
   assert.equal(profile.SHERPA_TTS_RULE_FSTS.split(',').length, 3)
   assert.equal(path.basename(profile.SHERPA_TTS_DICT_DIR), 'dict')
+})
+
+test('Cantonese keeps its lexicon and FST; Min-nan MMS needs no espeak or Mandarin voice', async () => {
+  const h = harness(
+    { enabledLanguages: ['yue', 'nan'] },
+    {
+      ttsFiles: {
+        [languages.SPEECH_TTS_REPOS.yue]: [
+          'vits-cantonese-hf-xiaomaiiwn.onnx',
+          'tokens.txt',
+          'lexicon.txt',
+          'rule.fst'
+        ],
+        [languages.SPEECH_TTS_REPOS.nan]: ['model.onnx', 'tokens.txt']
+      }
+    }
+  )
+  const cfg = await h.api.ensureDefaultTtsModel(h.config())
+  assert.equal(h.downloads.length, 6)
+  assert.match(cfg.ttsProfiles.yue.SHERPA_TTS_RULE_FSTS, /rule\.fst$/)
+  assert.match(cfg.ttsProfiles.yue.SHERPA_TTS_LEXICON, /lexicon\.txt$/)
+  assert.equal(cfg.ttsProfiles.nan.SHERPA_TTS_DATA_DIR, undefined)
+  assert.equal(cfg.ttsProfiles.nan.SHERPA_TTS_LANG, 'nan')
+  assert.equal(cfg.ttsProfiles.yue.SHERPA_TTS_LANG, 'yue')
+  await h.api.ensureDefaultTtsModel(cfg)
+  assert.equal(h.downloads.length, 6)
+})
+
+test('Irish and Tswana download only selected reference voices', async () => {
+  const h = harness({ enabledLanguages: ['ga', 'tn'] })
+  const cfg = await h.api.ensureDefaultTtsModel(h.config())
+  assert.equal(cfg.ttsProfiles.ga.SHERPA_TTS_TYPE, 'vits')
+  assert.equal(cfg.ttsProfiles.tn.SHERPA_TTS_TYPE, 'vits')
+  assert.ok(
+    h.downloads.every(({ repo }) =>
+      [languages.SPEECH_TTS_REPOS.ga, languages.SPEECH_TTS_REPOS.tn].includes(repo)
+    )
+  )
+  assert.equal(cfg.ttsProfiles.en, undefined)
 })
 test('ASR and TTS downloads share the concurrency limit', async () => {
   const h = harness({

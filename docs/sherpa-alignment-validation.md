@@ -51,3 +51,11 @@ Indic CTC routing, external-data download deduplication, managed-default replace
 Run `node --test scripts/test-speech-language-presets.mjs scripts/test-speech-model-setup.mjs`, `python scripts/test-sherpa-server.py`, and `node scripts/test-speech-ui.mjs` from the desktop repository.
 
 The Python tests require numpy and sherpa-onnx 1.13.8 in the active environment or `.tmp-speech-test`. The browser test uses an installed Chrome by default. Isolated model artifacts and screenshots are ignored by Git and excluded from desktop packaging.
+
+# Additional Reference TTS Voices
+
+- Added Irish (`ga`, Coqui), Tswana (`tn`, Mimic3), Cantonese (`yue`, VITS), and Min-nan (`nan`, MMS) from the reference's voice catalog.
+- Verified public repository metadata contains ONNX models and token files. Cantonese also requires its lexicon and `rule.fst`; MMS uses character tokens without espeak data.
+- These remain selected-language downloads. Mandarin models and user-selected voices are preserved. Cantonese and Min-nan are TTS-only additions, not new ASR coverage.
+- Model repositories do not consistently declare licenses in metadata. Their upstream model/data licenses still apply; MMS is not an unrestricted commercial-use model. This change downloads upstream artifacts rather than redistributing weights.
+- Routing/download tests cover language aliases, per-language profiles, required files, repeat-download prevention and no unrelated downloads. Real synthesis quality and cross-platform runtime tests for these four voices remain unverified.

@@ -1131,7 +1131,7 @@ def _profile_configured(profile):
 HINDI_LANGS = set("as bn brx doi gu hi kn kok ks mai ml mni mr ne or pa sa sat sd ta te ur".split())
 EU_LANGS = set("bg hr cs da nl en et fi fr de el hu it lv lt mt pl pt ro sk sl es sv uk".split())
 ASIA_LANGS = set("ja ko mn vi th my km lo id ms jv su fa ps ku si".split())
-OTHER_LANGS = set("af ca ka kk lb no sr sw tr cy is hy he bs mk be az am gl ha ht uz so zu".split())
+OTHER_LANGS = set("af ca ka kk lb no sr sw tr cy is hy he bs mk be az am gl ha ht uz so zu ga tn".split())
 LANGUAGE_ALIASES = {
     "\u4e2d\u6587": "zh",
     "\u6c49\u8bed": "zh",
@@ -1261,6 +1261,10 @@ def _normalize_language_code(language):
     if not value or value in {"auto", "automatic", "自动", "自动检测"}:
         return ""
     value = value.replace("_", "-")
+    if value in {"cantonese", "zh-yue", "\u7ca4\u8bed", "\u5ee3\u6771\u8a71", "\u5e7f\u4e1c\u8bdd"}:
+        return "yue"
+    if value in {"min-nan", "min nan", "zh-min-nan", "\u95fd\u5357\u8bed", "\u95a9\u5357\u8a9e"}:
+        return "nan"
     if value in LANGUAGE_ALIASES:
         return LANGUAGE_ALIASES[value]
     base = value.split("-", 1)[0]

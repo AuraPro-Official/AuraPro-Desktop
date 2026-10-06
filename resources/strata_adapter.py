@@ -10,12 +10,35 @@ import sys
 from pathlib import Path
 
 
+def configure_windows_source_paths(setup):
+    if not setup.WIN:
+        return
+    get_llama_cpp = setup.get_llama_cpp
+
+    def get_llama_cpp_with_long_paths():
+        original_root = setup.ROOT
+        absolute = str(original_root.resolve())
+        if absolute.startswith('\\\\?\\'):
+            return get_llama_cpp()
+        # Source archives contain unused benchmarks exceeding Windows' MAX_PATH.
+        extended = '\\\\?\\UNC\\' + absolute[2:] if absolute.startswith('\\\\') else '\\\\?\\' + absolute
+        setup.ROOT = Path(extended)
+        try:
+            result = get_llama_cpp()
+            return original_root / result.relative_to(setup.ROOT)
+        finally:
+            setup.ROOT = original_root
+
+    setup.get_llama_cpp = get_llama_cpp_with_long_paths
+
+
 def main():
     root = Path(sys.argv[1]).resolve()
     action = sys.argv[2]
     spec = importlib.util.spec_from_file_location('strata_setup', root / 'setup.py')
     setup = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(setup)
+    configure_windows_source_paths(setup)
 
     def no_build(*args, **kwargs):
         raise RuntimeError('No compatible prebuilt Pro runtime. Automatic compiler installation is disabled.')

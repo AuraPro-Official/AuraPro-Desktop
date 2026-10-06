@@ -10,6 +10,7 @@ export const SPEECH_TTS_REPOS: Record<string, string> = {
   bg: 'csukuangfj/vits-coqui-bg-cv',
   ca: 'csukuangfj/vits-piper-ca_ES-upc_ona-x_low',
   hr: 'csukuangfj/vits-coqui-hr-cv',
+  ga: 'csukuangfj/vits-coqui-ga-cv',
   cs: 'csukuangfj/vits-piper-cs_CZ-jirka-low',
   da: 'csukuangfj/vits-coqui-da-cv',
   nl: 'csukuangfj/vits-coqui-nl-css10',
@@ -44,6 +45,9 @@ export const SPEECH_TTS_REPOS: Record<string, string> = {
   sw: 'csukuangfj/vits-piper-sw_CD-lanfrica-medium',
   sv: 'csukuangfj/vits-coqui-sv-cv',
   th: 'csukuangfj/vits-mms-tha',
+  tn: 'csukuangfj/vits-mimic3-tn_ZA-google-nwu_low',
+  yue: 'csukuangfj/vits-cantonese-hf-xiaomaiiwn',
+  nan: 'csukuangfj/vits-mms-nan',
   tr: 'csukuangfj/vits-piper-tr_TR-dfki-medium',
   uk: 'csukuangfj/vits-piper-uk_UA-lada-x_low',
   vi: 'csukuangfj/vits-piper-vi_VN-25hours_single-low',
@@ -66,7 +70,9 @@ export const SPEECH_ASR_LANGUAGES = [
     ...EUROPEAN_ASR_LANGUAGES,
     ...ASIAN_ASR_LANGUAGES,
     ...INDIC_ASR_LANGUAGES,
-    ...Object.keys(SPEECH_TTS_REPOS).map((code) => code.split('-')[0]),
+    ...Object.keys(SPEECH_TTS_REPOS)
+      .map((code) => code.split('-')[0])
+      .filter((code) => !['yue', 'nan'].includes(code)),
     'hy',
     'he',
     'bs',
@@ -86,6 +92,8 @@ export const SPEECH_ASR_LANGUAGES = [
 export function speechLanguageCode(value = ''): string | undefined {
   const name = value.split('(')[0].trim().toLowerCase().replace('_', '-')
   if (['中文', '普通话', 'chinese', 'mandarin'].includes(name)) return 'zh'
+  if (['粤语', '廣東話', '广东话', 'cantonese', 'zh-yue'].includes(name)) return 'yue'
+  if (['闽南语', '閩南語', 'min-nan', 'min nan', 'zh-min-nan'].includes(name)) return 'nan'
   if (name === 'fil' || name === 'tagalog') return 'tl'
   const codes = [...SPEECH_ASR_LANGUAGES, ...Object.keys(SPEECH_TTS_REPOS)]
   const direct = codes.find((code) => code.toLowerCase() === name)

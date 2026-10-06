@@ -5,6 +5,7 @@ import vm from 'node:vm'
 import ts from 'typescript'
 import {
   SPEECH_TTS_REPOS,
+  speechLanguageCode,
   selectedSpeechLanguages,
   speechAsrGroup,
   glossarySpeechLanguages
@@ -87,8 +88,18 @@ test('Chinese STT definition is byte-for-byte equivalent to the existing default
   )
   assert.equal(RECOMMENDED_ASR_PRESETS[0], DEFAULT_ASR_PRESETS[0])
 })
-test('TTS mapping includes 46 languages plus both Portuguese regions', () => {
-  assert.equal(Object.keys(SPEECH_TTS_REPOS).length, 48)
+test('TTS mapping includes reference voices plus both Portuguese regions', () => {
+  assert.equal(Object.keys(SPEECH_TTS_REPOS).length, 52)
   assert.notEqual(SPEECH_TTS_REPOS['pt-BR'], SPEECH_TTS_REPOS['pt-PT'])
   assert.match(SPEECH_TTS_REPOS.zh, /matcha/)
+})
+
+test('additional reference voices resolve independently from Mandarin', () => {
+  for (const language of ['ga', 'tn', 'yue', 'nan']) assert.ok(SPEECH_TTS_REPOS[language])
+  for (const name of ['Cantonese', '粤语', 'zh-yue']) assert.equal(speechLanguageCode(name), 'yue')
+  for (const name of ['Min-nan', '闽南语', 'zh-min-nan'])
+    assert.equal(speechLanguageCode(name), 'nan')
+  assert.equal(speechAsrGroup('yue'), 'unsupported')
+  assert.equal(speechAsrGroup('nan'), 'unsupported')
+  assert.deepEqual(glossarySpeechLanguages({ target_lang: '粤语' }), ['yue'])
 })
