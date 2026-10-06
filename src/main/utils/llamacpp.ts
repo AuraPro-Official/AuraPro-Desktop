@@ -1086,7 +1086,6 @@ const writeModelsPreset = async (
     'min-p = 0.05',
     'jinja = true',
     'chat-template-kwargs = {"enable_thinking":false}',
-    'reasoning-budget = 0',
     'load-on-startup = false',
     'stop-timeout = 10'
   ]
