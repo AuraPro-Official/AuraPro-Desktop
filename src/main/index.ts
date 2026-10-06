@@ -1,5 +1,6 @@
 import {
   getStrataInfo,
+  subscribeStrataLogs,
   installStrata,
   checkStrataUpdate,
   prepareStrataModel,
@@ -3483,6 +3484,20 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     })
 
     ipcMain.handle('llamacpp:info', () => getLlamaCppInfo())
+    let disconnectStrataLogs: (() => void) | null = null
+    ipcMain.handle('strata:logs:connect', (event) => {
+      if (event.sender.id !== mainWindow?.webContents.id) return
+      disconnectStrataLogs?.()
+      const { port1, port2 } = new MessageChannelMain()
+      const unsubscribe = subscribeStrataLogs((data) => port1.postMessage({ type: 'output', data }))
+      disconnectStrataLogs = unsubscribe
+      port1.on('close', () => {
+        unsubscribe()
+        if (disconnectStrataLogs === unsubscribe) disconnectStrataLogs = null
+      })
+      port1.start()
+      event.sender.postMessage('strata:logs:port', null, [port2])
+    })
     ipcMain.handle('strata:info', () => getStrataInfo())
     ipcMain.handle('strata:install', (_event, update = false, settings) =>
       installStrata(update === true, settings)

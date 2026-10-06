@@ -38,6 +38,15 @@ let startupAbort: AbortController | null = null
 let status = 'stopped'
 let error = ''
 let output = ''
+const logListeners = new Set<(data: string) => void>()
+
+export function subscribeStrataLogs(callback: (data: string) => void): () => void {
+  logListeners.add(callback)
+  callback(output)
+  return () => {
+    logListeners.delete(callback)
+  }
+}
 let progress: {
   stage: string
   detail: string
@@ -168,6 +177,7 @@ export const getStrataSettings = (): StrataSettings =>
 
 function append(data: Buffer | string): void {
   output = (output + data.toString()).slice(-24000)
+  for (const listener of logListeners) listener(data.toString())
   if ((operation || startupAbort) && progress) {
     const lines = output.split(/[\r\n]/).filter((line) => line.trim())
     const marker = [...lines].reverse().find((line) => line.startsWith('AURAPRO_STAGE:'))

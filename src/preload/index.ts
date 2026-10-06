@@ -8,6 +8,18 @@ import type { StrataSettings } from '../main/utils/strata-models'
 // MessagePorts stay in the preload (cannot cross contextBridge).
 // We expose simple functions so the renderer never touches the port.
 let activePtyPort: MessagePort | null = null
+let activeStrataLogPort: MessagePort | null = null
+let strataLogCallback: ((data: string) => void) | null = null
+ipcRenderer.on('strata:logs:port', (event) => {
+  const [port] = event.ports
+  if (!port) return
+  activeStrataLogPort?.close()
+  activeStrataLogPort = port
+  port.onmessage = (ev: MessageEvent) => {
+    if (ev.data?.type === 'output') strataLogCallback?.(ev.data.data)
+  }
+  port.start()
+})
 let ptyOutputCallback: ((data: string) => void) | null = null
 
 ipcRenderer.on('pty:port', (event, _data) => {
@@ -234,6 +246,15 @@ const api = {
   startStrata: (): Promise<void> => ipcRenderer.invoke('strata:start'),
   stopStrata: (): Promise<void> => ipcRenderer.invoke('strata:stop'),
   cancelStrataOperation: (): Promise<void> => ipcRenderer.invoke('strata:cancel'),
+  connectStrataLogs: (callback: (data: string) => void) => {
+    strataLogCallback = callback
+    ipcRenderer.invoke('strata:logs:connect')
+  },
+  disconnectStrataLogs: () => {
+    strataLogCallback = null
+    activeStrataLogPort?.close()
+    activeStrataLogPort = null
+  },
   getLlamaCppLogs: () => ipcRenderer.invoke('llamacpp:logs'),
   connectLlamaCppPty: (onOutput: (data: string) => void) => {
     lsCppPtyOutputCallback = onOutput

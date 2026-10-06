@@ -11,6 +11,8 @@
     openTerminalStatus: string | null
     openCodeStatus: string | null
     llamaCppStatus: string | null
+    proStatus: string
+    proInstalled: boolean
     sherpaStatus: string | null
     openWebuiInstalled: boolean
     openTerminalInstalled: boolean
@@ -34,6 +36,8 @@
     openTerminalStatus,
     openCodeStatus,
     llamaCppStatus,
+    proStatus,
+    proInstalled,
     sherpaStatus,
     openWebuiInstalled,
     openTerminalInstalled,
@@ -279,6 +283,28 @@
               : 'bg-black/15 dark:bg-white/20'}"
       ></div>
       <span>{$i18n.t('sidebar.llamaCpp')}</span>
+    </button>
+  {/if}
+
+  {#if proInstalled || proStatus !== 'stopped'}
+    <button
+      class="flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] transition-all bg-transparent border-none cursor-pointer text-[#1d1d1f] dark:text-[#fafafa] {activeLog ===
+      'pro'
+        ? 'bg-black/[0.08] dark:bg-white/[0.1] opacity-90'
+        : 'opacity-50 hover:opacity-80 hover:bg-black/[0.04] dark:hover:bg-white/[0.06]'}"
+      onclick={() => onSelectLog('pro')}
+      use:tooltip={$i18n.t('sidebar.tooltip.viewLogs')}
+    >
+      <span
+        class="w-[7px] h-[7px] shrink-0 rounded-full {proStatus === 'started'
+          ? 'bg-emerald-400'
+          : proStatus === 'failed'
+            ? 'bg-red-400'
+            : ['starting', 'installing', 'preparing'].includes(proStatus)
+              ? 'bg-amber-400 animate-pulse'
+              : 'bg-black/15 dark:bg-white/20'}"
+      ></span>
+      <span>Pro_V1</span>
     </button>
   {/if}
 

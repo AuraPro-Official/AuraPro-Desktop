@@ -121,6 +121,17 @@ test('Mac Pro installs, downloads, starts, diagnoses and stops without global ll
     assert.equal(info.models.find((model) => model.id === 'qwen-iq2_xs').installed, true)
     assert.equal((await exports.checkStrataUpdate()).version, 'b12000')
     await exports.startStrata()
+    const liveLogs = []
+    const unsubscribe = exports.subscribeStrataLogs((data) => liveLogs.push(data))
+    child.stdout.emit('data', Buffer.from('Pro inference log\n'))
+    assert.equal(liveLogs.at(-1), 'Pro inference log\n')
+    unsubscribe()
+    child.stderr.emit('data', Buffer.from('retained after unsubscribe\n'))
+    assert.equal(liveLogs.at(-1), 'Pro inference log\n')
+    const replay = []
+    const stopReplay = exports.subscribeStrataLogs((data) => replay.push(data))
+    assert.match(replay[0], /retained after unsubscribe/)
+    stopReplay()
     const launch = calls.find((call) => call[0] === 'spawn')
     assert.equal(launch[1], exe)
     assert.equal(launch[2][launch[2].indexOf('--ctx-size') + 1], '20000')

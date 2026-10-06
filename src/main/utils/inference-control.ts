@@ -44,6 +44,7 @@ async function startControl(): Promise<Record<string, string>> {
         json(200, {
           standard: getManagedLlamaModelIds(),
           pro: pro.supported,
+          proContext: pro.settings.context,
           active: inferenceCoordinator.current
         })
         return

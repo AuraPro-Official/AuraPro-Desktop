@@ -122,7 +122,7 @@
 
   // Active log panel
   let activeLog = $state<
-    'server' | 'open-terminal' | 'opencode' | 'llama-server' | 'sherpa' | null
+    'server' | 'open-terminal' | 'opencode' | 'llama-server' | 'pro' | 'sherpa' | null
   >(null)
 
   const loadLlamaDiagnostics = () => {
@@ -296,6 +296,7 @@
   let llamaCppStatus = $state<string | null>(null)
   let llamaCppInfo = $state<{ url?: string; pid?: number } | null>(null)
   let llamaCppSetupStatus = $state('')
+  let proInfo = $state<Awaited<ReturnType<typeof window.electronAPI.getStrataInfo>> | null>(null)
 
   // sherpa state
   let sherpaStatus = $state<string | null>(null)
@@ -839,6 +840,8 @@
         window.electronAPI.connectOpenCodePty(callback)
       } else if (log === 'llama-server') {
         window.electronAPI.connectLlamaCppPty(callback)
+      } else if (log === 'pro') {
+        window.electronAPI.connectStrataLogs(callback)
       } else if (log === 'sherpa') {
         window.electronAPI.connectSherpaPty(callback)
       }
@@ -855,6 +858,8 @@
         window.electronAPI?.disconnectOpenCodePty?.()
       } else if (log === 'llama-server') {
         window.electronAPI?.disconnectLlamaCppPty?.()
+      } else if (log === 'pro') {
+        window.electronAPI.disconnectStrataLogs()
       } else if (log === 'sherpa') {
         window.electronAPI?.disconnectSherpaPty?.()
       }
@@ -914,6 +919,22 @@
 
   // Listen for events from main process
   onMount(() => {
+    let proDisposed = false
+    let proRefreshing = false
+    const refreshPro = async () => {
+      if (proRefreshing) return
+      proRefreshing = true
+      try {
+        const info = await window.electronAPI.getStrataInfo()
+        if (!proDisposed) proInfo = info
+      } catch (error) {
+        console.warn('Failed to read Pro runtime status', error)
+      } finally {
+        proRefreshing = false
+      }
+    }
+    void refreshPro()
+    const proTimer = setInterval(refreshPro, 2000)
     const disposeDataListener = window.electronAPI.onData((data: MainEvent) => {
       const payload =
         data.data && typeof data.data === 'object' ? (data.data as MainEventPayload) : undefined
@@ -1103,6 +1124,8 @@
     }
 
     return () => {
+      proDisposed = true
+      clearInterval(proTimer)
       disposeDataListener?.()
       cancelDeferredDiagnosticsLoad()
       if (toastTimeout) {
@@ -1184,8 +1207,14 @@
   }
 
   const restartLogService = async (
-    log: 'server' | 'open-terminal' | 'opencode' | 'llama-server' | 'sherpa'
+    log: 'server' | 'open-terminal' | 'opencode' | 'llama-server' | 'pro' | 'sherpa'
   ) => {
+    if (log === 'pro') {
+      await window.electronAPI.stopStrata()
+      await window.electronAPI.startStrata()
+      proInfo = await window.electronAPI.getStrataInfo()
+      return
+    }
     if (log === 'server') {
       await window.electronAPI.restartServer()
       serverInfo.set(await window.electronAPI.getServerInfo())
@@ -1324,7 +1353,9 @@
             ? openCodeStatus === 'started'
             : activeLog === 'llama-server'
               ? llamaCppStatus === 'started'
-              : sherpaStatus === 'started'}
+              : activeLog === 'pro'
+                ? proInfo?.status === 'started'
+                : sherpaStatus === 'started'}
       statusText={activeLog === 'server'
         ? serverStatus === 'starting'
           ? 'Starting AuraPro…'
@@ -1350,12 +1381,15 @@
                     : llamaCppStatus === 'setting-up'
                       ? 'Setting up llama.cpp…'
                       : '')
-              : sherpaStatus === 'stopping'
-                ? 'Stopping sherpa…'
-                : sherpaSetupStatus || (sherpaStatus === 'starting' ? 'Starting sherpa…' : '')}
+              : activeLog === 'pro'
+                ? proInfo?.progress?.detail || proInfo?.error || ''
+                : sherpaStatus === 'stopping'
+                  ? 'Stopping sherpa…'
+                  : sherpaSetupStatus || (sherpaStatus === 'starting' ? 'Starting sherpa…' : '')}
       connectPty={getConnectPty(activeLog)}
       disconnectPty={getDisconnectPty(activeLog)}
       readonly={activeLog !== 'server'}
+      showBufferedLogs={activeLog === 'pro'}
       onWrite={getOnWrite(activeLog)}
       onResize={getOnResize(activeLog)}
       onStop={activeLog === 'open-terminal'
@@ -1364,9 +1398,14 @@
           ? toggleOpenCode
           : activeLog === 'llama-server'
             ? toggleLlamaCpp
-            : activeLog === 'sherpa'
-              ? toggleSherpa
-              : undefined}
+            : activeLog === 'pro'
+              ? async () => {
+                  await window.electronAPI.stopStrata()
+                  proInfo = await window.electronAPI.getStrataInfo()
+                }
+              : activeLog === 'sherpa'
+                ? toggleSherpa
+                : undefined}
       onRestart={() => restartLogService(activeLog)}
       onClose={() => {
         activeLog = null
@@ -1376,6 +1415,8 @@
   {/if}
 
   <StatusBar
+    proStatus={proInfo?.status ?? 'stopped'}
+    proInstalled={!!proInfo?.installed}
     {serverStatus}
     {serverReachable}
     {openTerminalStatus}

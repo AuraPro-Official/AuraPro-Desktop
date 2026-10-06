@@ -7,6 +7,7 @@
   interface Props {
     activeLog: 'server' | 'open-terminal' | 'opencode' | 'llama-server' | 'sherpa'
     serviceReady: boolean
+    showBufferedLogs?: boolean
     statusText?: string
     connectPty: (callback: (data: string) => void) => void
     disconnectPty: () => void
@@ -21,6 +22,7 @@
   let {
     activeLog,
     serviceReady,
+    showBufferedLogs = false,
     statusText = '',
     connectPty,
     disconnectPty,
@@ -48,7 +50,8 @@
     'open-terminal': () => $i18n.t('sidebar.openTerminal'),
     'llama-server': () => $i18n.t('sidebar.llamaCpp'),
     opencode: () => 'PI Agent',
-    sherpa: () => 'sherpa'
+    sherpa: () => 'sherpa',
+    pro: () => 'Pro_V1'
   }
 
   const onDragStart = (e: MouseEvent) => {
@@ -258,7 +261,7 @@
 
   <!-- Log content -->
   <div class="flex-1 min-h-0 relative overflow-hidden">
-    {#if serviceReady}
+    {#if serviceReady || showBufferedLogs}
       {#key `${activeLog}-${refreshKey}`}
         <LogViewer
           bind:this={logViewerRef}
