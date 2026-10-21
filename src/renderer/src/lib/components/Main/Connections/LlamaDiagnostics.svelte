@@ -140,6 +140,7 @@
   const baseIssueId = (id: string): string => id.split(':')[0]
 
   const localizedIssueTitle = (issue: DiagnosticIssue): string => {
+    if (issue.id === 'windows-app-control-blocked') return $i18n.t('diagnostics.appControl.title')
     if (!isChinese) return issue.title
     const titles: Record<string, string> = {
       'pro-runtime-failed': '推理运行时 Pro 需要处理',
@@ -175,6 +176,7 @@
   }
 
   const localizedIssueDetail = (issue: DiagnosticIssue): string => {
+    if (issue.id === 'windows-app-control-blocked') return $i18n.t('diagnostics.appControl.detail')
     if (!isChinese) return issue.detail
     const details: Record<string, string> = {
       'nvidia-not-found': `当前选择了 CUDA，但系统没有检测到 NVIDIA 显卡。可切换到 ${report?.recommendedVariant ?? 'CPU'}。`,
@@ -628,7 +630,9 @@
                       >
                         {issue.repairable
                           ? text('可自动修复', 'Auto-fix')
-                          : text('需要手动处理', 'Manual')}
+                          : issue.id === 'windows-app-control-blocked'
+                            ? $i18n.t('diagnostics.appControl.manual')
+                            : text('需要手动处理', 'Manual')}
                       </span>
                     </div>
                     <div class="mt-1 text-[11px] leading-[1.55] text-black/45 dark:text-white/45">
@@ -642,6 +646,22 @@
                       >
                         {text('打开 NVIDIA 驱动下载页', 'Open NVIDIA driver downloads')}
                       </button>
+                    {/if}
+                    {#if issue.id === 'windows-app-control-blocked'}
+                      <ol class="mt-2 list-decimal space-y-1 pl-4 text-[12px] leading-relaxed">
+                        <li>
+                          {$i18n.t('diagnostics.appControl.step1')}
+                        </li>
+                        <li>
+                          {$i18n.t('diagnostics.appControl.step2')}
+                        </li>
+                        <li>{$i18n.t('diagnostics.appControl.step3')}</li>
+                      </ol>
+                      <p
+                        class="mt-2 text-[11px] leading-relaxed text-amber-700 dark:text-amber-400"
+                      >
+                        {$i18n.t('diagnostics.appControl.warning')}
+                      </p>
                     {/if}
                   </div>
                 </div>

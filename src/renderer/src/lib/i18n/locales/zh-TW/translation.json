@@ -1,4 +1,11 @@
 {
+  "diagnostics.appControl.title": "Windows 應用程式控制阻止啟動（4551）",
+  "diagnostics.appControl.detail": "Windows 應用程式控制原則阻止了 llama-server，可能是智慧型應用程式控制或組織原則。請確認程式來源可信後再處理。",
+  "diagnostics.appControl.manual": "需要手動處理",
+  "diagnostics.appControl.step1": "開啟「設定 → 隱私權與安全性 → Windows 安全性 → 應用程式與瀏覽器控制 → 智慧型應用程式控制設定」。",
+  "diagnostics.appControl.step2": "確認信任此程式並接受安全風險後，選擇「關閉」。",
+  "diagnostics.appControl.step3": "重新啟動 AuraPro。",
+  "diagnostics.appControl.warning": "關閉智慧型應用程式控制會降低系統防護；部分 Windows 版本可能需要重設或重新安裝系統才能再次開啟。若設定由組織管理、沒有此選項或關閉後仍發生錯誤，請聯絡管理員。AuraPro 不會自動修改此設定。",
   "settings.pro.customContext": "自訂",
   "settings.pro.progress.preparing": "正在準備 Pro",
   "settings.pro.progress.source": "正在下載 Pro 原始碼",

@@ -28,6 +28,9 @@ export interface LlamaCppComponentLoadState {
 const matchesAny = (value: string, patterns: RegExp[]): boolean =>
   patterns.some((pattern) => pattern.test(value))
 
+export const isWindowsApplicationControlBlock = (value: string, platform: string): boolean =>
+  platform === 'win32' && /\b(?:error\s*code|winerror)\s*[:=]?\s*4551\b/i.test(value)
+
 const lastMatchIndex = (value: string, patterns: RegExp[]): number => {
   let latest = -1
   for (const pattern of patterns) {

@@ -1,4 +1,11 @@
 {
+  "diagnostics.appControl.title": "El control de aplicaciones de Windows bloqueó el inicio (4551)",
+  "diagnostics.appControl.detail": "El control de aplicaciones de Windows bloqueó llama-server. Puede deberse al Control inteligente de aplicaciones o a una directiva de la organización. Comprueba que la aplicación procede de una fuente de confianza antes de continuar.",
+  "diagnostics.appControl.manual": "Requiere intervención manual",
+  "diagnostics.appControl.step1": "Abre Configuración → Privacidad y seguridad → Seguridad de Windows → Control de aplicaciones y navegador → Configuración de Control inteligente de aplicaciones.",
+  "diagnostics.appControl.step2": "Si confías en esta aplicación y aceptas el riesgo de seguridad, selecciona Desactivado.",
+  "diagnostics.appControl.step3": "Reinicia AuraPro.",
+  "diagnostics.appControl.warning": "Desactivar el Control inteligente de aplicaciones reduce la protección. En algunas versiones de Windows, volver a activarlo puede requerir restablecer o reinstalar el sistema. Si la organización administra esta opción, no está disponible o el error persiste, contacta con el administrador. AuraPro no modifica esta configuración automáticamente.",
   "settings.pro.customContext": "Personalizado",
   "settings.pro.progress.preparing": "Preparando Pro",
   "settings.pro.progress.source": "Descargando el código fuente de Pro",

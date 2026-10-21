@@ -3,12 +3,58 @@ import test from 'node:test'
 import { mkdtemp, readFile, writeFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import i18next from 'i18next'
 import { RepairFiles } from '../src/main/utils/repair-files.ts'
 import { checkLlamaServiceHealth } from '../src/main/utils/llamacpp-health.ts'
 import {
   classifyLlamaCppLog,
-  inspectLlamaCppGpuLog
+  inspectLlamaCppGpuLog,
+  isWindowsApplicationControlBlock
 } from '../src/main/utils/llamacpp-log-diagnostics.ts'
+
+test('Windows application control guidance is translated in all four supported locales', async () => {
+  const fields = ['title', 'detail', 'manual', 'step1', 'step2', 'step3', 'warning']
+  for (const language of ['en-US', 'zh-CN', 'zh-TW', 'es-ES']) {
+    const translation = JSON.parse(
+      await readFile(
+        new URL(
+          `../src/renderer/src/lib/i18n/locales/${language}/translation.json`,
+          import.meta.url
+        ),
+        'utf8'
+      )
+    )
+    const instance = i18next.createInstance()
+    await instance.init({
+      lng: language,
+      fallbackLng: false,
+      resources: { [language]: { translation } }
+    })
+    for (const field of fields) {
+      const key = `diagnostics.appControl.${field}`
+      assert.equal(instance.exists(key), true, `${language}: ${key}`)
+      assert.equal(instance.t(key), translation[key])
+      assert.ok(instance.t(key).trim().length > 0)
+    }
+    assert.match(instance.t('diagnostics.appControl.title'), /4551/)
+    assert.match(instance.t('diagnostics.appControl.step3'), /AuraPro/)
+  }
+})
+
+test('Windows app control guidance is specific to error code 4551', () => {
+  assert.equal(
+    isWindowsApplicationControlBlock(
+      'Failed to spawn llama-server: Cannot create process, error code: 4551',
+      'win32'
+    ),
+    true
+  )
+  assert.equal(isWindowsApplicationControlBlock('[WinError 4551] blocked', 'win32'), true)
+  assert.equal(isWindowsApplicationControlBlock('error code: 45510', 'win32'), false)
+  assert.equal(isWindowsApplicationControlBlock('error code: 5', 'win32'), false)
+  assert.equal(isWindowsApplicationControlBlock('model has 4551 tokens', 'win32'), false)
+  assert.equal(isWindowsApplicationControlBlock('error code: 4551', 'darwin'), false)
+})
 
 test('failed repair restores original files even after replacement was written', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'aurapro-repair-test-'))

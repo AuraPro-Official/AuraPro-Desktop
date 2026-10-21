@@ -24,7 +24,8 @@ import {
   inspectLlamaCppGpuLog,
   inspectLlamaCppMainModelLog,
   inspectLlamaCppMtpLog,
-  inspectLlamaCppMultimodalLog
+  inspectLlamaCppMultimodalLog,
+  isWindowsApplicationControlBlock
 } from './llamacpp-log-diagnostics'
 import { getInstalledOpenCodeVersion, getOpenCodeServiceState } from './pi-agent'
 import { getSherpaServiceState } from './sherpa'
@@ -832,7 +833,9 @@ export const diagnoseLlamaCpp = async (
     const issues: LlamaDiagnosticIssue[] = state.detail
       ? [
           {
-            id: 'pro-runtime-failed',
+            id: isWindowsApplicationControlBlock(state.detail, process.platform)
+              ? 'windows-app-control-blocked'
+              : 'pro-runtime-failed',
             severity: 'error',
             title: 'Pro runtime needs attention',
             detail: state.detail,
@@ -1130,6 +1133,20 @@ export const diagnoseLlamaCpp = async (
     })
   }
   const startupContext = runtimeActive ? '' : (startupError ?? '')
+  if (
+    !runtimeActive &&
+    isWindowsApplicationControlBlock(`${startupContext}\n${binaryProbeOutput}`, process.platform)
+  ) {
+    const probeIssue = issues.find((issue) => issue.id === 'llamacpp-probe-failed')
+    if (probeIssue) issues.splice(issues.indexOf(probeIssue), 1)
+    addIssue(issues, {
+      id: 'windows-app-control-blocked',
+      severity: 'error',
+      title: 'Windows application control blocked llama-server',
+      detail: startupContext || binaryProbeOutput,
+      repairable: false
+    })
+  }
   const logs = currentLlamaModelLog(
     stripAnsi(`${getLlamaCppLog().join('\n')}\n${binaryProbeOutput}\n${startupContext}`)
   )

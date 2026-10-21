@@ -1,4 +1,11 @@
 {
+  "diagnostics.appControl.title": "Windows 应用控制阻止启动（4551）",
+  "diagnostics.appControl.detail": "Windows 应用控制策略阻止了 llama-server，可能是智能应用控制或组织策略。请确认程序来源可信后再处理。",
+  "diagnostics.appControl.manual": "需要手动处理",
+  "diagnostics.appControl.step1": "打开“设置 → 隐私和安全性 → Windows 安全中心 → 应用和浏览器控制 → 智能应用控制设置”。",
+  "diagnostics.appControl.step2": "确认信任此程序并接受安全风险后，选择“关”。",
+  "diagnostics.appControl.step3": "重启 AuraPro。",
+  "diagnostics.appControl.warning": "关闭智能应用控制会降低系统防护；部分 Windows 版本可能需要重置或重装系统才能重新开启。若设置由组织管理、没有此选项或关闭后仍报错，请联系管理员。AuraPro 不会自动修改此设置。",
   "settings.pro.customContext": "自定义",
   "settings.pro.progress.preparing": "正在准备 Pro",
   "settings.pro.progress.source": "正在下载 Pro 源码",

@@ -1,4 +1,11 @@
 {
+  "diagnostics.appControl.title": "Windows application control blocked startup (4551)",
+  "diagnostics.appControl.detail": "Windows application control blocked llama-server. This may be Smart App Control or an organization policy. Verify that the application comes from a trusted source before proceeding.",
+  "diagnostics.appControl.manual": "Manual action required",
+  "diagnostics.appControl.step1": "Open Settings → Privacy & security → Windows Security → App & browser control → Smart App Control settings.",
+  "diagnostics.appControl.step2": "If you trust this application and accept the security risk, select Off.",
+  "diagnostics.appControl.step3": "Restart AuraPro.",
+  "diagnostics.appControl.warning": "Turning off Smart App Control reduces protection. Some Windows versions may require a reset or reinstall to enable it again. If this setting is managed, unavailable, or the error persists, contact your administrator. AuraPro does not change this setting automatically.",
   "settings.pro.customContext": "Custom",
   "settings.pro.progress.preparing": "Preparing Pro",
   "settings.pro.progress.source": "Downloading Pro source",
