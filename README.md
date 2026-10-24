@@ -63,7 +63,6 @@ Some local components do not currently support paths containing Chinese characte
 | llama.cpp             | Local large language model inference              | Optional                      |
 | CUDA Runtime          | Runtime libraries for NVIDIA GPU inference        | Installed with a CUDA variant |
 | Sherpa                | Local speech recognition and text-to-speech       | Optional                      |
-| Open Terminal         | Local terminal service                            | Optional                      |
 
 ## Data and Security
 

@@ -8,21 +8,18 @@
   interface Props {
     serverStatus: string | undefined
     serverReachable: boolean | undefined
-    openTerminalStatus: string | null
     openCodeStatus: string | null
     llamaCppStatus: string | null
     proStatus: string
     proInstalled: boolean
     sherpaStatus: string | null
     openWebuiInstalled: boolean
-    openTerminalInstalled: boolean
     openCodeInstalled: boolean
     llamaCppInstalled: boolean
     sherpaInstalled: boolean
     activeLog: string | null
     onSelectLog: (log: string) => void
     onStartServer: () => void
-    onToggleOpenTerminal: () => void
     onToggleOpenCode: () => void
     onToggleLlamaCpp: () => void
     onToggleSherpa: () => void
@@ -33,21 +30,18 @@
   let {
     serverStatus,
     serverReachable,
-    openTerminalStatus,
     openCodeStatus,
     llamaCppStatus,
     proStatus,
     proInstalled,
     sherpaStatus,
     openWebuiInstalled,
-    openTerminalInstalled,
     openCodeInstalled,
     llamaCppInstalled,
     sherpaInstalled,
     activeLog,
     onSelectLog,
     onStartServer,
-    onToggleOpenTerminal,
     onToggleOpenCode,
     onToggleLlamaCpp,
     onToggleSherpa,
@@ -60,12 +54,6 @@
   const serverStarting = $derived(
     serverStatus === 'starting' || (serverStatus === 'started' && !serverReachable)
   )
-
-  const otRunning = $derived(openTerminalStatus === 'started')
-  const otStarting = $derived(
-    openTerminalStatus === 'starting' || openTerminalStatus === 'stopping'
-  )
-  const otFailed = $derived(openTerminalStatus === 'failed')
 
   const openCodeRunning = $derived(openCodeStatus === 'started')
   const openCodeStarting = $derived(
@@ -90,7 +78,6 @@
   // Derived visibility — show each section only when installed or active
   const statusShouldShow = (status: string | null) => Boolean(status && status !== 'stopped')
   const showServer = $derived(openWebuiInstalled || !!serverStatus)
-  const showTerminal = $derived(openTerminalInstalled || statusShouldShow(openTerminalStatus))
   const showOpenCode = $derived(openCodeInstalled || statusShouldShow(openCodeStatus))
   const showLlama = $derived(llamaCppInstalled || !!llamaCppStatus)
   const showSherpa = $derived(sherpaInstalled || statusShouldShow(sherpaStatus))
@@ -155,52 +142,8 @@
     </button>
   {/if}
 
-  {#if showTerminal}
-    {#if showServer}
-      <div class="w-px h-3 bg-black/[0.08] dark:bg-white/[0.08] mx-0.5"></div>
-    {/if}
-
-    <!-- Open Terminal status -->
-    <button
-      class="flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] transition-all bg-transparent border-none cursor-pointer text-[#1d1d1f] dark:text-[#fafafa] {activeLog ===
-      'open-terminal'
-        ? 'bg-black/[0.08] dark:bg-white/[0.1] opacity-90'
-        : 'opacity-50 hover:opacity-80 hover:bg-black/[0.04] dark:hover:bg-white/[0.06]'}"
-      onclick={() => {
-        if (!otRunning && !otStarting) {
-          onToggleOpenTerminal()
-        }
-        onSelectLog('open-terminal')
-      }}
-      oncontextmenu={(e) => {
-        e.preventDefault()
-        if (otRunning) onToggleOpenTerminal()
-      }}
-      use:tooltip={otRunning
-        ? activeLog === 'open-terminal'
-          ? $i18n.t('sidebar.tooltip.hideLogs')
-          : $i18n.t('sidebar.tooltip.viewLogs')
-        : otStarting
-          ? $i18n.t('common.starting')
-          : otFailed
-            ? $i18n.t('sidebar.tooltip.clickToRetry')
-            : $i18n.t('sidebar.tooltip.startTerminalServer')}
-    >
-      <div
-        class="w-[7px] h-[7px] shrink-0 rounded-full {otRunning
-          ? 'bg-emerald-400 shadow-[0_0_5px_rgba(52,211,153,0.6)]'
-          : otStarting
-            ? 'bg-amber-400 animate-pulse'
-            : otFailed
-              ? 'bg-red-400'
-              : 'bg-black/15 dark:bg-white/20'}"
-      ></div>
-      <span>{$i18n.t('sidebar.openTerminal')}</span>
-    </button>
-  {/if}
-
   {#if showOpenCode}
-    {#if showServer || showTerminal}
+    {#if showServer}
       <div class="mx-0.5 h-3 w-px bg-black/[0.08] dark:bg-white/[0.08]"></div>
     {/if}
 
@@ -238,12 +181,12 @@
               ? 'bg-red-400'
               : 'bg-black/15 dark:bg-white/20'}"
       ></div>
-      <span>PI Agent</span>
+      <span>Agent</span>
     </button>
   {/if}
 
   {#if showLlama}
-    {#if showServer || showTerminal || showOpenCode}
+    {#if showServer || showOpenCode}
       <div class="w-px h-3 bg-black/[0.08] dark:bg-white/[0.08] mx-0.5"></div>
     {/if}
 
@@ -309,7 +252,7 @@
   {/if}
 
   {#if showSherpa}
-    {#if showServer || showTerminal || showOpenCode || showLlama}
+    {#if showServer || showOpenCode || showLlama}
       <div class="w-px h-3 bg-black/[0.08] dark:bg-white/[0.08] mx-0.5"></div>
     {/if}
 

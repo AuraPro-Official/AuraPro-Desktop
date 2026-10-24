@@ -591,8 +591,6 @@
         await window.electronAPI.stopLlamaCpp()
       } else if (stage === 'speech') {
         await window.electronAPI.stopSherpa()
-      } else if (stage === 'terminal') {
-        await window.electronAPI.stopOpenTerminal()
       } else if (stage === 'opencode') {
         await window.electronAPI.stopOpenCode()
       } else if (stage === 'webui-start') {
@@ -768,10 +766,6 @@
         serveOnLocalNetwork: true,
         ragHardwareAcceleration: llamaCppVariant.startsWith('cuda-') && ragHardwareAcceleration
       }
-      configUpdates.openTerminal = {
-        ...(current.openTerminal || {}),
-        enabled: false
-      }
       configUpdates.sherpa = {
         ...(current.sherpa || {}),
         enabled: installSherpaRecommended
@@ -809,13 +803,6 @@
       if (!ok) throw new Error($i18n.t('setup.install.failed'))
       coreProgress = 34
 
-      if (!(await window.electronAPI.getOpenTerminalStatus())) {
-        installWarnings = [
-          ...installWarnings,
-          createOptionalInstallWarning('Open Terminal', 'The optional package was not installed.')
-        ]
-      }
-
       if (installOpenCode) {
         currentInstallStage = 'opencode'
         coreProgress = 35
@@ -824,20 +811,20 @@
           await window.electronAPI.installOpenCode()
           const openCodeResult = await window.electronAPI.startOpenCode()
           if (!openCodeResult?.url) {
-            throw new Error('OpenCode did not become ready. Check the OpenCode log for details.')
+            throw new Error('Agent did not become ready. Check the Agent log for details.')
           }
         } catch (firstError) {
-          console.warn('OpenCode install failed; retrying once:', firstError)
+          console.warn('Agent install failed; retrying once:', firstError)
           await prepareAutomaticRepair('opencode')
           await wait(1000)
           try {
             await window.electronAPI.installOpenCode()
             await window.electronAPI.startOpenCode()
           } catch (retryError) {
-            console.warn('OpenCode install failed; continuing setup:', retryError)
+            console.warn('Agent install failed; continuing setup:', retryError)
             installWarnings = [
               ...installWarnings,
-              createOptionalInstallWarning('OpenCode', retryError)
+              createOptionalInstallWarning('Agent', retryError)
             ]
           }
         }
@@ -1196,7 +1183,7 @@
         核心组件 6 GB{llamaCppVariant.startsWith('cuda-') && ragHardwareAcceleration
           ? ' · RAG CUDA 约 3 GB'
           : ''}
-        {installOpenCode ? ' · PI Agent' : ''}
+        {installOpenCode ? ' · Agent' : ''}
       </div>
     </div>
 

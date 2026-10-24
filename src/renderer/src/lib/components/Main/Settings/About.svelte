@@ -6,7 +6,6 @@
   import { getErrorMessage } from '../../../utils/errors'
 
   let openWebuiVersion = $state<string | null>(null)
-  let openTerminalVersion = $state<string | null>(null)
   let openCodeVersion = $state<string | null>(null)
   let llamaCppVersion = $state<string | null>(null)
   let sherpaVersion = $state<string | null>(null)
@@ -145,7 +144,6 @@
 
   onMount(async () => {
     openWebuiVersion = await window.electronAPI.getPackageVersion('aurapro-webui')
-    openTerminalVersion = await window.electronAPI.getPackageVersion('open-terminal')
     sherpaVersion = await window.electronAPI.getPackageVersion('sherpa-onnx')
 
     try {
@@ -326,24 +324,12 @@
     </button>
   {/if}
 
-  {#if openTerminalVersion}
-    <button
-      class="w-full py-4 flex items-center justify-between bg-transparent border-none cursor-pointer group"
-      onclick={() => openRelease('open-webui/open-terminal', openTerminalVersion!)}
-    >
-      <div class="text-[13px] opacity-70">{$i18n.t('settings.about.openTerminalVersion')}</div>
-      <div class="text-[12px] opacity-30 group-hover:opacity-50 transition">
-        {openTerminalVersion}
-      </div>
-    </button>
-  {/if}
-
   {#if openCodeVersion}
     <button
       class="group flex w-full cursor-pointer items-center justify-between border-none bg-transparent py-4"
-      onclick={() => openRelease('anomalyco/opencode', openCodeVersion!)}
+      onclick={() => openRelease('earendil-works/pi', openCodeVersion!)}
     >
-      <div class="text-[13px] opacity-70">OpenCode</div>
+      <div class="text-[13px] opacity-70">Agent</div>
       <div class="text-[12px] opacity-30 transition group-hover:opacity-50">
         {openCodeVersion}
       </div>

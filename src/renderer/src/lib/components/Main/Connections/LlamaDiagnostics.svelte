@@ -27,7 +27,7 @@
       auraProVersion: string
       webuiVersion: string | null
       optionalComponents: Array<{
-        id: 'sherpa' | 'official-glossaries' | 'open-terminal' | 'opencode' | 'pytorch'
+        id: 'sherpa' | 'official-glossaries' | 'opencode' | 'pytorch'
         version: string
         health?:
           | 'disabled'
@@ -130,8 +130,7 @@
     const labels: Record<typeof id, [string, string]> = {
       sherpa: ['Sherpa', 'Sherpa'],
       'official-glossaries': ['词典', 'Glossaries'],
-      'open-terminal': ['Open Terminal', 'Open Terminal'],
-      opencode: ['OpenCode', 'OpenCode'],
+      opencode: ['Agent', 'Agent'],
       pytorch: ['PyTorch', 'PyTorch']
     }
     return text(...labels[id])

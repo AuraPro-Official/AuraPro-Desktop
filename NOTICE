@@ -38,5 +38,5 @@ Trademarks
   branding within the bundled web interface is retained.
 
 Bundled third-party components surfaced in the app include, among others,
-llama.cpp (ggml-org), sherpa-onnx (k2-fsa), and Open Terminal, each under their
+llama.cpp (ggml-org) and sherpa-onnx (k2-fsa), each under their
 respective licenses.

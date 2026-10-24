@@ -99,9 +99,9 @@
     <section class="py-4">
       <div class="flex items-start justify-between gap-4">
         <div>
-          <div class="text-[13px] font-medium opacity-80">PI Agent</div>
+          <div class="text-[13px] font-medium opacity-80">Agent</div>
           <div class="mt-1 text-[11px] leading-5 opacity-35">
-            PI 执行核心与扩展在本机运行。任务、模型配置、确认和结果都在 WebUI 中操作。
+            Agent 执行核心与扩展在本机运行。任务、模型配置、确认和结果都在 WebUI 中操作。
           </div>
         </div>
         <div class="flex shrink-0 items-center gap-1.5">
@@ -188,12 +188,12 @@
           <div>
             <div class="text-[13px] opacity-70">启动时启用</div>
             <div class="mt-0.5 text-[11px] opacity-30">
-              打开 AuraPro 后允许 WebUI 启动 PI 任务。
+              打开 AuraPro 后允许 WebUI 启动 Agent 任务。
             </div>
           </div>
           <Switch
             checked={$config?.openCode?.enabled ?? false}
-            label="启动时启用 PI"
+            label="启动时启用 Agent"
             onchange={(value) => updateConfig('enabled', value)}
           />
         </div>
@@ -250,14 +250,14 @@
 
       <section class="flex items-center justify-between gap-4 py-4">
         <div>
-          <div class="text-[13px] opacity-70">卸载 PI 运行时</div>
+          <div class="text-[13px] opacity-70">卸载 Agent 运行时</div>
           <div class="mt-0.5 text-[11px] opacity-30">保留模型配置、扩展和会话记录。</div>
         </div>
         <button
           class="rounded-md border-0 bg-red-500/10 px-3 py-1.5 text-[12px] text-red-600 disabled:opacity-35 dark:text-red-300"
           disabled={action !== null}
           onclick={() => {
-            if (confirm('卸载 AuraPro 管理的 PI 运行时？')) {
+            if (confirm('卸载 AuraPro 管理的 Agent 运行时？')) {
               void runAction('uninstall', () => window.electronAPI.uninstallOpenCode())
             }
           }}
@@ -266,9 +266,9 @@
         </button>
       </section>
       <section class="space-y-3 py-4">
-        <div class="text-[13px] opacity-80">PI 扩展</div>
+        <div class="text-[13px] opacity-80">Agent 扩展</div>
         <div class="text-[11px] opacity-45">
-          安装成功后，在 WebUI 的 PI Agent
+          安装成功后，在 WebUI 的 Agent
           设置中执行功能检查。检查通过后再使用。已有会话需要重置后加载新扩展。
         </div>
         {#each extensions as extension (extension.id)}

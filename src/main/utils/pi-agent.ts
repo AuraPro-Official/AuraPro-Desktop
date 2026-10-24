@@ -74,7 +74,7 @@ function run(args: string[], timeout = 30000): Promise<string> {
 }
 async function download(url: string, target: string, onStatus?: (message: string) => void) {
   await downloadFileWithProgress(url, target, (percent) =>
-    onStatus?.(`Downloading PI runtime… ${percent.toFixed(0)}%`)
+    onStatus?.(`Downloading Agent runtime… ${percent.toFixed(0)}%`)
   )
 }
 async function extract(archive: string, destination: string) {
@@ -109,15 +109,15 @@ export async function setupPi(
   onStatus?: (message: string) => void,
   force = false
 ) {
-  if (changing) throw new Error('PI installation is already in progress.')
+  if (changing) throw new Error('Agent installation is already in progress.')
   if (
     !['win32', 'darwin', 'linux'].includes(process.platform) ||
     !['x64', 'arm64'].includes(process.arch)
   )
-    throw new Error('PI does not support this platform.')
+    throw new Error('Agent does not support this platform.')
   const version =
     requestedVersion && requestedVersion !== 'latest' ? requestedVersion.replace(/^v/, '') : VERSION
-  if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Use a fixed PI release version.')
+  if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Use a fixed Agent release version.')
   if (fs.existsSync(binary()) && !force) return binary()
   changing = true
   const staging = path.join(root(), `staging-${crypto.randomUUID()}`)
@@ -134,14 +134,14 @@ export async function setupPi(
     await extract(archive, unpacked)
     const exeName = process.platform === 'win32' ? 'pi.exe' : 'pi'
     if (!fs.existsSync(path.join(unpacked, exeName)))
-      throw new Error('PI executable missing from release.')
+      throw new Error('Agent executable missing from release.')
     if (process.platform !== 'win32') fs.chmodSync(path.join(unpacked, exeName), 0o755)
     const actual = execFileSync(path.join(unpacked, exeName), ['--version'], {
       encoding: 'utf8',
       timeout: 15000,
       windowsHide: true
     }).trim()
-    if (actual !== version) throw new Error('PI version verification failed.')
+    if (actual !== version) throw new Error('Agent version verification failed.')
     fs.mkdirSync(agentDir(), { recursive: true })
     const destination = path.join(root(), 'bin')
     const previous = path.join(staging, 'previous')
@@ -156,12 +156,12 @@ export async function setupPi(
       path.join(root(), 'install.json'),
       JSON.stringify({ version, installedAt: new Date().toISOString() })
     )
-    onStatus?.('PI runtime verified')
-    report(`PI ${version} installed`)
+    onStatus?.('Agent runtime verified')
+    report(`Agent ${version} installed`)
     return binary()
   } finally {
     changing = false
-    // staging is generated directly beneath the managed PI directory.
+    // staging is generated directly beneath the managed Agent directory.
     fs.rmSync(staging, { recursive: true, force: true })
   }
 }
@@ -191,7 +191,7 @@ function copyExtension() {
       )
     ]
   ].filter(([id]) => states[id]?.installed)
-  // Static imports let PI's extension loader resolve its bundled host modules.
+  // Static imports let Agent's extension loader resolve its bundled host modules.
   const imports = entries
     .map(
       ([, file], index) =>
@@ -257,7 +257,7 @@ export async function startPi(_port: number | null = null, onStatus?: (message: 
   fs.renameSync(temporary, file)
   active = true
   status = 'started'
-  report('PI is available. WebUI starts isolated RPC sessions on demand.')
+  report('Agent is available. WebUI starts isolated RPC sessions on demand.')
   return { url: 'pi://local:39484', pid: process.pid, version: version.trim(), username: 'aurapro' }
 }
 export async function stopPi() {
@@ -265,7 +265,7 @@ export async function stopPi() {
   status = 'stopped'
   fs.rmSync(getOpenCodeRuntimeFilePath(), { force: true })
   handler?.(status)
-  report('PI disabled; WebUI sessions will stop.')
+  report('Agent disabled; WebUI sessions will stop.')
 }
 export async function uninstallPi() {
   await stopPi()
@@ -344,7 +344,7 @@ async function ensureSdk(version: string, onStatus?: (message: string) => void) 
     JSON.parse(fs.readFileSync(metadata, 'utf8')).version === version
   )
     return
-  onStatus?.('Installing PI Node runtime for extension compatibility…')
+  onStatus?.('Installing Agent Node runtime for extension compatibility…')
   const npm = path.join(
     nodeRoot(),
     process.platform === 'win32' ? 'node_modules' : 'lib/node_modules',
@@ -382,8 +382,8 @@ export async function managePiExtension(
   onStatus?: (message: string) => void
 ) {
   const item = PI_EXTENSIONS.find((item) => item.id === id)
-  if (!item) throw new Error('Unknown PI extension.')
-  if (changing) throw new Error('Another PI installation is in progress.')
+  if (!item) throw new Error('Unknown Agent extension.')
+  if (changing) throw new Error('Another Agent installation is in progress.')
   if (!fs.existsSync(binary())) await setupPi(undefined, onStatus)
   changing = true
   const states = extensionStates()

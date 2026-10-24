@@ -52,7 +52,6 @@
   }
 
   interface InstallOptions {
-    installOpenTerminal?: boolean
     installOpenCode?: boolean
     installLlamaCpp?: boolean
     installSherpa?: boolean
@@ -121,9 +120,7 @@
   let llamaDiagnosticsLoadPromise: Promise<LlamaDiagnosticsComponentType> | null = null
 
   // Active log panel
-  let activeLog = $state<
-    'server' | 'open-terminal' | 'opencode' | 'llama-server' | 'pro' | 'sherpa' | null
-  >(null)
+  let activeLog = $state<'server' | 'opencode' | 'llama-server' | 'pro' | 'sherpa' | null>(null)
 
   const loadLlamaDiagnostics = () => {
     llamaDiagnosticsLoadPromise ??= import('./Connections/LlamaDiagnostics.svelte').then(
@@ -141,9 +138,6 @@
   const localConn = $derived(($connections ?? []).find((c) => c.type === 'local'))
   const remoteConnections = $derived(($connections ?? []).filter((c) => c.type !== 'local'))
   const statusBarServiceActive = (status: string | null) => Boolean(status && status !== 'stopped')
-  const showOpenTerminalInStatusBar = $derived(
-    Boolean($config?.openTerminal?.enabled) || statusBarServiceActive(openTerminalStatus)
-  )
   const showOpenCodeInStatusBar = $derived(
     openCodeInstalled || statusBarServiceActive(openCodeStatus)
   )
@@ -285,9 +279,7 @@
     }
   }
 
-  // Open Terminal state
-  let openTerminalStatus = $state<string | null>(null)
-  // OpenCode state
+  // Agent state
   let openCodeStatus = $state<string | null>(null)
   let openCodeSetupStatus = $state('')
   let openCodeInstalled = $state(false)
@@ -315,8 +307,6 @@
         await window.electronAPI.cancelHfDownload()
       } else if (stage === 'llama-runtime') {
         await window.electronAPI.stopLlamaCpp()
-      } else if (stage === 'terminal') {
-        await window.electronAPI.stopOpenTerminal()
       } else if (stage === 'opencode') {
         await window.electronAPI.stopOpenCode()
       } else if (stage === 'speech') {
@@ -381,12 +371,6 @@
         serveOnLocalNetwork: true,
         ragHardwareAcceleration:
           selectedVariant.startsWith('cuda-') && resolvedOptions?.ragHardwareAcceleration === true
-      }
-      if (Object.prototype.hasOwnProperty.call(resolvedOptions, 'installOpenTerminal')) {
-        configUpdates.openTerminal = {
-          ...(currentConfig.openTerminal || {}),
-          enabled: resolvedOptions.installOpenTerminal === true
-        }
       }
       if (Object.prototype.hasOwnProperty.call(resolvedOptions, 'installOpenCode')) {
         configUpdates.openCode = {
@@ -554,17 +538,6 @@
         }
       }
 
-      if (resolvedOptions?.installOpenTerminal) {
-        currentInstallStage = 'terminal'
-        installStatus = 'Starting Open Terminal...'
-        installProgress = 80
-        const openTerminalResult = await window.electronAPI.startOpenTerminal()
-        if (!openTerminalResult?.url) {
-          throw new Error('Open Terminal did not start. Check the Open Terminal log for details.')
-        }
-        openTerminalStatus = 'started'
-      }
-
       if (resolvedOptions?.installOpenCode) {
         currentInstallStage = 'opencode'
         installStatus = $i18n.t('setup.install.opencodeInstalling')
@@ -572,7 +545,7 @@
         await window.electronAPI.installOpenCode()
         const openCodeResult = await window.electronAPI.startOpenCode()
         if (!openCodeResult?.url) {
-          throw new Error('PI did not start. Check the PI Agent log for details.')
+          throw new Error('Agent did not start. Check the Agent log for details.')
         }
         openCodeInstalled = true
         openCodeStatus = 'started'
@@ -835,8 +808,6 @@
     return (callback: (data: string) => void) => {
       if (log === 'server') {
         window.electronAPI.connectPty(callback)
-      } else if (log === 'open-terminal') {
-        window.electronAPI.connectOpenTerminalPty(callback)
       } else if (log === 'opencode') {
         window.electronAPI.connectOpenCodePty(callback)
       } else if (log === 'llama-server') {
@@ -853,8 +824,6 @@
     return () => {
       if (log === 'server') {
         window.electronAPI.disconnectPty()
-      } else if (log === 'open-terminal') {
-        window.electronAPI?.disconnectOpenTerminalPty?.()
       } else if (log === 'opencode') {
         window.electronAPI?.disconnectOpenCodePty?.()
       } else if (log === 'llama-server') {
@@ -999,14 +968,6 @@
       }
 
       // ── Desktop-only state (not forwarded to webviews) ─
-      if (data.type === 'status:open-terminal') {
-        openTerminalStatus = textPayload
-        return
-      }
-      if (data.type === 'open-terminal:ready') {
-        openTerminalStatus = 'started'
-        return
-      }
       if (data.type === 'status:opencode') {
         openCodeStatus = textPayload
         return
@@ -1075,13 +1036,6 @@
       sendToWebview(data)
     })
 
-    // Check current Open Terminal state on mount
-    window.electronAPI.getOpenTerminalInfo().then((info: ServiceInfo | null) => {
-      if (info?.status) {
-        openTerminalStatus = info.status
-      }
-    })
-
     Promise.all([
       window.electronAPI.getOpenCodeStatus(),
       window.electronAPI.getOpenCodeInfo()
@@ -1135,23 +1089,6 @@
       }
     }
   })
-
-  const toggleOpenTerminal = async () => {
-    if (openTerminalStatus === 'starting') return
-    if (openTerminalStatus === 'started') {
-      openTerminalStatus = 'stopping'
-      await window.electronAPI.stopOpenTerminal()
-      openTerminalStatus = null
-    } else {
-      openTerminalStatus = 'starting'
-      const result = await window.electronAPI.startOpenTerminal()
-      if (result) {
-        openTerminalStatus = 'started'
-      } else {
-        openTerminalStatus = 'failed'
-      }
-    }
-  }
 
   const toggleOpenCode = async () => {
     if (openCodeStatus === 'starting' || openCodeStatus === 'installing') return
@@ -1208,7 +1145,7 @@
   }
 
   const restartLogService = async (
-    log: 'server' | 'open-terminal' | 'opencode' | 'llama-server' | 'pro' | 'sherpa'
+    log: 'server' | 'opencode' | 'llama-server' | 'pro' | 'sherpa'
   ) => {
     if (log === 'pro') {
       await window.electronAPI.stopStrata()
@@ -1219,19 +1156,6 @@
     if (log === 'server') {
       await window.electronAPI.restartServer()
       serverInfo.set(await window.electronAPI.getServerInfo())
-      return
-    }
-
-    if (log === 'open-terminal') {
-      openTerminalStatus = 'stopping'
-      await window.electronAPI.stopOpenTerminal()
-      openTerminalStatus = 'starting'
-      const result = await window.electronAPI.startOpenTerminal()
-      if (result) {
-        openTerminalStatus = 'started'
-      } else {
-        openTerminalStatus = 'failed'
-      }
       return
     }
 
@@ -1348,65 +1272,55 @@
       {activeLog}
       serviceReady={activeLog === 'server'
         ? serverStatus === 'started'
-        : activeLog === 'open-terminal'
-          ? openTerminalStatus === 'started'
-          : activeLog === 'opencode'
-            ? openCodeStatus === 'started'
-            : activeLog === 'llama-server'
-              ? llamaCppStatus === 'started'
-              : activeLog === 'pro'
-                ? proInfo?.status === 'started'
-                : sherpaStatus === 'started'}
+        : activeLog === 'opencode'
+          ? openCodeStatus === 'started'
+          : activeLog === 'llama-server'
+            ? llamaCppStatus === 'started'
+            : activeLog === 'pro'
+              ? proInfo?.status === 'started'
+              : sherpaStatus === 'started'}
       statusText={activeLog === 'server'
         ? serverStatus === 'starting'
           ? 'Starting AuraPro…'
           : serverStatus === 'running' && !serverReachable
             ? 'Waiting for server…'
             : installStatus || ''
-        : activeLog === 'open-terminal'
-          ? openTerminalStatus === 'stopping'
-            ? 'Stopping Open Terminal…'
-            : openTerminalStatus === 'starting'
-              ? 'Starting Open Terminal…'
-              : ''
-          : activeLog === 'opencode'
-            ? openCodeStatus === 'stopping'
-              ? 'Stopping PI…'
-              : openCodeSetupStatus || (openCodeStatus === 'starting' ? 'Starting PI…' : '')
-            : activeLog === 'llama-server'
-              ? llamaCppStatus === 'stopping'
-                ? 'Stopping llama-server…'
-                : llamaCppSetupStatus ||
-                  (llamaCppStatus === 'starting'
-                    ? 'Starting llama-server…'
-                    : llamaCppStatus === 'setting-up'
-                      ? 'Setting up llama.cpp…'
-                      : '')
-              : activeLog === 'pro'
-                ? proInfo?.progress?.detail || proInfo?.error || ''
-                : sherpaStatus === 'stopping'
-                  ? 'Stopping sherpa…'
-                  : sherpaSetupStatus || (sherpaStatus === 'starting' ? 'Starting sherpa…' : '')}
+        : activeLog === 'opencode'
+          ? openCodeStatus === 'stopping'
+            ? 'Stopping Agent…'
+            : openCodeSetupStatus || (openCodeStatus === 'starting' ? 'Starting Agent…' : '')
+          : activeLog === 'llama-server'
+            ? llamaCppStatus === 'stopping'
+              ? 'Stopping llama-server…'
+              : llamaCppSetupStatus ||
+                (llamaCppStatus === 'starting'
+                  ? 'Starting llama-server…'
+                  : llamaCppStatus === 'setting-up'
+                    ? 'Setting up llama.cpp…'
+                    : '')
+            : activeLog === 'pro'
+              ? proInfo?.progress?.detail || proInfo?.error || ''
+              : sherpaStatus === 'stopping'
+                ? 'Stopping sherpa…'
+                : sherpaSetupStatus || (sherpaStatus === 'starting' ? 'Starting sherpa…' : '')}
       connectPty={getConnectPty(activeLog)}
       disconnectPty={getDisconnectPty(activeLog)}
       readonly={activeLog !== 'server'}
       showBufferedLogs={activeLog === 'pro'}
       onWrite={getOnWrite(activeLog)}
       onResize={getOnResize(activeLog)}
-      onStop={activeLog === 'open-terminal'
-        ? toggleOpenTerminal
-        : activeLog === 'opencode'
-          ? toggleOpenCode
-          : activeLog === 'llama-server'
-            ? toggleLlamaCpp
-            : activeLog === 'pro'
-              ? async () => {
-                  await window.electronAPI.stopStrata()
-                  proInfo = await window.electronAPI.getStrataInfo()
-                }
-              : activeLog === 'sherpa'
-                ? toggleSherpa
-                : undefined}
+      onStop={activeLog === 'opencode'
+        ? toggleOpenCode
+        : activeLog === 'llama-server'
+          ? toggleLlamaCpp
+          : activeLog === 'pro'
+            ? async () => {
+                await window.electronAPI.stopStrata()
+                proInfo = await window.electronAPI.getStrataInfo()
+              }
+            : activeLog === 'sherpa'
+              ? toggleSherpa
+              : undefined}
       onRestart={() => restartLogService(activeLog)}
       onClose={() => {
         activeLog = null
@@ -1420,12 +1334,10 @@
     proInstalled={!!proInfo?.installed}
     {serverStatus}
     {serverReachable}
-    {openTerminalStatus}
     {openCodeStatus}
     {llamaCppStatus}
     {sherpaStatus}
     openWebuiInstalled={localInstalled}
-    openTerminalInstalled={showOpenTerminalInStatusBar}
     openCodeInstalled={showOpenCodeInStatusBar}
     llamaCppInstalled={!!llamaCppInfo?.binaryPath}
     sherpaInstalled={showSherpaInStatusBar}
@@ -1443,7 +1355,6 @@
       const info = await window.electronAPI.getServerInfo()
       serverInfo.set(info)
     }}
-    onToggleOpenTerminal={toggleOpenTerminal}
     onToggleOpenCode={toggleOpenCode}
     onToggleLlamaCpp={toggleLlamaCpp}
     onToggleSherpa={toggleSherpa}

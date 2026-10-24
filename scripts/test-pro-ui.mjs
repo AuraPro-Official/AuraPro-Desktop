@@ -260,7 +260,6 @@ server.middlewares.use('/__setup_test', async (_req, res) => {
     getConfig: async () => structuredClone(config),
     setConfig: async patch => {config={...config,...patch};},
     getPythonStatus: async () => true,
-    getOpenTerminalStatus: async () => true,
     getServerInfo: async () => ({reachable:true,url:'http://127.0.0.1:8081'}),
     getConnections: async () => [],
     onData: () => () => {},

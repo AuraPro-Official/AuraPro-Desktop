@@ -76,7 +76,7 @@
         '确认目录不是只读后重试。'
       ],
       'file-locked': [
-        '关闭 AuraPro、Python、llama.cpp、Open Terminal 和 Sherpa 进程。',
+        '关闭 AuraPro、Python、llama.cpp 和 Sherpa 进程。',
         '检查杀毒软件隔离区，并允许 AuraPro 安装目录。',
         '重启 AuraPro 后重新安装。'
       ],

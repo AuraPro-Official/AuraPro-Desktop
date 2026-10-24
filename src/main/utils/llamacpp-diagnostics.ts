@@ -29,7 +29,6 @@ import {
 } from './llamacpp-log-diagnostics'
 import { getInstalledOpenCodeVersion, getOpenCodeServiceState } from './pi-agent'
 import { getSherpaServiceState } from './sherpa'
-import { getOpenTerminalInfo } from './open-terminal'
 import { checkOptionalService, type OptionalServiceHealth } from './optional-service-health'
 import { getInstalledOfficialGlossaryVersion } from './official-glossaries'
 import { RepairFiles } from './repair-files'
@@ -74,7 +73,7 @@ export interface LlamaDiagnosticReport {
     auraProVersion: string
     webuiVersion: string | null
     optionalComponents: Array<{
-      id: 'sherpa' | 'official-glossaries' | 'open-terminal' | 'opencode' | 'pytorch'
+      id: 'sherpa' | 'official-glossaries' | 'opencode' | 'pytorch'
       version: string
       health?: OptionalServiceHealth
     }>
@@ -225,7 +224,6 @@ const getSoftwareVersions = async (): Promise<LlamaDiagnosticReport['software']>
     'aurapro-ui',
     'open-webui',
     'sherpa-onnx',
-    'open-terminal',
     'torch'
   ])
   const glossaryVersion = await getInstalledOfficialGlossaryVersion()
@@ -240,7 +238,6 @@ const getSoftwareVersions = async (): Promise<LlamaDiagnosticReport['software']>
 
   addOptional('sherpa', packageVersions['sherpa-onnx'])
   addOptional('official-glossaries', glossaryVersion)
-  addOptional('open-terminal', packageVersions['open-terminal'])
   addOptional('opencode', openCodeVersion)
   addOptional('pytorch', packageVersions.torch)
 
@@ -803,12 +800,6 @@ export const diagnoseLlamaCpp = async (
                 getOpenCodeServiceState().username + ':' + (config.openCode?.password ?? '')
               ).toString('base64')
           }
-        })
-      } else if (component.id === 'open-terminal') {
-        component.health = await checkOptionalService({
-          enabled: config.openTerminal?.enabled === true,
-          activeProbe,
-          snapshot: getOpenTerminalInfo
         })
       }
     })

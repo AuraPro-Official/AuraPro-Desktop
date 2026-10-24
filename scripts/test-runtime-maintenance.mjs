@@ -48,6 +48,7 @@ const setup = ({
     getExactPackageVersion: (name) => installed[name] ?? null,
     isVersionAtOrBefore: () => true,
     hasOpenWebUICoreFiles: () => true,
+    hasSharedPythonRuntimeImports: () => true,
     getOpenWebUIDataPath: () => '/preserved-data',
     log: { info: () => undefined, warn: () => undefined },
     prepareOpenWebUIPackageMutation: async () => events.push('prepare'),
@@ -123,27 +124,85 @@ test('legacy migration preserves the new distribution and cleans after dependenc
   assert.deepEqual(events, ['prepare', 'install', 'remove:aurapro-ui', 'torch', 'epub', 'cleanup'])
 })
 
-const setupTorch = () => {
+const setupTorch = ({
+  platform = 'win32',
+  arch = 'x64',
+  release = '23.0.0',
+  variant = 'cpu',
+  acceleration = false,
+  installedVersion = null
+} = {}) => {
   const child = new EventEmitter()
   child.stdout = new EventEmitter()
   child.stderr = new EventEmitter()
   let started = false
+  let installArgs
   const install = loadFunction('installTorchPackage', {
-    getConfig: async () => ({ llamaCpp: { variant: 'cpu' } }),
-    getExactPackageVersion: () => null,
+    getConfig: async () => ({
+      llamaCpp: { variant },
+      localServer: { ragHardwareAcceleration: acceleration }
+    }),
+    getExactPackageVersion: () => installedVersion,
     getPythonPath: () => 'test-python',
     pythonEnv: () => ({}),
-    process: { platform: 'win32', arch: 'x64' },
+    process: { platform, arch },
+    os: { release: () => release },
     log: { info: () => undefined, warn: () => undefined },
     spawn: (_python, args, options) => {
-      assert.ok(args.includes('torch==2.8.0+cpu'))
+      installArgs = args
       assert.equal(options.windowsHide, true)
       started = true
       return child
     }
   })
-  return { child, install, isStarted: () => started }
+  return { child, install, isStarted: () => started, getArgs: () => installArgs }
 }
+
+test('torch selects published security-patched wheels and preserves legacy Mac compatibility', async () => {
+  for (const [options, expected, backend] of [
+    [{}, '2.13.0+cpu', 'cpu'],
+    [{ platform: 'linux' }, '2.13.0+cpu', 'cpu'],
+    [{ platform: 'linux', arch: 'arm64' }, '2.13.0+cpu', 'cpu'],
+    [{ arch: 'arm64' }, '2.13.0+cpu', 'cpu'],
+    [{ variant: 'cuda-12.4', acceleration: true }, '2.13.0+cu126', 'cu126'],
+    [{ variant: 'cuda-13.3', acceleration: true }, '2.13.0+cu130', 'cu130'],
+    [{ variant: 'cuda-13.3' }, '2.13.0+cpu', 'cpu'],
+    [{ platform: 'darwin', arch: 'x64' }, '2.2.2', null],
+    [{ platform: 'darwin', arch: 'arm64', release: '22.6.0' }, '2.8.0', null],
+    [{ platform: 'darwin', arch: 'arm64' }, '2.13.0', null]
+  ]) {
+    const { child, install, getArgs } = setupTorch(options)
+    const pending = install('3.9.32')
+    await new Promise((resolve) => setImmediate(resolve))
+    const args = getArgs()
+    assert.ok(args.includes(`torch==${expected}`), JSON.stringify(options))
+    if (backend) {
+      assert.equal(
+        args[args.indexOf('--index-url') + 1],
+        `https://download.pytorch.org/whl/${backend}`
+      )
+    } else {
+      assert.ok(!args.includes('--index-url'))
+    }
+    assert.ok(!args.includes('--extra-index-url'))
+    child.emit('close', 0)
+    assert.equal(await pending, true)
+  }
+})
+
+test('torch keeps newer compatible wheels instead of downgrading every startup', async () => {
+  for (const options of [
+    { installedVersion: '2.13.0+cpu' },
+    { installedVersion: '2.14.1+cpu' },
+    { installedVersion: '2.14.1+cu130', variant: 'cuda-13.3', acceleration: true },
+    { platform: 'darwin', arch: 'arm64', installedVersion: '2.14.1' },
+    { platform: 'darwin', arch: 'x64', installedVersion: '2.2.2' }
+  ]) {
+    const { install, isStarted } = setupTorch(options)
+    assert.equal(await install('3.9.32'), true)
+    assert.equal(isStarted(), false)
+  }
+})
 
 test('torch installation yields to the event loop and streams progress before completion', async () => {
   const { child, install, isStarted } = setupTorch()

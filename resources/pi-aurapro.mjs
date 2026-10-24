@@ -202,13 +202,13 @@ export default async function (pi, factories = []) {
                   name === 'browser' &&
                   !['status', ''].includes(args.trim()) &&
                   process.env.AURAPRO_PI_APPROVAL_MODE !== 'full' &&
-                  !(await ctx.ui.confirm('PI · browser', args))
+                  !(await ctx.ui.confirm('Agent · browser', args))
                 )
                   return
                 return await command.handler(args, ctx)
               } catch (error) {
                 ctx.ui.notify(
-                  `PI · /${name}: ${error.message || 'Extension command failed.'}`,
+                  `Agent · /${name}: ${error.message || 'Extension command failed.'}`,
                   'error'
                 )
                 throw error
@@ -244,6 +244,71 @@ export default async function (pi, factories = []) {
     initialized = true
     for (const callback of startup) await callback({ type: 'session_start' }, ctx)
   }
+  pi.registerTool({
+    name: 'ask_user',
+    label: 'Ask user',
+    description:
+      'Ask the user a necessary clarification or offer mutually exclusive choices. Wait for their answer before proceeding.',
+    parameters: {
+      type: 'object',
+      properties: {
+        question: { type: 'string' },
+        options: { type: 'array', items: { type: 'string' }, maxItems: 12 }
+      },
+      required: ['question']
+    },
+    execute: async (_id, input, _signal, _update, ctx) => {
+      const answer = input.options?.length
+        ? await ctx.ui.select(input.question, input.options)
+        : await ctx.ui.input(input.question)
+      return {
+        content: [
+          {
+            type: 'text',
+            text:
+              answer === undefined
+                ? 'The user cancelled this question. Do not assume approval.'
+                : String(answer)
+          }
+        ]
+      }
+    }
+  })
+  pi.registerTool({
+    name: 'update_plan',
+    label: 'Update plan',
+    description:
+      'Keep a concise task plan visible to the user. Update step statuses as work progresses; at most one step may be in_progress.',
+    parameters: {
+      type: 'object',
+      properties: {
+        steps: {
+          type: 'array',
+          maxItems: 30,
+          items: {
+            type: 'object',
+            properties: {
+              content: { type: 'string' },
+              status: { type: 'string', enum: ['pending', 'in_progress', 'completed'] }
+            },
+            required: ['content', 'status']
+          }
+        }
+      },
+      required: ['steps']
+    },
+    execute: async (_id, input, _signal, _update, ctx) => {
+      if (input.steps.filter((step) => step.status === 'in_progress').length > 1)
+        throw new Error('Only one plan step can be in progress.')
+      const steps = input.steps.map((step, index) => ({
+        id: String(index),
+        content: step.content.slice(0, 500),
+        status: step.status
+      }))
+      ctx.ui.notify(JSON.stringify({ auraproPlan: true, steps }), 'info')
+      return { content: [{ type: 'text', text: JSON.stringify(steps) }] }
+    }
+  })
   pi.registerTool({
     name: 'enable_extension_tools',
     label: 'Enable extension tools',
@@ -294,11 +359,13 @@ export default async function (pi, factories = []) {
         'read',
         'write',
         'edit',
-        ...(!computer ? ['powershell'] : []),
+        ...(!computer ? [process.platform === 'win32' ? 'powershell' : 'bash'] : []),
         'grep',
         'find',
         'ls',
         'enable_extension_tools',
+        'ask_user',
+        'update_plan',
         ...extension
       ]
       pi.setActiveTools(
@@ -314,7 +381,7 @@ export default async function (pi, factories = []) {
         event.systemPrompt +
         desktopInstructions +
         `\nWebUI interface language: ${locale}. Use this language for all user-facing progress updates, operation explanations, visible reasoning summaries, questions and final answers. For zh-CN use Simplified Chinese; for zh-TW use Traditional Chinese. Summarize English tool errors and outcomes in the interface language. Preserve literal file paths, commands, identifiers and quoted source text. Follow an explicit user request for another output language when applicable.` +
-        '\nComplete the authorized task in this turn, including implementation and verification. Do not pause after writing a scaffold or ask whether to continue routine implementation. For large generated files, write a small initial file and extend it with bounded edit calls. Keep each file tool call under roughly 120 lines. If a tool call is truncated, retry with smaller chunks. Never claim completion unless the requested tool operations succeeded.'
+        '\nComplete the authorized task in this turn, including implementation and verification. For multi-step work, maintain update_plan. Use ask_user for missing information or choices that affect the result, never to request permission already granted. Do not pause after writing a scaffold or ask whether to continue routine implementation. For large generated files, write a small initial file and extend it with bounded edit calls. Keep each file tool call under roughly 120 lines. If a tool call is truncated, retry with smaller chunks. Never claim completion unless the requested tool operations succeeded.'
     }
   })
   pi.registerCommand('aurapro-check', {
@@ -355,8 +422,14 @@ export default async function (pi, factories = []) {
     }
   })
   pi.on('session_start', (_event, ctx) => {
-    if (process.env.AURAPRO_PI_PLAN !== '1')
-      pi.setActiveTools([...new Set([...pi.getActiveTools(), 'enable_extension_tools'])])
+    pi.setActiveTools([
+      ...new Set([
+        ...pi.getActiveTools(),
+        'ask_user',
+        'update_plan',
+        ...(process.env.AURAPRO_PI_PLAN !== '1' ? ['enable_extension_tools'] : [])
+      ])
+    ])
     ctx.ui.notify(
       JSON.stringify({
         auraproDiagnostics: true,
@@ -367,14 +440,16 @@ export default async function (pi, factories = []) {
     )
   })
   pi.on('tool_call', async (event, ctx) => {
-    if (desktopTask && event.toolName === 'powershell')
+    if (desktopTask && ['powershell', 'bash'].includes(event.toolName))
       return {
         block: true,
         reason:
           'Use the installed computer tools for this desktop task: find_roots, observe_ui, act_ui.'
       }
     const tool = pi.getAllTools().find((item) => item.name === event.toolName)
-    const workspaceRead = ['read', 'grep', 'find', 'ls'].includes(event.toolName)
+    const workspaceRead = ['read', 'grep', 'find', 'ls', 'ask_user', 'update_plan'].includes(
+      event.toolName
+    )
     const readOnly =
       workspaceRead ||
       [
@@ -411,8 +486,14 @@ export default async function (pi, factories = []) {
     if (readOnly || tool?.annotations?.readOnlyHint === true) return
     if (process.env.AURAPRO_PI_APPROVAL_MODE === 'task' && taskApproved) return
     const accepted = await ctx.ui.confirm(
-      `PI · ${text({ read: '读取文件', write: '写入文件', edit: '编辑文件', powershell: '运行命令', act_ui: '操作电脑', browser_navigate: '打开网页', browser_click: '点击网页', browser_type: '输入网页内容' }[event.toolName] || event.toolName, event.toolName)}`,
-      JSON.stringify(event.input ?? {}).slice(0, 6000)
+      `Agent · ${text({ read: '读取文件', write: '写入文件', edit: '编辑文件', powershell: '运行命令', act_ui: '操作电脑', browser_navigate: '打开网页', browser_click: '点击网页', browser_type: '输入网页内容' }[event.toolName] || event.toolName, event.toolName)}`,
+      JSON.stringify(event.input ?? {}).slice(0, 6000) +
+        (process.env.AURAPRO_PI_APPROVAL_MODE === 'task'
+          ? text(
+              '\n\n同意后，本次任务的后续操作将自动批准。任务结束后失效。',
+              '\n\nApproval also authorizes subsequent operations in this task. It expires when the task ends.'
+            )
+          : '')
     )
     if (!accepted) return { block: true, reason: 'The user declined this operation.' }
     if (process.env.AURAPRO_PI_APPROVAL_MODE === 'task') taskApproved = true

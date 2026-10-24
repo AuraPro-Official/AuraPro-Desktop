@@ -63,7 +63,6 @@ Windows 11 ARM64 使用原生 ARM64 桌面程序；由于部分 AI 依赖尚未�
 | llama.cpp        | 本地大语言模型推理           | 可选安装         |
 | CUDA Runtime     | NVIDIA GPU 推理所需运行库    | 随 CUDA 变体安装 |
 | Sherpa           | 本地语音识别与语音合成       | 可选安装         |
-| Open Terminal    | 本地终端服务                 | 可选安装         |
 
 ## 数据与安全
 

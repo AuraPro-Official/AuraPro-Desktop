@@ -27,7 +27,7 @@ const localServer = async (handler, run) => {
   }
 }
 
-test('real local health and terminal socket probes do not send task requests', async () => {
+test('real local health and socket probes do not send task requests', async () => {
   let requests = 0
   await localServer(
     (req, res) => {
@@ -218,8 +218,8 @@ test('nonlocal or credential-bearing URLs are never contacted', async () => {
   }
 })
 
-test('terminal check only opens a socket and does not claim functional health', async () => {
-  const deps = dependencies(() => assert.fail('must not execute terminal API'))
+test('socket check does not claim functional health', async () => {
+  const deps = dependencies(() => assert.fail('must not send an HTTP request'))
   assert.equal(await checkOptionalService({ ...options, endpoint: undefined }, deps), 'listening')
   deps.portResponds = async () => false
   assert.equal(await checkOptionalService({ ...options, endpoint: undefined }, deps), 'unverified')

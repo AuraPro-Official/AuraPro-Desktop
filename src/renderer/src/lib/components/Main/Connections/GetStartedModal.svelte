@@ -14,7 +14,6 @@
 
   interface Props {
     onContinue: (options: {
-      installOpenTerminal: boolean
       installOpenCode: boolean
       installLlamaCpp: boolean
       installSherpa: boolean
@@ -162,7 +161,6 @@
     return capabilities
   }
 
-  let installOpenTerminal = $state(false)
   let installOpenCode = $state(false)
   let installSherpa = $state(true)
   let selectedSpeech = $state(['zh'])
@@ -413,7 +411,6 @@
     if (detectingHardware) return
     if (!(await validateInstallPath())) return
     onContinue({
-      installOpenTerminal,
       installOpenCode,
       installLlamaCpp: !selectedModel.proModelId,
       installSherpa,
@@ -483,40 +480,6 @@
       </div>
     {/if}
     <div class="px-6 py-4 flex flex-col divide-y divide-gray-100/30 dark:divide-gray-800/15">
-      <div class="py-3 flex items-center justify-between gap-4">
-        <div>
-          <div class="text-[13px] font-medium text-gray-700 dark:text-gray-300">
-            {$i18n.t('main.getStarted.openTerminal')}
-          </div>
-          <div class="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
-            {$i18n.t('main.getStarted.openTerminalDesc')}
-          </div>
-        </div>
-        <Switch
-          checked={installOpenTerminal}
-          onchange={(v) => {
-            installOpenTerminal = v
-          }}
-        />
-      </div>
-
-      <div class="flex items-center justify-between gap-4 py-3">
-        <div>
-          <div class="text-[13px] font-medium text-gray-700 dark:text-gray-300">
-            {$i18n.t('main.getStarted.opencode')}
-          </div>
-          <div class="mt-0.5 text-[11px] text-gray-400 dark:text-gray-500">
-            {$i18n.t('main.getStarted.opencodeDesc')}
-          </div>
-        </div>
-        <Switch
-          checked={installOpenCode}
-          onchange={(value) => {
-            installOpenCode = value
-          }}
-        />
-      </div>
-
       <div class="py-3 flex items-center justify-between gap-4">
         <div>
           <div
@@ -782,7 +745,7 @@
         <div class="mt-1 text-[10px] leading-relaxed text-gray-400 dark:text-gray-500">
           核心组件 6 GB · 模型 {selectedModel.sizeStr}
           {installSherpa ? ' · Sherpa 约 2 GB' : ''}
-          {installOpenCode ? ' · PI Agent 预留 0.5 GB（扩展另计）' : ''}
+          {installOpenCode ? ' · Agent 预留 0.5 GB（扩展另计）' : ''}
           {llamaCppVariant.startsWith('cuda-') && ragHardwareAcceleration
             ? ' · RAG CUDA 约 3 GB'
             : ''}

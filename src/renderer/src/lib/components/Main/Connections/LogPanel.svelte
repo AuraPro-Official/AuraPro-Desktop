@@ -5,7 +5,7 @@
   import LogViewer from '../../common/LogViewer.svelte'
 
   interface Props {
-    activeLog: 'server' | 'open-terminal' | 'opencode' | 'llama-server' | 'sherpa'
+    activeLog: 'server' | 'opencode' | 'llama-server' | 'sherpa'
     serviceReady: boolean
     showBufferedLogs?: boolean
     statusText?: string
@@ -47,9 +47,8 @@
 
   const logLabels: Record<string, () => string> = {
     server: () => $i18n.t('statusBar.server'),
-    'open-terminal': () => $i18n.t('sidebar.openTerminal'),
     'llama-server': () => $i18n.t('sidebar.llamaCpp'),
-    opencode: () => 'PI Agent',
+    opencode: () => 'Agent',
     sherpa: () => 'sherpa',
     pro: () => 'Pro_V1'
   }
@@ -153,7 +152,7 @@
       {/if}
     </div>
     <div class="flex items-center gap-0.5">
-      <!-- Stop button (Open Terminal / llama.cpp only) -->
+      <!-- Stop service button -->
       {#if onStop && serviceReady}
         <button
           class="p-1 rounded-md hover:bg-white/[0.08] transition bg-transparent border-none cursor-pointer {stopping

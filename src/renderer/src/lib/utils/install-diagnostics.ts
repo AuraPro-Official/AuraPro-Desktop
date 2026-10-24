@@ -5,7 +5,6 @@ export type InstallationStage =
   | 'model-download'
   | 'llama-runtime'
   | 'speech'
-  | 'terminal'
   | 'opencode'
   | 'webui-start'
   | 'connection'
@@ -177,7 +176,7 @@ export const diagnoseInstallationFailure = (
       repairDescription:
         'Close related processes and allow the installation folder in antivirus software.',
       manualSteps: [
-        'Close running AuraPro, Python, llama.cpp, Open Terminal, and Sherpa processes.',
+        'Close running AuraPro, Python, llama.cpp, and Sherpa processes.',
         platform === 'win32'
           ? 'Check Bitdefender or Windows Security quarantine and add the AuraPro installation folder to allowed locations.'
           : 'Check security and privacy software for blocked files.',
@@ -347,7 +346,6 @@ export const diagnoseInstallationFailure = (
   if (
     stage === 'llama-runtime' ||
     stage === 'speech' ||
-    stage === 'terminal' ||
     stage === 'opencode' ||
     stage === 'webui-start'
   ) {

@@ -112,7 +112,7 @@ export const getOpenWebUIDataPath = (): string => {
 export const getEpubConceptRuntimeFilePath = (): string =>
   path.join(getInstallDir(), 'epub-concept', 'desktop-llm-runtime.json')
 
-/** Private Desktop-to-WebUI handoff for the PI RPC runtime. */
+/** Private Desktop-to-WebUI handoff for the Agent RPC runtime. */
 export const getOpenCodeRuntimeFilePath = (): string =>
   path.join(getInstallDir(), 'pi', 'desktop-runtime.json')
 
@@ -144,7 +144,7 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.10.5'
+export const AURAPRO_UI_TARGET_VERSION = '3.10.6'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
 export const AURAPRO_UI_LAST_VERSION = '3.9.3'
@@ -1869,12 +1869,28 @@ export const installTorchPackage = async (
       llamaVariant.startsWith('cuda-') &&
       config.localServer?.ragHardwareAcceleration === true
     const isIntelMac = process.platform === 'darwin' && process.arch === 'x64'
-    const torchVersion = isIntelMac ? '2.2.2' : '2.8.0'
-    const suffix = process.platform === 'darwin' ? '' : useCuda ? '+cu128' : '+cpu'
+    const isLegacyArmMac =
+      process.platform === 'darwin' &&
+      process.arch === 'arm64' &&
+      !(Number.parseInt(os.release().split('.')[0], 10) >= 23)
+    // Patched wheels require macOS 14; Intel Mac's final wheel is still 2.2.2.
+    const torchVersion = isIntelMac ? '2.2.2' : isLegacyArmMac ? '2.8.0' : '2.13.0'
+    const cudaBackend = llamaVariant.startsWith('cuda-13.') ? 'cu130' : 'cu126'
+    const suffix = process.platform === 'darwin' ? '' : useCuda ? `+${cudaBackend}` : '+cpu'
     const expectedVersion = `${torchVersion}${suffix}`
-    const alreadyInstalled = getExactPackageVersion('torch') === expectedVersion
+    const installedVersion = getExactPackageVersion('torch')
+    const installedParts = installedVersion?.match(/^(\d+)\.(\d+)\.(\d+)(\+[^\s]+)?$/)
+    const minimum = torchVersion.split('.').map(Number)
+    const installed = installedParts?.slice(1, 4).map(Number)
+    const versionMeetsMinimum =
+      installed !== undefined &&
+      (installed[0] > minimum[0] ||
+        (installed[0] === minimum[0] &&
+          (installed[1] > minimum[1] ||
+            (installed[1] === minimum[1] && installed[2] >= minimum[2]))))
+    const alreadyInstalled = versionMeetsMinimum && (installedParts?.[4] ?? '') === suffix
     if (alreadyInstalled) {
-      log.info(`PyTorch already matches the selected RAG runtime (${expectedVersion})`)
+      log.info(`PyTorch already meets the selected RAG runtime (${installedVersion})`)
       return true
     }
 
@@ -1882,14 +1898,9 @@ export const installTorchPackage = async (
     const indexArgs =
       process.platform === 'darwin'
         ? []
-        : [
-            '--extra-index-url',
-            useCuda
-              ? 'https://download.pytorch.org/whl/cu128'
-              : 'https://download.pytorch.org/whl/cpu'
-          ]
-    const runtimeLabel = useCuda ? 'CUDA 版 PyTorch（cu128）' : 'CPU 版 PyTorch'
-    const logRuntimeLabel = useCuda ? 'CUDA-enabled PyTorch (cu128)' : 'CPU PyTorch'
+        : ['--index-url', `https://download.pytorch.org/whl/${useCuda ? cudaBackend : 'cpu'}`]
+    const runtimeLabel = useCuda ? `CUDA 版 PyTorch（${cudaBackend}）` : 'CPU 版 PyTorch'
+    const logRuntimeLabel = useCuda ? `CUDA-enabled PyTorch (${cudaBackend})` : 'CPU PyTorch'
 
     onStatus?.(`正在安装 ${runtimeLabel} 依赖...`)
     log.info(
@@ -2410,13 +2421,6 @@ export interface AppConfig {
     version?: string
     packageSource?: string
   }
-  openTerminal: {
-    enabled: boolean
-    port: number
-    cwd: string
-    apiKey: string
-    version?: string
-  }
   openCode: {
     enabled: boolean
     port: number
@@ -2509,12 +2513,6 @@ const DEFAULT_CONFIG: AppConfig = {
     serveOnLocalNetwork: true,
     httpsEnabled: true,
     ragHardwareAcceleration: false
-  },
-  openTerminal: {
-    enabled: false,
-    port: 39284,
-    cwd: '',
-    apiKey: ''
   },
   openCode: {
     enabled: false,
@@ -2643,10 +2641,6 @@ const normalizeConfig = (config: AppConfig): AppConfig => {
   const normalized: AppConfig = {
     ...config,
     localServer,
-    openTerminal: {
-      ...DEFAULT_CONFIG.openTerminal,
-      ...(config.openTerminal ?? {})
-    },
     openCode: {
       ...DEFAULT_CONFIG.openCode,
       ...(config.openCode ?? {}),
@@ -2732,13 +2726,9 @@ export const getConfig = async (): Promise<AppConfig> => {
 let configWriteLock: Promise<void> = Promise.resolve()
 
 type ConfigUpdate = Partial<
-  Omit<
-    AppConfig,
-    'localServer' | 'openTerminal' | 'openCode' | 'llamaCpp' | 'sherpa' | 'shortcutActions'
-  >
+  Omit<AppConfig, 'localServer' | 'openCode' | 'llamaCpp' | 'sherpa' | 'shortcutActions'>
 > & {
   localServer?: Partial<AppConfig['localServer']>
-  openTerminal?: Partial<AppConfig['openTerminal']>
   openCode?: Partial<AppConfig['openCode']>
   llamaCpp?: Partial<AppConfig['llamaCpp']>
   sherpa?: Partial<AppConfig['sherpa']>
@@ -2762,7 +2752,6 @@ export const setConfig = async (config: ConfigUpdate): Promise<void> => {
       ...existing,
       ...config,
       localServer: { ...existing.localServer, ...(config.localServer ?? {}) },
-      openTerminal: { ...existing.openTerminal, ...(config.openTerminal ?? {}) },
       openCode: { ...existing.openCode, ...(config.openCode ?? {}) },
       llamaCpp: { ...existing.llamaCpp, ...(config.llamaCpp ?? {}) },
       sherpa: { ...existing.sherpa, ...(config.sherpa ?? {}) },
@@ -2904,8 +2893,8 @@ export const resetApp = async (): Promise<ResetAppResult> => {
   // orphaned Python children left by an interrupted install or an earlier run.
   await stopRuntimeProcesses(pythonDir, 'bundled Python')
   await stopRuntimeProcesses(path.join(installDir, 'llama.cpp'), 'llama.cpp')
-  await stopRuntimeProcesses(path.join(installDir, 'opencode'), 'OpenCode')
-  await stopRuntimeProcesses(path.join(installDir, 'pi'), 'PI')
+  await stopRuntimeProcesses(path.join(installDir, 'opencode'), 'Agent')
+  await stopRuntimeProcesses(path.join(installDir, 'pi'), 'Agent')
 
   const targets = [
     { label: 'Python runtime', path: pythonDir },
@@ -2913,8 +2902,8 @@ export const resetApp = async (): Promise<ResetAppResult> => {
     { label: 'llama.cpp runtime', path: path.join(installDir, 'llama.cpp') },
     { label: 'downloaded models', path: path.join(installDir, 'models') },
     { label: 'Sherpa runtime files', path: path.join(installDir, 'sherpa') },
-    { label: 'OpenCode runtime', path: path.join(installDir, 'opencode') },
-    { label: 'PI runtime', path: path.join(installDir, 'pi') },
+    { label: 'Agent runtime', path: path.join(installDir, 'opencode') },
+    { label: 'Agent runtime', path: path.join(installDir, 'pi') },
     { label: 'service locks', path: path.join(userDataDir, 'locks') },
     { label: 'Python download', path: getPythonDownloadPath() },
     { label: 'partial Python download', path: `${getPythonDownloadPath()}.tmp` },

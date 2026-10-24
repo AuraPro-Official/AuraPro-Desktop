@@ -55,7 +55,6 @@ import {
   getServerPty,
   installPackage,
   installPython,
-  isPackageInstalled,
   isPythonInstalled,
   getExactPackageVersion,
   getPackageVersion,
@@ -82,15 +81,6 @@ import { scheduleCacheCleanup } from './utils/cache-cleanup'
 import { normalizeKvCacheType, type KvCacheType } from './utils/llamacpp-settings'
 import { GlossaryStartupGate } from './utils/glossary-startup-gate'
 import { glossarySpeechLanguages, selectedSpeechLanguages } from './utils/speech-language-presets'
-
-import {
-  startOpenTerminal,
-  stopOpenTerminal,
-  getOpenTerminalInfo,
-  getOpenTerminalPty,
-  getOpenTerminalLog,
-  validateOpenTerminalProcess
-} from './utils/open-terminal'
 
 import {
   setupOpenCode,
@@ -1123,43 +1113,7 @@ const connectPtyPort = (pid?: number): void => {
 }
 
 /**
- * MessagePort channel for the Open Terminal PTY — read-only log viewer.
- */
-let activeOpenTerminalDisposable: { dispose: () => void } | null = null
-
-const connectOpenTerminalPtyPort = (): void => {
-  if (!mainWindow) return
-
-  const { port1, port2 } = new MessageChannelMain()
-
-  const otPty = getOpenTerminalPty()
-  if (!otPty) {
-    port1.postMessage({ type: 'output', data: '[Open Terminal is not running]\r\n' })
-    mainWindow.webContents.postMessage('open-terminal:pty:port', null, [port2])
-    return
-  }
-
-  // Clean up previous
-  activeOpenTerminalDisposable?.dispose()
-
-  // Replay log buffer
-  const buffer = getOpenTerminalLog()
-  for (const chunk of buffer) {
-    port1.postMessage({ type: 'output', data: chunk })
-  }
-
-  // Live data
-  const disposable = otPty.onData((data: string) => {
-    port1.postMessage({ type: 'output', data })
-  })
-  activeOpenTerminalDisposable = disposable
-
-  port1.start()
-  mainWindow.webContents.postMessage('open-terminal:pty:port', null, [port2])
-}
-
-/**
- * MessagePort channel for the OpenCode PTY - read-only log viewer.
+ * MessagePort channel for the Agent PTY - read-only log viewer.
  */
 let activeOpenCodeDisposable: { dispose: () => void } | null = null
 
@@ -1169,7 +1123,7 @@ const connectOpenCodePtyPort = (): void => {
   const { port1, port2 } = new MessageChannelMain()
   const openCodePty = getOpenCodePty()
   if (!openCodePty) {
-    port1.postMessage({ type: 'output', data: '[OpenCode is not running]\r\n' })
+    port1.postMessage({ type: 'output', data: '[Agent is not running]\r\n' })
     mainWindow.webContents.postMessage('opencode:pty:port', null, [port2])
     return
   }
@@ -1294,21 +1248,13 @@ const resetAppHandler = async () => {
     SERVER_URL = null
     sendToRenderer('status:server', null)
 
-    // Stop Open Terminal if running
-    try {
-      await stopOpenTerminal()
-      sendToRenderer('status:open-terminal', null)
-    } catch (e) {
-      log.warn('Failed to stop Open Terminal during reset:', e)
-      serviceWarnings.push(`Open Terminal: ${getErrorMessage(e)}`)
-    }
     try {
       await stopOpenCode()
       sendToRenderer('status:opencode', null)
       sendToRenderer('status:opencode-setup', '')
     } catch (e) {
-      log.warn('Failed to stop OpenCode during reset:', e)
-      serviceWarnings.push(`OpenCode: ${getErrorMessage(e)}`)
+      log.warn('Failed to stop Agent during reset:', e)
+      serviceWarnings.push(`Agent: ${getErrorMessage(e)}`)
     }
     // Sherpa runs from the bundled Python directory and must be stopped before
     // that directory can be removed on Windows.
@@ -2000,7 +1946,6 @@ const reloadLlamaCppModelsAfterDownload = async (filepath: string | null | undef
 const startConfiguredServices = async (defaultConnection?: Connection): Promise<void> => {
   log.info('[startup] Starting configured background services')
 
-  validateOpenTerminalProcess()
   validateOpenCodeProcess()
   validateLlamaCppProcess()
   validateSherpaProcess()
@@ -2018,25 +1963,6 @@ const startConfiguredServices = async (defaultConnection?: Connection): Promise<
     }
   }
 
-  if (!isQuiting && CONFIG?.openTerminal?.enabled) {
-    startupTasks.push(
-      (async () => {
-        try {
-          sendToRenderer('status:open-terminal', 'starting')
-          const result = await startOpenTerminal(
-            CONFIG?.openTerminal?.port ?? null,
-            (status: string) => sendToRenderer('status:open-terminal', status)
-          )
-          sendToRenderer('status:open-terminal', 'started')
-          sendToRenderer('open-terminal:ready', result)
-        } catch (error) {
-          log.error('Auto-start Open Terminal failed:', error)
-          sendToRenderer('status:open-terminal', 'failed')
-        }
-      })()
-    )
-  }
-
   if (!isQuiting && CONFIG?.openCode?.enabled && isOpenCodeInstalled()) {
     startupTasks.push(
       (async () => {
@@ -2049,7 +1975,7 @@ const startConfiguredServices = async (defaultConnection?: Connection): Promise<
           sendToRenderer('status:opencode-setup', '')
           sendToRenderer('opencode:ready', result)
         } catch (error) {
-          log.error('Auto-start OpenCode failed:', error)
+          log.error('Auto-start Agent failed:', error)
           sendToRenderer('status:opencode', 'failed')
           sendToRenderer('status:opencode-setup', getErrorMessage(error))
         }
@@ -2552,20 +2478,13 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
 
     // Package
     ipcMain.handle('install:package', async () => {
-      let restartOpenTerminal = false
       let restartSherpa = false
       try {
         log.info('Starting package installation...')
         CONFIG = await getConfig()
         const owuiVersion = resolveOpenWebUITargetVersion(CONFIG?.localServer?.version)
-        const otVersion = CONFIG?.openTerminal?.version || undefined
-        restartOpenTerminal = validateOpenTerminalProcess()
         restartSherpa = validateSherpaProcess()
 
-        if (restartOpenTerminal) {
-          sendToRenderer('status:open-terminal', 'stopping')
-          await stopOpenTerminal()
-        }
         if (restartSherpa) {
           sendToRenderer('status:sherpa', 'stopping')
           await stopSherpa()
@@ -2579,24 +2498,6 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
           },
           { forceLatest: true, cleanupCaches: false }
         )
-        const installedOpenTerminalVersion = getExactPackageVersion('open-terminal')
-        const shouldInstallOpenTerminal =
-          CONFIG?.openTerminal?.enabled === true &&
-          (!installedOpenTerminalVersion ||
-            Boolean(otVersion && installedOpenTerminalVersion !== otVersion))
-        if (shouldInstallOpenTerminal) {
-          sendToRenderer('status:install', 'Installing Open Terminal…')
-          await installPackage('open-terminal', otVersion, (status: string) => {
-            sendToRenderer('status:install', status)
-          })
-        } else {
-          log.info(
-            CONFIG?.openTerminal?.enabled
-              ? `Open Terminal already installed (${installedOpenTerminalVersion}); skipping package update`
-              : 'Open Terminal was not selected; skipping package installation'
-          )
-        }
-
         try {
           const packagedDataDir = getPackagedDataDir()
           const targetDataDir = getOpenWebUIDataPath()
@@ -2625,19 +2526,6 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
             'Package installation failed. Please check your internet connection and try again.'
         )
       } finally {
-        if (restartOpenTerminal && CONFIG?.openTerminal?.enabled) {
-          try {
-            const result = await startOpenTerminal(
-              CONFIG?.openTerminal?.port ?? null,
-              (status: string) => sendToRenderer('status:open-terminal', status)
-            )
-            sendToRenderer('status:open-terminal', 'started')
-            sendToRenderer('open-terminal:ready', result)
-          } catch (error) {
-            log.warn('Failed to restart Open Terminal after package update:', error)
-            sendToRenderer('status:open-terminal', 'failed')
-          }
-        }
         if (restartSherpa && CONFIG?.sherpa?.enabled) {
           try {
             const result = await startSherpa(CONFIG?.sherpa?.port ?? null, (status: string) =>
@@ -3241,60 +3129,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
       }).show()
     })
 
-    // Open Terminal
-    ipcMain.handle('open-terminal:start', async () => {
-      try {
-        sendToRenderer('status:open-terminal', 'starting')
-        const result = await startOpenTerminal(
-          CONFIG?.openTerminal?.port ?? null,
-          (status: string) => sendToRenderer('status:open-terminal', status)
-        )
-        sendToRenderer('status:open-terminal', 'started')
-        sendToRenderer('open-terminal:ready', result)
-        // Notify webview to register terminal server at system level
-        sendToRenderer('connections:terminal', {
-          action: 'add',
-          url: result.url,
-          key: result.apiKey
-        })
-        // Save enabled state
-        await setConfig({ openTerminal: { ...CONFIG?.openTerminal, enabled: true } })
-        CONFIG = await getConfig()
-        return result
-      } catch (error) {
-        log.error('Failed to start Open Terminal:', error)
-        sendToRenderer('status:open-terminal', 'failed')
-        sendToRenderer('error', { message: `Open Terminal failed: ${getErrorMessage(error)}` })
-        return null
-      }
-    })
-
-    ipcMain.handle('open-terminal:stop', async () => {
-      try {
-        const info = getOpenTerminalInfo()
-        await stopOpenTerminal()
-        sendToRenderer('status:open-terminal', 'stopped')
-        // Notify webview to unregister terminal server
-        if (info.url) {
-          sendToRenderer('connections:terminal', {
-            action: 'remove',
-            url: info.url
-          })
-        }
-        await setConfig({ openTerminal: { ...CONFIG?.openTerminal, enabled: false } })
-        CONFIG = await getConfig()
-        return true
-      } catch (error) {
-        log.error('Failed to stop Open Terminal:', error)
-        return false
-      }
-    })
-
-    ipcMain.handle('open-terminal:info', () => getOpenTerminalInfo())
-    ipcMain.handle('open-terminal:status', () => isPackageInstalled('open-terminal'))
-    ipcMain.handle('open-terminal:pty:connect', () => connectOpenTerminalPtyPort())
-
-    // OpenCode
+    // Agent
     ipcMain.handle('pi:extensions', () => getPiExtensions())
     ipcMain.handle(
       'pi:extension:manage',
@@ -3318,7 +3153,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
         return binary
       } catch (error) {
         const message = getErrorMessage(error)
-        log.error('Failed to install OpenCode:', error)
+        log.error('Failed to install Agent:', error)
         sendToRenderer('status:opencode', 'failed')
         sendToRenderer('status:opencode-setup', message)
         throw new Error(message)
@@ -3350,7 +3185,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
         return getOpenCodeInfo()
       } catch (error) {
         const message = getErrorMessage(error)
-        log.error('Failed to update OpenCode:', error)
+        log.error('Failed to update Agent:', error)
         sendToRenderer('status:opencode', 'failed')
         sendToRenderer('status:opencode-setup', message)
         throw new Error(message)
@@ -3374,7 +3209,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
         return result
       } catch (error) {
         const message = getErrorMessage(error)
-        log.error('Failed to start OpenCode:', error)
+        log.error('Failed to start Agent:', error)
         sendToRenderer('status:opencode', 'failed')
         sendToRenderer('status:opencode-setup', message)
         throw new Error(message)
@@ -4047,7 +3882,6 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
       )
       await stopSherpa()
       await stopLlamaCpp()
-      await stopOpenTerminal()
       await stopOpenCode()
       await stopServerHandler()
       globalShortcut.unregisterAll()

@@ -47,7 +47,6 @@
   }
 
   interface InstallOptions {
-    installOpenTerminal?: boolean
     installLlamaCpp?: boolean
     installSherpa?: boolean
     speechLanguages?: string[]
