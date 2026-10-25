@@ -196,17 +196,14 @@ jobs:
       - name: Package for Linux
         if: runner.os == 'Linux'
         run: |
-          if [ "${{ matrix.arch }}" == "arm64" ]; then
-            # ARM64: deb + AppImage only (flatpak BaseApp is not available for arm64)
-            npx electron-builder --linux AppImage deb --${{ matrix.arch }} --publish never
-          elif [ "${{ steps.flatpak.outcome }}" == "success" ]; then
-            # Flatpak and the other Linux targets share linux-unpacked. Building them
-            # concurrently can remove chrome-sandbox while Flatpak is still reading it.
-            npx electron-builder --linux AppImage deb snap --${{ matrix.arch }} --publish never
-            npx electron-builder --linux flatpak --${{ matrix.arch }} --publish never
-          else
-            echo "Flatpak not available, building without flatpak"
-            npx electron-builder --linux AppImage deb snap --${{ matrix.arch }} --publish never
+          # Snap removes chrome-sandbox from linux-unpacked. Keep mutating targets
+          # in separate invocations, after AppImage has finished reading the file.
+          npx electron-builder --linux AppImage deb --${{ matrix.arch }} --publish never
+          if [ "${{ matrix.arch }}" != "arm64" ]; then
+            if [ "${{ steps.flatpak.outcome }}" == "success" ]; then
+              npx electron-builder --linux flatpak --${{ matrix.arch }} --publish never
+            fi
+            npx electron-builder --linux snap --${{ matrix.arch }} --publish never
           fi
 
       # ── Windows code signing ──
