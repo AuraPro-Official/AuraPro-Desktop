@@ -14,7 +14,7 @@ import {
 } from './index'
 
 const VERSION = '1.0.3'
-const NODE_VERSION = '24.15.0'
+const NODE_VERSION = '24.22.3'
 const root = () => path.join(getInstallDir(), 'pi')
 const agentDir = () => path.join(root(), 'agent')
 const binary = () => path.join(root(), 'bin', process.platform === 'win32' ? 'pi.exe' : 'pi')

@@ -79,7 +79,7 @@ import {
 import { installLocalCertificate } from './utils/local-certificate'
 import { scheduleCacheCleanup } from './utils/cache-cleanup'
 import { normalizeKvCacheType, type KvCacheType } from './utils/llamacpp-settings'
-import { GlossaryStartupGate } from './utils/glossary-startup-gate'
+import { GlossaryStartupReminder } from './utils/glossary-startup-reminder'
 import { glossarySpeechLanguages, selectedSpeechLanguages } from './utils/speech-language-presets'
 
 import {
@@ -916,17 +916,17 @@ const connectTo = async (connection: Connection) => {
 
 // ─── Server Lifecycle ───────────────────────────────────
 
-const glossaryStartupGate = new GlossaryStartupGate()
+const glossaryStartupReminder = new GlossaryStartupReminder()
 let serverStartPending: Promise<boolean> | null = null
 const startServerHandler = (): Promise<boolean> => {
   if (serverStartPending) return serverStartPending
-  serverStartPending = startServerAfterGlossaryPrompt().finally(() => {
+  serverStartPending = startWebUIServer().finally(() => {
     serverStartPending = null
   })
   return serverStartPending
 }
 
-const startServerAfterGlossaryPrompt = async (): Promise<boolean> => {
+const startWebUIServer = async (): Promise<boolean> => {
   if (SERVER_STATUS === 'starting') {
     log.info('[server] Already running or starting, skipping duplicate start')
     return true
@@ -943,17 +943,13 @@ const startServerAfterGlossaryPrompt = async (): Promise<boolean> => {
 
   try {
     CONFIG = await getConfig()
-    try {
-      const glossaryStatus = await getOfficialGlossaryStatus()
-      if (!glossaryStatus.installed) {
-        const waiting = glossaryStartupGate.wait()
-        sendToRenderer('official-glossaries:startup-prompt', true)
-        await waiting
-        if (SERVER_STATUS !== 'starting') return false
-      }
-    } catch (error) {
-      log.warn('Failed to check official glossaries before WebUI startup:', error)
-    }
+    // Optional glossary checks and user input must never delay WebUI startup.
+    void glossaryStartupReminder
+      .check(
+        async () => (await getOfficialGlossaryStatus()).installed,
+        () => sendToRenderer('official-glossaries:startup-prompt', true)
+      )
+      .catch((error) => log.warn('Failed to check optional official glossaries:', error))
     const { url, pid } = await startServer(
       CONFIG?.localServer?.serveOnLocalNetwork ?? true,
       CONFIG?.localServer?.port ?? null,
@@ -1211,11 +1207,6 @@ const connectSherpaPtyPort = (): void => {
 }
 
 const stopServerHandler = async (preserveStartupState = false): Promise<boolean> => {
-  if (!preserveStartupState && glossaryStartupGate.pending) {
-    SERVER_STATUS = 'stopped'
-    glossaryStartupGate.finish()
-    sendToRenderer('official-glossaries:startup-prompt', false)
-  }
   try {
     SERVER_PID = null
     await stopAllServers()
@@ -3443,10 +3434,10 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     )
 
     // Official glossary package
-    ipcMain.handle('official-glossaries:startup-pending', () => glossaryStartupGate.pending)
+    ipcMain.handle('official-glossaries:startup-pending', () => glossaryStartupReminder.pending)
     ipcMain.handle('official-glossaries:startup-dismiss', (event) => {
       if (event.sender.id !== mainWindow?.webContents.id) return false
-      glossaryStartupGate.finish()
+      glossaryStartupReminder.dismiss()
       sendToRenderer('official-glossaries:startup-prompt', false)
       return true
     })
@@ -3458,8 +3449,8 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
         })
         sendToRenderer('status:official-glossaries', '')
         sendToRenderer('official-glossaries:updated', result)
-        if (glossaryStartupGate.pending && (await getOfficialGlossaryStatus()).installed) {
-          glossaryStartupGate.finish()
+        if (result.installed) {
+          glossaryStartupReminder.dismiss()
           sendToRenderer('official-glossaries:startup-prompt', false)
         }
         return result

@@ -43,7 +43,7 @@ async function startControl(): Promise<Record<string, string>> {
         const pro = await getStrataInfo()
         json(200, {
           standard: getManagedLlamaModelIds(),
-          pro: pro.supported,
+          pro: pro.supported && Boolean(pro.installed),
           proContext: pro.settings.context,
           active: inferenceCoordinator.current
         })

@@ -3,6 +3,9 @@
   import i18n from '../../../i18n'
 
   let { onInstalled, startup = false }: { onInstalled?: () => void; startup?: boolean } = $props()
+  const accessCodeId = $derived(
+    startup ? 'official-glossary-startup-access-code' : 'official-glossary-access-code'
+  )
 
   interface GlossaryStatus {
     installed: boolean
@@ -34,6 +37,7 @@
   }
 
   let loaded = $state(false)
+  let accessCodeInput = $state<HTMLInputElement>()
   let accessCode = $state('')
   let status = $state<GlossaryStatus>({
     installed: false,
@@ -51,6 +55,10 @@
   let progress = $state('')
   let message = $state('')
   let errorMessage = $state('')
+
+  $effect(() => {
+    if (startup && loaded) accessCodeInput?.focus()
+  })
 
   const refreshStatus = async () => {
     status = await window.electronAPI.getOfficialGlossaryStatus()
@@ -181,18 +189,21 @@
       </div>
     {/if}
     <div class="py-4">
-      <label class="block text-[13px] opacity-70 mb-1.5" for="official-glossary-access-code">
+      <label class="block text-[13px] opacity-70 mb-1.5" for={accessCodeId}>
         {$i18n.t('settings.glossaries.password')}
       </label>
-      <div class="text-[11px] opacity-25 mb-3">
+      <div class="mb-3 {startup ? 'text-[13px] leading-6 opacity-70' : 'text-[11px] opacity-25'}">
         {$i18n.t('settings.glossaries.passwordDesc')}
       </div>
       <div class="flex items-center gap-2">
         <input
-          id="official-glossary-access-code"
+          bind:this={accessCodeInput}
+          id={accessCodeId}
           type="password"
           autocomplete="off"
-          class="flex-1 min-w-0 bg-black/[0.04] dark:bg-white/[0.06] text-[12px] text-[#1d1d1f] dark:text-[#fafafa] px-3 py-2 border-none outline-none rounded-lg opacity-70"
+          class="flex-1 min-w-0 bg-black/[0.04] dark:bg-white/[0.06] {startup
+            ? 'text-[13px]'
+            : 'text-[12px]'} text-[#1d1d1f] dark:text-[#fafafa] px-3 py-2 border-none outline-none rounded-lg opacity-70"
           placeholder={$i18n.t('settings.glossaries.passwordPlaceholder')}
           bind:value={accessCode}
           onkeydown={(event) => {
@@ -200,7 +211,9 @@
           }}
         />
         <button
-          class="shrink-0 text-[12px] opacity-50 hover:opacity-80 px-3 py-2 bg-black/[0.05] dark:bg-white/[0.07] transition border-none text-[#1d1d1f] dark:text-[#fafafa] rounded-lg flex items-center gap-1.5 disabled:pointer-events-none disabled:opacity-20"
+          class="shrink-0 {startup
+            ? 'text-[13px]'
+            : 'text-[12px]'} opacity-50 hover:opacity-80 px-3 py-2 bg-black/[0.05] dark:bg-white/[0.07] transition border-none text-[#1d1d1f] dark:text-[#fafafa] rounded-lg flex items-center gap-1.5 disabled:pointer-events-none disabled:opacity-20"
           disabled={working || !accessCode.trim()}
           onclick={installOrUpdate}
         >
@@ -214,7 +227,11 @@
             : $i18n.t('settings.glossaries.install')}
         </button>
       </div>
-      <div class="mt-2 flex flex-wrap items-center gap-x-1 text-[11px] opacity-40">
+      <div
+        class="mt-2 flex flex-wrap items-center gap-x-1 {startup
+          ? 'text-[12px] opacity-70'
+          : 'text-[11px] opacity-40'}"
+      >
         <span>{$i18n.t('settings.glossaries.betaApply')}</span>
         <button
           type="button"
@@ -226,7 +243,18 @@
       </div>
 
       {#if progress}
-        <div class="mt-3 text-[11px] opacity-40 leading-relaxed">{progress}</div>
+        <div
+          class="mt-3 leading-relaxed {startup
+            ? 'text-[13px] opacity-70'
+            : 'text-[11px] opacity-40'}"
+        >
+          {progress}
+        </div>
+      {/if}
+      {#if startup && working}
+        <div class="mt-2 text-[13px] leading-relaxed opacity-70">
+          {$i18n.t('settings.glossaries.startupDownloading')}
+        </div>
       {/if}
       {#if message}
         <div class="mt-3 text-[11px] text-emerald-600 dark:text-emerald-400/80 leading-relaxed">
@@ -234,7 +262,13 @@
         </div>
       {/if}
       {#if errorMessage}
-        <div class="mt-3 text-[11px] text-red-500/80 leading-relaxed">{errorMessage}</div>
+        <div
+          class="mt-3 text-red-600 dark:text-red-400 leading-relaxed {startup
+            ? 'text-[13px]'
+            : 'text-[11px]'}"
+        >
+          {errorMessage}
+        </div>
       {/if}
     </div>
 

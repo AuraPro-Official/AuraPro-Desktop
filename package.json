@@ -1,11 +1,11 @@
 {
   "name": "aurapro",
-  "version": "3.10.7",
+  "version": "3.10.8",
   "private": true,
   "license": "AGPL-3.0",
   "packageManager": "npm@12.0.1",
   "engines": {
-    "node": ">=24.15 <25",
+    "node": ">=24.22.3 <25",
     "npm": ">=12 <13"
   },
   "description": "Cross-platform desktop client for AuraPro local AI inference, translation, voice, and knowledge workflows.",
@@ -28,9 +28,10 @@
     "test:llamacpp-kv-cache": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/test-llamacpp-kv-cache.mjs",
     "test:optional-service-health": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/test-optional-service-health.mjs",
     "test:platform-support": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/test-platform-support.mjs",
-    "test:inference-pro": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/test-inference-coordinator.mjs scripts/test-strata-models.mjs",
+    "test:inference-pro": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/test-inference-coordinator.mjs scripts/test-strata-models.mjs scripts/test-inference-control.mjs",
     "test:agent": "node --test scripts/test-agent-tools.mjs",
-    "test:node": "npm run test:diagnostic-recovery && npm run test:llamacpp-releases && npm run test:llamacpp-kv-cache && npm run test:optional-service-health && npm run test:platform-support && npm run test:inference-pro && npm run test:agent && node --test scripts/test-removed-terminal-service.mjs && node --test scripts/test-security-dependencies.mjs",
+    "test:glossary-startup": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/test-glossary-startup-reminder.mjs",
+    "test:node": "npm run test:diagnostic-recovery && npm run test:llamacpp-releases && npm run test:llamacpp-kv-cache && npm run test:optional-service-health && npm run test:platform-support && npm run test:inference-pro && npm run test:agent && npm run test:glossary-startup && node --test scripts/test-removed-terminal-service.mjs && node --test scripts/test-security-dependencies.mjs",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "svelte-check": "svelte-check --tsconfig ./tsconfig.json",
     "typecheck": "npm run typecheck:node && npm run svelte-check",
@@ -60,7 +61,7 @@
     "@types/node": "^24.13.3",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
-    "electron": "^43.8.3",
+    "electron": "^43.8.10",
     "electron-builder": "^26.0.12",
     "electron-vite": "^5.0.0",
     "eslint": "^9.39.1",
@@ -76,5 +77,8 @@
     "tippy.js": "^6.3.7",
     "typescript": "^5.9.3",
     "vite": "^7.3.7"
+  },
+  "overrides": {
+    "minimatch@>=7 <11.0.1": "^11.0.1"
   }
 }

@@ -16,7 +16,7 @@ const compare = (actual, minimum) => {
 
 test('Electron and Vite locks enforce the reviewed security floors', () => {
   for (const [name, floor] of [
-    ['electron', '43.8.3'],
+    ['electron', '43.8.10'],
     ['vite', '7.3.7']
   ]) {
     const actual = lock.packages[`node_modules/${name}`].version
@@ -24,7 +24,21 @@ test('Electron and Vite locks enforce the reviewed security floors', () => {
     assert.equal(lock.packages[''].devDependencies[name], manifest.devDependencies[name])
   }
   assert.equal(lock.packages['node_modules/electron'].version.split('.')[0], '43')
-  assert.equal(manifest.devDependencies.electron, '^43.8.3')
+  assert.equal(manifest.devDependencies.electron, '^43.8.10')
+})
+
+test('all minimatch copies and managed Node versions meet the security floor', () => {
+  for (const [name, pkg] of Object.entries(lock.packages)) {
+    if (name.endsWith('node_modules/minimatch') && Number(pkg.version.split('.')[0]) >= 7) {
+      assert.ok(compare(pkg.version, '11.0.1') >= 0, `${name}@${pkg.version}`)
+    }
+  }
+  const source = readFileSync(new URL('../src/main/utils/pi-agent.ts', import.meta.url), 'utf8')
+  assert.match(source, /const NODE_VERSION = '24\.22\.3'/)
+  for (const name of ['ci.yml', 'release.yml']) {
+    const workflow = readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
+    assert.match(workflow, /NODE_VERSION: '24\.22\.3'/)
+  }
 })
 
 test('generic log viewer keeps xterm and removed terminal regression stays in the test chain', () => {
