@@ -1,20 +1,22 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { spawn, execFile, type ChildProcess } from 'node:child_process'
 import { promisify } from 'node:util'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import * as tar from 'tar'
 import adapterPath from '../../../resources/strata_adapter.py?asset&asarUnpack'
-import { getInstallDir, getPythonPath, portInUse } from './index'
+import { getInstallDir, portInUse } from './index'
 import { inferenceCoordinator } from './inference-coordinator'
 import { setupIsolatedLlamaCpp, latestLlamaCppVersion } from './llamacpp'
 import {
   DEFAULT_STRATA_SETTINGS,
   STRATA_MODELS,
+  ALL_STRATA_MODELS,
   STRATA_PORT,
   STRATA_SOURCE,
+  STRATA_RELEASE,
   strataConfigName,
   strataHardwareRecommendation,
   strataSetupArgs,
@@ -30,6 +32,9 @@ type Installation = {
   version: string
   backend: string
   exe?: string
+  managed?: 'control'
+  controlVersion?: string
+  productVersion?: string
 }
 let server: ChildProcess | null = null
 let worker: ChildProcess | null = null
@@ -57,12 +62,20 @@ const stopping = new WeakMap<ChildProcess, Promise<void>>()
 
 const root = () => path.join(getInstallDir(), 'strata')
 const sourceDir = (source: string) => path.join(root(), 'versions', source)
-const python = (source: string) =>
-  path.join(
+const python = (source: string) => {
+  const bundled = path.join(
     sourceDir(source),
-    '.venv',
-    process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python'
+    'python',
+    process.platform === 'win32' ? 'python.exe' : 'bin/python3'
   )
+  return fs.existsSync(bundled)
+    ? bundled
+    : path.join(
+        sourceDir(source),
+        '.venv',
+        process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python'
+      )
+}
 const native = () => process.platform === 'darwin'
 const supported = () =>
   (native() && ['arm64', 'x64'].includes(process.arch)) ||
@@ -108,22 +121,19 @@ async function prepareNativeModel(settings: StrataSettings, signal: AbortSignal)
   const dir = path.join(root(), 'native-models', settings.model)
   const preparedFile = path.join(dir, 'prepared.json')
   const sizes = readJson<Record<string, number>>(preparedFile, {})
-  const metadata = await fetch(
-    `https://huggingface.co/api/models/${manifest.repo}/revision/${manifest.revision}?blobs=true`,
-    { signal }
-  )
-  if (!metadata.ok) throw new Error(`Pro model lookup failed: ${metadata.status}`)
-  const repo = (await metadata.json()) as {
-    siblings: { rfilename: string; size?: number; lfs?: { size: number } }[]
-  }
-  for (const file of [
-    ...manifest.files,
-    ...(settings.vision && manifest.projector ? [manifest.projector] : [])
+  for (const item of [
+    ...manifest.files.map((file) => ({
+      file,
+      repo: manifest.repo,
+      revision: manifest.revision,
+      ...manifest.fileMetadata[file]
+    })),
+    ...(settings.vision && manifest.projectorSource ? [manifest.projectorSource] : [])
   ]) {
     signal.throwIfAborted()
-    const remote = repo.siblings.find((item) => item.rfilename === file)
-    const expected = remote?.lfs?.size ?? remote?.size
-    if (!expected || expected < 4) throw new Error(`Missing Pro GGUF metadata: ${file}`)
+    const { file, size: expected, sha256 } = item
+    if (!expected || expected < 4 || !/^[a-f0-9]{64}$/.test(sha256))
+      throw new Error(`Missing Pro GGUF metadata: ${file}`)
     const target = path.join(dir, file)
     if (sizes[file] === expected && fs.existsSync(target) && fs.statSync(target).size === expected)
       continue
@@ -133,15 +143,19 @@ async function prepareNativeModel(settings: StrataSettings, signal: AbortSignal)
     progress!.downloadedBytes = 0
     progress!.totalBytes = expected
     const response = await fetch(
-      `https://huggingface.co/${manifest.repo}/resolve/${manifest.revision}/${file}`,
+      `https://huggingface.co/${item.repo}/resolve/${item.revision}/${file}`,
       { signal }
     )
     if (!response.ok || !response.body)
       throw new Error(`Pro model download failed: ${response.status}`)
     const current = progress!
+    const hash = createHash('sha256')
     const meter = new Transform({
       transform(chunk, _encoding, callback) {
         current.downloadedBytes! += chunk.length
+        if (current.downloadedBytes! > expected)
+          return callback(new Error(`Oversized Pro download: ${file}`))
+        hash.update(chunk)
         callback(null, chunk)
       }
     })
@@ -155,6 +169,8 @@ async function prepareNativeModel(settings: StrataSettings, signal: AbortSignal)
       )
       if (fs.statSync(partial).size !== expected)
         throw new Error(`Incomplete Pro download: ${file}`)
+      if (hash.digest('hex') !== sha256)
+        throw new Error(`Pro model checksum verification failed: ${file}`)
       const fd = fs.openSync(partial, 'r')
       const magic = Buffer.alloc(4)
       try {
@@ -226,14 +242,36 @@ async function terminateProcess(child: ChildProcess): Promise<void> {
   }
 }
 
-function run(exe: string, args: string[], cwd: string, signal: AbortSignal): Promise<void> {
+function controlEnv(dir: string, offline = false): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    PYTHONUNBUFFERED: '1',
+    PYTHONUTF8: '1',
+    PYTHONNOUSERSITE: '1',
+    PYTHONHOME: undefined,
+    PYTHONPATH: undefined,
+    VIRTUAL_ENV: undefined,
+    STRATA_COMPONENTS_DIR: path.join(root(), 'components'),
+    STRATA_INSTALL_DIR: dir,
+    STRATA_DATA_DIR: path.join(root(), 'data'),
+    STRATA_RUNTIME_DIR: path.join(root(), 'runtime'),
+    STRATA_PROFILE_DIR: path.join(root(), 'profiles'),
+    STRATA_SETTINGS_FILE: path.join(root(), 'control-settings.json'),
+    STRATA_CONTROL_INSTALL: '',
+    STRATA_NO_HANDOVER: '1',
+    STRATA_NO_ACQUIRE: offline ? '1' : '',
+    STRATA_REQUIRE_SIGNED_COMPONENTS: '1'
+  }
+}
+
+function run(exe: string, args: string[], cwd: string, signal: AbortSignal): Promise<string> {
   signal.throwIfAborted()
   return new Promise((resolve, reject) => {
     const child = spawn(exe, args, {
       cwd,
       windowsHide: true,
       detached: process.platform !== 'win32',
-      env: { ...process.env, PYTHONUNBUFFERED: '1', PYTHONUTF8: '1', PYTHONNOUSERSITE: '1' },
+      env: controlEnv(cwd),
       stdio: ['ignore', 'pipe', 'pipe']
     })
     worker = child
@@ -241,7 +279,11 @@ function run(exe: string, args: string[], cwd: string, signal: AbortSignal): Pro
       void terminate(child).catch((err) => append(String(err)))
     }
     signal.addEventListener('abort', abort, { once: true })
-    child.stdout?.on('data', append)
+    let captured = ''
+    child.stdout?.on('data', (data: Buffer) => {
+      captured = (captured + data.toString()).slice(-128000)
+      append(data)
+    })
     child.stderr?.on('data', append)
     child.once('error', reject)
     child.once('close', (code) => {
@@ -250,10 +292,104 @@ function run(exe: string, args: string[], cwd: string, signal: AbortSignal): Pro
       if (signal.aborted) reject(new Error('Pro operation cancelled'))
       else if (code !== 0)
         reject(new Error(`Pro command exited with code ${code}. ${output.slice(-1600)}`))
-      else resolve()
+      else resolve(captured)
     })
     if (signal.aborted) abort()
   })
+}
+
+function adapterResult<T>(text: string): T {
+  const line = text.split(/[\r\n]/).findLast((item) => item.startsWith('AURAPRO_RESULT:'))
+  if (!line) throw new Error('Pro operation did not report a verified result')
+  return JSON.parse(line.slice('AURAPRO_RESULT:'.length)) as T
+}
+
+type ControlRelease = {
+  tag_name: string
+  draft: boolean
+  prerelease: boolean
+  assets: { name: string; size: number; digest?: string; browser_download_url: string }[]
+}
+
+async function controlRelease(tag = 'latest', signal?: AbortSignal): Promise<ControlRelease> {
+  const endpoint = tag === 'latest' ? 'latest' : `tags/${encodeURIComponent(tag)}`
+  const response = await fetch(
+    `https://api.github.com/repos/Niko1221/Strata/releases/${endpoint}`,
+    {
+      headers: { Accept: 'application/vnd.github+json' },
+      signal: signal ?? AbortSignal.timeout(20000)
+    }
+  )
+  if (!response.ok) throw new Error(`Strata release lookup failed: ${response.status}`)
+  const release = (await response.json()) as ControlRelease
+  if (release.draft || release.prerelease || !/^v\d+\.\d+\.\d+(?:\.\d+)?$/.test(release.tag_name))
+    throw new Error('Unexpected Strata release tag')
+  return release
+}
+
+async function installControl(
+  dir: string,
+  release: ControlRelease,
+  signal: AbortSignal
+): Promise<void> {
+  const platform = process.platform === 'win32' ? 'windows-x86_64' : 'linux-x86_64'
+  const extension = process.platform === 'win32' ? '.zip' : '.tar.gz'
+  const suffix = `-${platform}${extension}`
+  const asset = release.assets.find(
+    (item) =>
+      item.name.startsWith('strata-control-') &&
+      item.name.endsWith(suffix) &&
+      /^\d+(?:\.\d+)+$/.test(item.name.slice('strata-control-'.length, -suffix.length))
+  )
+  if (
+    !asset ||
+    !/^sha256:[a-f0-9]{64}$/.test(asset.digest ?? '') ||
+    asset.size <= 0 ||
+    asset.size > 512 * 1024 ** 2
+  )
+    throw new Error('The Strata release has no verified Control package for this platform')
+  if (
+    !asset.browser_download_url.startsWith(
+      `https://github.com/Niko1221/Strata/releases/download/${release.tag_name}/`
+    )
+  )
+    throw new Error('Unexpected Strata Control download source')
+  setProgress('source')
+  const response = await fetch(asset.browser_download_url, { signal })
+  if (!response.ok || !response.body)
+    throw new Error(`Strata Control download failed: ${response.status}`)
+  fs.mkdirSync(dir, { recursive: true })
+  const archive = path.join(dir, `control${extension}`)
+  const hash = createHash('sha256')
+  let bytes = 0
+  const current = progress!
+  current.totalBytes = asset.size
+  await pipeline(
+    Readable.fromWeb(response.body as never),
+    new Transform({
+      transform(chunk, _encoding, callback) {
+        bytes += chunk.length
+        if (bytes > asset.size) return callback(new Error('Oversized Strata Control download'))
+        hash.update(chunk)
+        current.downloadedBytes = bytes
+        callback(null, chunk)
+      }
+    }),
+    fs.createWriteStream(archive),
+    { signal }
+  )
+  if (bytes !== asset.size || `sha256:${hash.digest('hex')}` !== asset.digest)
+    throw new Error('Strata Control checksum verification failed')
+  setProgress('extracting')
+  // Only extract the archive after verifying its official release digest.
+  if (process.platform === 'win32') {
+    await promisify(execFile)('tar', ['-xf', archive, '-C', dir], { windowsHide: true, signal })
+  } else {
+    await tar.x({ file: archive, cwd: dir })
+  }
+  fs.unlinkSync(archive)
+  if (!fs.existsSync(path.join(dir, 'setup.py')) || !fs.existsSync(path.join(dir, 'strata.py')))
+    throw new Error('Unexpected Strata Control archive layout')
 }
 
 export async function getStrataInfo() {
@@ -269,19 +405,30 @@ export async function getStrataInfo() {
     logs: output,
     progress,
     installed,
+    upgradeRequired: !!installed && !native() && installed.managed !== 'control',
+    recommendedVersion: STRATA_RELEASE,
     port: STRATA_PORT,
     settings,
     models: STRATA_MODELS.map((model) => ({
       ...model,
       ramInfo: strataHardwareRecommendation(model),
-      experimental: model.family === 'unsloth',
+      experimental: false,
       removable:
         fs.existsSync(path.join(root(), 'native-models', model.id)) ||
         fs.existsSync(path.join(root(), 'data', 'models', modelTag(model.id))),
       installed: native()
-        ? nativeModelReady(model.id)
+        ? nativeModelReady(model.id, model.id === settings.model && settings.vision)
         : !!dir && fs.existsSync(path.join(dir, strataConfigName(model.id)))
-    }))
+    })),
+    legacyModels: ALL_STRATA_MODELS.filter(
+      (model) => !STRATA_MODELS.some((current) => current.id === model.id)
+    )
+      .filter((model) =>
+        native()
+          ? nativeModelReady(model.id)
+          : !!dir && fs.existsSync(path.join(dir, strataConfigName(model.id)))
+      )
+      .map((model) => ({ ...model, installed: true }))
   }
 }
 
@@ -354,19 +501,28 @@ export async function checkStrataHealth() {
   return { ...info, health, detail }
 }
 
-export async function checkStrataUpdate(): Promise<{ version: string; source: string }> {
+export async function checkStrataUpdate(): Promise<{
+  version: string
+  source: string
+  available: boolean
+}> {
   if (native()) {
     const version = await latestLlamaCppVersion('auto')
-    return { version, source: version }
+    return { version, source: version, available: installation()?.version !== version }
   }
-  const response = await fetch('https://api.github.com/repos/Niko1221/Strata/releases/latest', {
-    headers: { Accept: 'application/vnd.github+json' },
-    signal: AbortSignal.timeout(20000)
-  })
-  if (!response.ok) throw new Error(`Strata release lookup failed: ${response.status}`)
-  const release = (await response.json()) as { tag_name: string }
-  if (!/^v\d+\.\d+\.\d+$/.test(release.tag_name)) throw new Error('Unexpected Strata release tag')
-  return { version: release.tag_name, source: release.tag_name }
+  const release = await controlRelease()
+  const installed = installation()
+  let available = installed?.productVersion !== release.tag_name
+  if (!available && installed?.managed === 'control') {
+    const dir = sourceDir(installed.source)
+    const { stdout } = await promisify(execFile)(
+      python(installed.source),
+      [adapterPath, dir, 'check', getStrataSettings().backend, release.tag_name],
+      { cwd: dir, env: controlEnv(dir), windowsHide: true, timeout: 30000, maxBuffer: 1024 * 1024 }
+    )
+    available = adapterResult<{ available: boolean }>(stdout).available
+  }
+  return { version: release.tag_name, source: release.tag_name, available }
 }
 
 export async function installStrata(update = false, requested?: StrataSettings): Promise<void> {
@@ -394,91 +550,73 @@ export async function installStrata(update = false, requested?: StrataSettings):
       return
     }
     const previous = installation()
-    const revision = update
-      ? (await checkStrataUpdate()).source
-      : previous?.revision || STRATA_SOURCE
-    // Never repair/update the directory that installed.json currently points to.
-    const source = `${revision}-${randomUUID()}`
-    const dir = sourceDir(source)
-    fs.mkdirSync(dir, { recursive: true })
-    if (!fs.existsSync(path.join(dir, '.source-ready'))) {
-      setProgress('source')
-      const archive = path.join(dir, 'source.tar.gz')
-      const response = await fetch(
-        `https://api.github.com/repos/Niko1221/Strata/tarball/${revision}`,
-        { signal }
-      )
-      if (!response.ok || !response.body)
-        throw new Error(`Strata download failed: ${response.status}`)
-      const downloadProgress = progress!
-      const total = Number(response.headers.get('content-length'))
-      downloadProgress.downloadedBytes = 0
-      if (total > 0) downloadProgress.totalBytes = total
-      const meter = new Transform({
-        transform(chunk, _encoding, callback) {
-          downloadProgress.downloadedBytes! += chunk.length
-          callback(null, chunk)
-        }
-      })
-      await pipeline(
-        Readable.fromWeb(response.body as never),
-        meter,
-        fs.createWriteStream(archive),
-        { signal }
-      )
-      setProgress('extracting')
-      await tar.x({
-        file: archive,
-        cwd: dir,
-        strip: 1,
-        filter: (_name, entry) => 'type' in entry && ['File', 'Directory'].includes(entry.type)
-      })
-      fs.writeFileSync(path.join(dir, '.source-ready'), source)
-      fs.unlinkSync(archive)
-    }
-    signal.throwIfAborted()
-    if (!fs.existsSync(python(source))) {
-      setProgress('environment')
-      await run(getPythonPath(), ['-m', 'venv', path.join(dir, '.venv')], dir, signal)
-    }
-    setProgress('dependencies')
-    await run(python(source), [adapterPath, dir, 'install', settings.backend], dir, signal)
-    const meta = readJson<{ version: string; backend?: string }>(
-      path.join(dir, 'engine', 'BUILD.json'),
-      { version: '' }
+    const release = await controlRelease(
+      update ? 'latest' : previous?.productVersion || STRATA_RELEASE,
+      signal
     )
-    if (!meta.version) throw new Error('Pro installation did not produce a valid runtime')
-    // Preserve model data across engine upgrades; only rewrite paths inside the old source tree.
-    if (previous && previous.source !== source && previous.backend === (meta.backend || 'cuda')) {
-      const oldDir = sourceDir(previous.source)
-      const relocate = (value: unknown): unknown => {
-        if (
-          typeof value === 'string' &&
-          (value === oldDir || value.startsWith(oldDir + path.sep))
-        ) {
-          return dir + value.slice(oldDir.length)
+    // Stage a whole private Control; keep the old environment and model files for recovery.
+    const source = `control-${release.tag_name.slice(1)}-${randomUUID()}`
+    const dir = sourceDir(source)
+    let activated = false
+    try {
+      await installControl(dir, release, signal)
+      signal.throwIfAborted()
+      const bundle = readJson<{ version?: string }>(path.join(dir, 'BUNDLE.json'), {})
+      if (!bundle.version || !fs.existsSync(python(source)))
+        throw new Error('Strata Control has no valid bundled Python environment')
+      setProgress('runtime')
+      const result = await run(
+        python(source),
+        [adapterPath, dir, 'install', settings.backend, release.tag_name],
+        dir,
+        signal
+      )
+      const meta = adapterResult<{ version: string; backend: string; control: string }>(result)
+      if (!meta.version) throw new Error('Pro installation did not produce a valid runtime')
+      // Preserve model data across engine upgrades; only rewrite paths inside the old source tree.
+      if (previous && previous.source !== source && previous.backend === (meta.backend || 'cuda')) {
+        const oldDir = sourceDir(previous.source)
+        const relocate = (value: unknown): unknown => {
+          if (
+            typeof value === 'string' &&
+            (value === oldDir || value.startsWith(oldDir + path.sep))
+          ) {
+            return dir + value.slice(oldDir.length)
+          }
+          if (Array.isArray(value)) return value.map(relocate)
+          if (value && typeof value === 'object')
+            return Object.fromEntries(
+              Object.entries(value).map(([key, item]) => [key, relocate(item)])
+            )
+          return value
         }
-        if (Array.isArray(value)) return value.map(relocate)
-        if (value && typeof value === 'object')
-          return Object.fromEntries(
-            Object.entries(value).map(([key, item]) => [key, relocate(item)])
-          )
-        return value
+        for (const model of ALL_STRATA_MODELS) {
+          const file = strataConfigName(model.id)
+          const config = readJson(path.join(oldDir, file), null)
+          if (config) {
+            const migrated = relocate(config) as Record<string, unknown>
+            migrated.exe = 'component:strata-engine'
+            delete migrated.lib_dirs
+            writeJson(path.join(dir, file), migrated)
+          }
+        }
       }
-      for (const model of STRATA_MODELS) {
-        const file = strataConfigName(model.id)
-        const config = readJson(path.join(oldDir, file), null)
-        if (config) writeJson(path.join(dir, file), relocate(config))
-      }
+      signal.throwIfAborted()
+      writeJson(path.join(root(), 'installed.json'), {
+        source,
+        revision: release.tag_name === STRATA_RELEASE ? STRATA_SOURCE : release.tag_name,
+        version: meta.version,
+        backend: meta.backend,
+        managed: 'control',
+        controlVersion: meta.control,
+        productVersion: release.tag_name
+      })
+      activated = true
+      writeJson(path.join(root(), 'settings.json'), settings)
+    } finally {
+      if (!activated)
+        await removeProPath(dir).catch((err) => append(`Pro staging cleanup: ${String(err)}\n`))
     }
-    signal.throwIfAborted()
-    writeJson(path.join(root(), 'installed.json'), {
-      source,
-      revision,
-      version: meta.version,
-      backend: meta.backend || 'cuda'
-    })
-    writeJson(path.join(root(), 'settings.json'), settings)
   })
 }
 
@@ -487,6 +625,12 @@ export async function prepareStrataModel(settings: StrataSettings): Promise<void
   await exclusiveOperation(async (signal) => {
     const installed = installation()
     if (!installed) throw new Error('Install Pro before downloading a model')
+    if (
+      !native() &&
+      installed.managed !== 'control' &&
+      STRATA_MODELS.some((model) => model.id === valid.model)
+    )
+      throw new Error('Update Pro in Desktop settings before preparing a new model')
     if (native()) {
       await prepareNativeModel(valid, signal)
       writeJson(path.join(root(), 'settings.json'), valid)
@@ -503,10 +647,11 @@ export async function prepareStrataModel(settings: StrataSettings): Promise<void
     signal.throwIfAborted()
     if (!fs.existsSync(path.join(dir, strataConfigName(valid.model))))
       throw new Error('Pro model preparation did not finish')
-    const meta = readJson<{ backend?: string }>(path.join(dir, 'engine', 'BUILD.json'), {})
     writeJson(path.join(root(), 'installed.json'), {
       ...installed,
-      backend: meta.backend || 'cuda'
+      backend:
+        readJson<{ backend?: string }>(path.join(dir, strataConfigName(valid.model)), {}).backend ||
+        installed.backend
     })
     writeJson(path.join(root(), 'settings.json'), valid)
   })
@@ -558,7 +703,8 @@ function readPreparedConfig(
   if (
     !config ||
     typeof config.exe !== 'string' ||
-    !fs.existsSync(config.exe) ||
+    (!(installed.managed === 'control' && config.exe.startsWith('component:')) &&
+      !fs.existsSync(config.exe)) ||
     !Array.isArray(config.args) ||
     !config.args.every((value) => typeof value === 'string') ||
     !fs.existsSync(python(installed.source))
@@ -599,7 +745,7 @@ export async function uninstallStrata(): Promise<void> {
 }
 
 function modelTag(modelId: string): string {
-  const model = STRATA_MODELS.find((item) => item.id === modelId)
+  const model = ALL_STRATA_MODELS.find((item) => item.id === modelId)
   if (!model) throw new Error('Unknown Pro model')
   return `${model.family === 'qwen' ? '' : `${model.family}-`}${model.quant}`
 }
@@ -645,7 +791,7 @@ export async function deleteStrataModel(modelId: string): Promise<void> {
       await removeProPath(target)
     }
     const modelsDir = path.join(root(), 'data', 'models')
-    const remaining = STRATA_MODELS.filter((model) =>
+    const remaining = ALL_STRATA_MODELS.filter((model) =>
       fs.existsSync(path.join(modelsDir, modelTag(model.id)))
     )
     if (!remaining.length) await removeProPath(path.join(root(), 'data', 'mtp'))
@@ -679,7 +825,7 @@ async function startRaw(): Promise<void> {
   }
   if (!native()) {
     setArg('--max-context', String(settings.context))
-    setArg('--kv', settings.kv)
+    if (!settings.model.startsWith('qwen36-')) setArg('--kv', settings.kv)
   }
   // A smaller context or hybrid cache must not inherit a previous KV streaming setup.
   const resident = args.indexOf('--kv-resident')
@@ -711,13 +857,14 @@ async function startRaw(): Promise<void> {
           '--host',
           '127.0.0.1',
           '--port',
-          String(STRATA_PORT)
+          String(STRATA_PORT),
+          ...(installed.managed === 'control' ? ['--offline'] : [])
         ],
     {
       cwd: native() ? path.dirname(config.exe as string) : dir,
       windowsHide: true,
       detached: process.platform !== 'win32',
-      env: { ...process.env, PYTHONUNBUFFERED: '1', PYTHONUTF8: '1', PYTHONNOUSERSITE: '1' },
+      env: controlEnv(dir, true),
       stdio: ['ignore', 'pipe', 'pipe']
     }
   )
@@ -736,10 +883,19 @@ async function startRaw(): Promise<void> {
     }
   })
   try {
+    const startedAt = Date.now()
+    let lastHeartbeat = startedAt
     const deadline = Date.now() + 300000
     while (Date.now() < deadline) {
       controller.signal.throwIfAborted()
       if (server !== child || status === 'failed') throw new Error(error)
+      if (Date.now() - lastHeartbeat >= 15000) {
+        const seconds = Math.floor((Date.now() - startedAt) / 1000)
+        append(
+          `[Pro] Waiting for the model to become ready (${seconds}s).${seconds >= 120 ? ' Model loading is taking longer than the usual two-minute target.' : ''}\n`
+        )
+        lastHeartbeat = Date.now()
+      }
       try {
         const response = await fetch(`http://127.0.0.1:${STRATA_PORT}/health`, {
           signal: AbortSignal.timeout(1500)

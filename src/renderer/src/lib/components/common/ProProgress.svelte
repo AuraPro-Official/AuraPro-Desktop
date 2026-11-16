@@ -7,7 +7,7 @@
   let { progress }: { progress: Progress } = $props()
   const labels: Record<string, string> = {
     preparing: 'Preparing Pro',
-    source: 'Downloading Pro source',
+    source: 'Downloading Pro Control',
     extracting: 'Extracting Pro',
     environment: 'Creating Python environment',
     dependencies: 'Installing Python dependencies',

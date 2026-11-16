@@ -7,7 +7,7 @@
   type Info = Awaited<ReturnType<typeof window.electronAPI.getStrataInfo>>
   let info = $state<Info | null>(null)
   let settings = $state<Info['settings']>({
-    model: 'qwen-iq2_xs',
+    model: 'qwen36-ud-q4_k_xl',
     backend: 'auto',
     context: 32768,
     kv: 'int8',
@@ -44,7 +44,20 @@
         await window.electronAPI.installStrata(update, selected)
         controller.signal.throwIfAborted()
       }
-      await window.electronAPI.prepareStrataModel(selected)
+      const ready = await window.electronAPI.getStrataInfo()
+      const prepared =
+        ready.models.some((model) => model.id === selected.model && model.installed) ||
+        (ready.settings.model === selected.model &&
+          ready.legacyModels.some((model) => model.id === selected.model && model.installed))
+      if (
+        !prepared ||
+        ready.settings.backend !== selected.backend ||
+        ready.settings.vision !== selected.vision
+      ) {
+        await window.electronAPI.prepareStrataModel(selected)
+      } else if (JSON.stringify(ready.settings) !== JSON.stringify(selected)) {
+        await window.electronAPI.saveStrataSettings(selected)
+      }
       controller.signal.throwIfAborted()
       await window.electronAPI.startStrata()
       controller.signal.throwIfAborted()
@@ -96,12 +109,17 @@
         <div>
           <div class="text-[13px] opacity-70 flex flex-wrap items-center gap-1.5">
             {info.runtime}
-            {info.installed?.version ?? ''}
+            {info.installed?.productVersion ?? info.installed?.version ?? ''}
             <span class="text-[9px] opacity-30 uppercase tracking-wide">
               {$i18n.t('common.experimental')}
             </span>
           </div>
           <div class="text-[11px] opacity-25 mt-0.5 font-mono">127.0.0.1:{info.port}</div>
+          {#if info.installed?.managed === 'control'}
+            <div class="text-[11px] opacity-40 mt-1 font-mono">
+              Control {info.installed.controlVersion} · Engine {info.installed.version}
+            </div>
+          {/if}
         </div>
         <div class="flex items-center gap-1.5">
           <div
@@ -147,17 +165,18 @@
           disabled={working || !info.supported}
           onclick={() =>
             action(async () => {
-              latest = (await window.electronAPI.checkStrataUpdate()).version
+              const result = await window.electronAPI.checkStrataUpdate()
+              latest = result.available ? result.version : ''
             })}>{t('check')}</button
         >
-        {#if latest}
+        {#if latest || info.upgradeRequired}
           <button
             class={commandClass}
             disabled={working}
             onclick={() => action(() => startSelected(true, true))}
           >
             {t('update')}
-            {latest}
+            {latest || info.recommendedVersion}
           </button>
         {/if}
       </div>
@@ -167,81 +186,92 @@
       class="min-w-0 border-none p-0 m-0 disabled:opacity-60"
     >
       <label class="py-4 flex flex-wrap items-center justify-between gap-3"
-        ><span class="text-[13px] opacity-70">{t('backend')}</span><select
-          class={controlClass}
-          bind:value={settings.backend}
-          ><option value="auto">{t('auto')}</option>
-          {#if info.runtime === 'llama.cpp'}
-            <option value="metal">Apple Metal</option><option value="cpu">CPU</option>
-          {:else}
-            <option value="cuda">NVIDIA CUDA</option><option value="hip">AMD HIP</option>
-          {/if}</select
-        ></label
-      >
-      <label class="py-4 flex flex-wrap items-center justify-between gap-3"
         ><span class="text-[13px] opacity-70">{t('model')}</span><select
-          class="{controlClass} w-[280px] min-w-0"
+          class="{controlClass} w-[360px] min-w-0"
           bind:value={settings.model}
-          >{#each info.models as model (model.id)}<option value={model.id}>{model.name}</option
+        >
+          {#if !info.models.some((model) => model.id === settings.model)}
+            <option value={settings.model}>{settings.model}</option>
+          {/if}
+          {#each info.models as model (model.id)}<option value={model.id}>{model.name}</option
             >{/each}</select
         ></label
       >
-      <div class="py-4 flex flex-wrap items-center justify-between gap-3">
-        <span class="text-[13px] opacity-70">{t('context')}</span>
-        <div class="flex flex-wrap items-center gap-2">
-          <select
+      <details>
+        <summary class="cursor-pointer py-3 text-[12px] opacity-60"
+          >{$i18n.t('common.advanced')}</summary
+        >
+        <label class="py-4 flex flex-wrap items-center justify-between gap-3"
+          ><span class="text-[13px] opacity-70">{t('backend')}</span><select
             class={controlClass}
-            aria-label={t('context')}
-            value={contextPresets.includes(settings.context) ? String(settings.context) : 'custom'}
-            onchange={(event) => {
-              if (event.currentTarget.value !== 'custom')
-                settings.context = Number(event.currentTarget.value)
-            }}
-          >
-            {#each contextPresets as size (size)}<option value={String(size)}>{size / 1024}K</option
-              >{/each}
-            <option value="custom" disabled>{t('customContext')}</option>
-          </select>
-          <input
-            class="{controlClass} w-24 text-right"
-            aria-label={t('customContext')}
-            type="number"
-            min="2048"
-            max="262144"
-            step="1"
-            bind:value={settings.context}
-          />
+            bind:value={settings.backend}
+            ><option value="auto">{t('auto')}</option>
+            {#if info.runtime === 'llama.cpp'}
+              <option value="metal">Apple Metal</option><option value="cpu">CPU</option>
+            {:else}
+              <option value="cuda">NVIDIA CUDA</option><option value="hip">AMD HIP</option>
+            {/if}</select
+          ></label
+        >
+        <div class="py-4 flex flex-wrap items-center justify-between gap-3">
+          <span class="text-[13px] opacity-70">{t('context')}</span>
+          <div class="flex flex-wrap items-center gap-2">
+            <select
+              class={controlClass}
+              aria-label={t('context')}
+              value={contextPresets.includes(settings.context)
+                ? String(settings.context)
+                : 'custom'}
+              onchange={(event) => {
+                if (event.currentTarget.value !== 'custom')
+                  settings.context = Number(event.currentTarget.value)
+              }}
+            >
+              {#each contextPresets as size (size)}<option value={String(size)}
+                  >{size / 1024}K</option
+                >{/each}
+              <option value="custom" disabled>{t('customContext')}</option>
+            </select>
+            <input
+              class="{controlClass} w-24 text-right"
+              aria-label={t('customContext')}
+              type="number"
+              min="2048"
+              max="262144"
+              step="1"
+              bind:value={settings.context}
+            />
+          </div>
         </div>
-      </div>
-      <label class="py-4 flex flex-wrap items-center justify-between gap-3"
-        ><span class="text-[13px] opacity-70">{t('cache')}</span><select
-          class={controlClass}
-          bind:value={settings.kv}
-          ><option value="int8">INT8</option><option value="q4_0">Q4_0</option><option value="k8v4"
-            >K8V4</option
-          ></select
-        ></label
-      >
-      <div class="py-4 flex items-center justify-between gap-4">
-        <span class="text-[13px] opacity-70">{t('vision')}</span>
-        <fieldset
-          disabled={settings.model.startsWith('unsloth-')}
-          class="shrink-0 border-none p-0 m-0 disabled:opacity-40"
-        >
-          <Switch
-            checked={settings.vision}
-            label={t('vision')}
-            onchange={(value) => (settings.vision = value)}
-          />
-        </fieldset>
-      </div>
-      {#if info.runtime !== 'llama.cpp'}<div
-          class="py-4 flex flex-wrap items-center justify-between gap-3"
-        >
-          <span class="text-[13px] opacity-70">MTP</span><span class="text-[11px] opacity-25"
-            >{t('required')}</span
+        {#if info.runtime === 'llama.cpp' || !settings.model.startsWith('qwen36-')}
+          <label class="py-4 flex flex-wrap items-center justify-between gap-3"
+            ><span class="text-[13px] opacity-70">{t('cache')}</span><select
+              class={controlClass}
+              bind:value={settings.kv}
+              ><option value="int8">INT8</option><option value="q4_0">Q4_0</option><option
+                value="k8v4">K8V4</option
+              ></select
+            ></label
           >
-        </div>{/if}
+        {/if}
+        <div class="py-4 flex items-center justify-between gap-4">
+          <span class="text-[13px] opacity-70">{t('vision')}</span>
+          <fieldset class="shrink-0 border-none p-0 m-0 disabled:opacity-40">
+            <Switch
+              checked={settings.vision}
+              label={t('vision')}
+              onchange={(value) => (settings.vision = value)}
+            />
+          </fieldset>
+        </div>
+        {#if info.runtime !== 'llama.cpp'}<div
+            class="py-4 flex flex-wrap items-center justify-between gap-3"
+          >
+            <span class="text-[13px] opacity-70">MTP</span><span class="text-[11px] opacity-25"
+              >{t('auto')}</span
+            >
+          </div>{/if}
+      </details>
       <div class="py-4 flex flex-wrap justify-end gap-2">
         <button
           class={commandClass}

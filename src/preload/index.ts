@@ -205,7 +205,7 @@ const api = {
   getStrataInfo: (): ReturnType<typeof getStrataInfo> => ipcRenderer.invoke('strata:info'),
   installStrata: (update = false, settings?: StrataSettings): Promise<void> =>
     ipcRenderer.invoke('strata:install', update, settings),
-  checkStrataUpdate: (): Promise<{ version: string; source: string }> =>
+  checkStrataUpdate: (): Promise<{ version: string; source: string; available: boolean }> =>
     ipcRenderer.invoke('strata:check-update'),
   prepareStrataModel: (settings: StrataSettings): Promise<void> =>
     ipcRenderer.invoke('strata:prepare', settings),

@@ -4,6 +4,8 @@ import shutil
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
+import sys
 import zipfile
 from pathlib import Path
 
@@ -16,6 +18,12 @@ spec.loader.exec_module(adapter)
 
 
 class WindowsSourcePathsTest(unittest.TestCase):
+    def test_control_setup_without_source_download(self):
+        setup = types.SimpleNamespace(WIN=True, ROOT=Path('source'), get_llama_cpp=lambda: None)
+        adapter.configure_windows_source_paths(setup)
+        self.assertIsNone(setup.get_llama_cpp())
+        self.assertEqual(setup.ROOT, Path('source'))
+
     def test_non_windows_unchanged(self):
         original = lambda: None
         setup = types.SimpleNamespace(WIN=False, get_llama_cpp=original)
@@ -70,6 +78,27 @@ class WindowsSourcePathsTest(unittest.TestCase):
                     self.assertEqual((result / 'ggml/CMakeLists.txt').read_text(), 'cmake')
             finally:
                 shutil.rmtree('\\\\?\\' + str(root.resolve()))
+
+
+class ControlAdapterTest(unittest.TestCase):
+    def test_control_environment_is_set_before_setup_import(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            (root / 'BUNDLE.json').write_text('{}')
+            (root / 'setup.py').write_text(
+                'import os\n'
+                'assert os.environ["STRATA_CONTROL_INSTALL"] == "1"\n'
+                'assert os.environ["STRATA_INSTALL_DIR"] == str(__import__("pathlib").Path(__file__).parent)\n'
+                'assert "STRATA_NO_ACQUIRE" not in os.environ\n'
+                'WIN = False\n'
+                'def main():\n'
+                '    assert CONTROL is True\n'
+                '    return 0\n'
+            )
+            with patch.dict(os.environ, {'STRATA_NO_ACQUIRE': '1'}), patch.object(
+                sys, 'argv', ['adapter', str(root), 'model', '--setup']
+            ), patch.object(sys, 'path', list(sys.path)):
+                self.assertEqual(adapter.main(), 0)
 
 
 if __name__ == '__main__':

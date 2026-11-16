@@ -1,6 +1,6 @@
 {
   "name": "aurapro",
-  "version": "3.10.8",
+  "version": "3.10.9",
   "private": true,
   "license": "AGPL-3.0",
   "packageManager": "npm@12.0.1",
@@ -28,7 +28,7 @@
     "test:llamacpp-kv-cache": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/test-llamacpp-kv-cache.mjs",
     "test:optional-service-health": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/test-optional-service-health.mjs",
     "test:platform-support": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/test-platform-support.mjs",
-    "test:inference-pro": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/test-inference-coordinator.mjs scripts/test-strata-models.mjs scripts/test-inference-control.mjs",
+    "test:inference-pro": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/test-inference-coordinator.mjs scripts/test-strata-models.mjs scripts/test-strata-control.mjs scripts/test-strata-native.mjs scripts/test-inference-control.mjs",
     "test:agent": "node --test scripts/test-agent-tools.mjs",
     "test:glossary-startup": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/test-glossary-startup-reminder.mjs",
     "test:node": "npm run test:diagnostic-recovery && npm run test:llamacpp-releases && npm run test:llamacpp-kv-cache && npm run test:optional-service-health && npm run test:platform-support && npm run test:inference-pro && npm run test:agent && npm run test:glossary-startup && node --test scripts/test-removed-terminal-service.mjs && node --test scripts/test-security-dependencies.mjs",

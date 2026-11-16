@@ -8,7 +8,7 @@
   "diagnostics.appControl.warning": "Turning off Smart App Control reduces protection. Some Windows versions may require a reset or reinstall to enable it again. If this setting is managed, unavailable, or the error persists, contact your administrator. AuraPro does not change this setting automatically.",
   "settings.pro.customContext": "Custom",
   "settings.pro.progress.preparing": "Preparing Pro",
-  "settings.pro.progress.source": "Downloading Pro source",
+  "settings.pro.progress.source": "Downloading Pro Control",
   "settings.pro.progress.extracting": "Extracting Pro",
   "settings.pro.progress.environment": "Creating Python environment",
   "settings.pro.progress.dependencies": "Installing Python dependencies",

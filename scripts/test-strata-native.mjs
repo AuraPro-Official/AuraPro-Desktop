@@ -6,8 +6,23 @@ import path from 'node:path'
 import vm from 'node:vm'
 import { EventEmitter } from 'node:events'
 import { createRequire } from 'node:module'
+import { createHash } from 'node:crypto'
 import ts from 'typescript'
-import * as models from '../src/main/utils/strata-models.ts'
+import * as catalog from '../src/main/utils/strata-models.ts'
+
+const models = {
+  ...catalog,
+  DEFAULT_STRATA_SETTINGS: { ...catalog.DEFAULT_STRATA_SETTINGS, model: 'qwen-iq2_xs' },
+  nativeProFiles: (id) => {
+    const result = catalog.nativeProFiles(id)
+    const metadata = { size: 8, sha256: createHash('sha256').update('GGUFtest').digest('hex') }
+    return {
+      ...result,
+      fileMetadata: Object.fromEntries(result.files.map((file) => [file, metadata])),
+      projectorSource: { ...result.projectorSource, ...metadata }
+    }
+  }
+}
 
 const require = createRequire(import.meta.url)
 
@@ -88,6 +103,7 @@ test('Mac Pro installs, downloads, starts, diagnoses and stops without global ll
         await exports.cancelStrataOperation()
         throw new Error('download cancelled')
       }
+      if (downloadMode === 'corrupt') return new Response(Buffer.from('GGUFfail'))
       return new Response(Buffer.from('GGUFtest'))
     }
   }
@@ -118,7 +134,10 @@ test('Mac Pro installs, downloads, starts, diagnoses and stops without global ll
     const info = await exports.getStrataInfo()
     assert.equal(info.supported, true)
     assert.equal(info.runtime, 'llama.cpp')
-    assert.equal(info.models.find((model) => model.id === 'qwen-iq2_xs').installed, true)
+    assert.equal(info.legacyModels.find((model) => model.id === 'qwen-iq2_xs').installed, true)
+    const reused = calls.length
+    await exports.prepareStrataModel(info.settings)
+    assert.equal(calls.length, reused, 'reusing prepared files must not contact the network')
     assert.equal((await exports.checkStrataUpdate()).version, 'b12000')
     await exports.startStrata()
     const liveLogs = []
@@ -148,10 +167,18 @@ test('Mac Pro installs, downloads, starts, diagnoses and stops without global ll
     )
     fs.writeFileSync(shard, 'bad')
     assert.equal(
-      (await exports.getStrataInfo()).models.find((model) => model.id === 'qwen-iq2_xs').installed,
+      (await exports.getStrataInfo()).legacyModels.some((model) => model.id === 'qwen-iq2_xs'),
       false
     )
     await assert.rejects(exports.startStrata(), /Prepare the selected Pro model/)
+    downloadMode = 'corrupt'
+    await assert.rejects(exports.prepareStrataModel(info.settings), /checksum verification failed/)
+    assert.equal(
+      fs.readFileSync(shard, 'utf8'),
+      'bad',
+      'failed verification must not replace a model'
+    )
+    assert.equal(fs.existsSync(shard + '.part'), false)
     downloadMode = 'failed'
     await assert.rejects(exports.prepareStrataModel(info.settings), /download failed: 503/)
     assert.equal((await exports.getStrataInfo()).status, 'failed')
@@ -162,7 +189,7 @@ test('Mac Pro installs, downloads, starts, diagnoses and stops without global ll
     downloadMode = 'success'
     await exports.prepareStrataModel(info.settings)
     assert.equal(
-      (await exports.getStrataInfo()).models.find((model) => model.id === 'qwen-iq2_xs').installed,
+      (await exports.getStrataInfo()).legacyModels.some((model) => model.id === 'qwen-iq2_xs'),
       true
     )
     const sharedData = path.join(dir, 'strata', 'data', 'model.gguf')
@@ -201,7 +228,7 @@ test('Mac Pro installs, downloads, starts, diagnoses and stops without global ll
     assert.equal(fs.existsSync(keptWeight), true)
     assert.equal(fs.existsSync(sharedMtp), true)
     assert.equal(
-      (await exports.getStrataInfo()).models.find((model) => model.id === 'qwen-iq2_xs').installed,
+      (await exports.getStrataInfo()).legacyModels.some((model) => model.id === 'qwen-iq2_xs'),
       false
     )
     await exports.uninstallStrata()

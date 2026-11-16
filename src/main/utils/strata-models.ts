@@ -1,13 +1,17 @@
+import nativeCatalog from './strata-model-catalog.json' with { type: 'json' }
+
 export const STRATA_PORT = 18882
 export const STRATA_MODEL_ID = 'aurapro-pro'
-export const STRATA_SOURCE = '99f3dbd0b21d1401b3769e0c0d963913607f380b'
+export const STRATA_SOURCE = 'c77572806996349b49995e4f98d41b5294d36a21'
+export const STRATA_RELEASE = 'v0.2.15'
 
-export const STRATA_MODELS = [
+// Compatibility only: never replace a saved model ID with the new default.
+export const LEGACY_STRATA_MODELS = [
   {
     id: 'qwen-q2_0',
     family: 'qwen',
     quant: 'Q2_0',
-    name: 'Q2',
+    name: 'Qwen3.8-Flash-Next GSQ-RCO Q2_0',
     gb: 66.4,
     ram: 48
   },
@@ -15,7 +19,7 @@ export const STRATA_MODELS = [
     id: 'qwen-iq2_xs',
     family: 'qwen',
     quant: 'IQ2_XS',
-    name: 'IQ2_XS',
+    name: 'Qwen3.8-Flash-Next GSQ-RCO IQ2_XS',
     gb: 68,
     ram: 48
   },
@@ -23,7 +27,7 @@ export const STRATA_MODELS = [
     id: 'qwen-iq3_xxs',
     family: 'qwen',
     quant: 'IQ3_XXS',
-    name: 'IQ3_XXS',
+    name: 'Qwen3.8-Flash-Next GSQ-RCO IQ3_XXS',
     gb: 75.8,
     ram: 60
   },
@@ -31,7 +35,7 @@ export const STRATA_MODELS = [
     id: 'qwen-iq3_s',
     family: 'qwen',
     quant: 'IQ3_S',
-    name: 'IQ3_S',
+    name: 'Qwen3.8-Flash-Next GSQ-RCO IQ3_S',
     gb: 83.6,
     ram: 62
   },
@@ -39,7 +43,7 @@ export const STRATA_MODELS = [
     id: 'swift-iq2_xs',
     family: 'swift',
     quant: 'IQ2_XS',
-    name: 'Swift IQ2_XS',
+    name: 'Swift 1.5 Qwen3.8-Flash-Next GSQ-RCO IQ2_XS',
     gb: 68,
     ram: 48
   },
@@ -47,7 +51,7 @@ export const STRATA_MODELS = [
     id: 'swift-iq3_xxs',
     family: 'swift',
     quant: 'IQ3_XXS',
-    name: 'Swift IQ3_XXS',
+    name: 'Swift 1.5 Qwen3.8-Flash-Next GSQ-RCO IQ3_XXS',
     gb: 75.8,
     ram: 60
   },
@@ -55,7 +59,7 @@ export const STRATA_MODELS = [
     id: 'coder-iq1_m',
     family: 'coder',
     quant: 'IQ1_M',
-    name: 'Coder IQ1_M',
+    name: 'Qwen3.8-Flash-Next GSQ-RCO Coder IQ1_M',
     gb: 58.4,
     ram: 32
   },
@@ -63,11 +67,107 @@ export const STRATA_MODELS = [
     id: 'unsloth-ud-q4_k_xl',
     family: 'unsloth',
     quant: 'UD-Q4_K_XL',
-    name: 'Q4',
+    name: 'Unsloth Qwen3.8-Flash-Next UD-Q4_K_XL',
     gb: 111.3,
     ram: 48
   }
 ] as const
+
+export const STRATA_MODELS = [
+  {
+    id: 'unsloth-ud-iq1_m',
+    family: 'unsloth',
+    quant: 'UD-IQ1_M',
+    name: 'Unsloth Qwen3.8-Flash-Next UD-IQ1_M',
+    gb: 68,
+    ram: 48
+  },
+  {
+    id: 'unsloth-ud-q2_0',
+    family: 'unsloth',
+    quant: 'UD-Q2_0',
+    name: 'Unsloth Qwen3.8-Flash-Next UD-Q2_0',
+    gb: 70.5,
+    ram: 48
+  },
+  {
+    id: 'unsloth-ud-iq2_xs',
+    family: 'unsloth',
+    quant: 'UD-IQ2_XS',
+    name: 'Unsloth Qwen3.8-Flash-Next UD-IQ2_XS',
+    gb: 75.8,
+    ram: 48
+  },
+  {
+    id: 'unsloth-ud-q2_k_xl',
+    family: 'unsloth',
+    quant: 'UD-Q2_K_XL',
+    name: 'Unsloth Qwen3.8-Flash-Next UD-Q2_K_XL',
+    gb: 79.6,
+    ram: 48
+  },
+  {
+    id: 'unsloth-ud-iq3_xxs',
+    family: 'unsloth',
+    quant: 'UD-IQ3_XXS',
+    name: 'Unsloth Qwen3.8-Flash-Next UD-IQ3_XXS',
+    gb: 83.6,
+    ram: 48
+  },
+  {
+    id: 'unsloth-ud-q3_k_xl',
+    family: 'unsloth',
+    quant: 'UD-Q3_K_XL',
+    name: 'Unsloth Qwen3.8-Flash-Next UD-Q3_K_XL',
+    gb: 89.5,
+    ram: 48
+  },
+  {
+    id: 'unsloth-ud-iq4_xs-v31',
+    family: 'unsloth',
+    quant: 'UD-IQ4_XS-v31',
+    name: 'Unsloth Qwen3.8-Flash-Next UD-IQ4_XS-v31',
+    gb: 93.7,
+    ram: 48
+  },
+  LEGACY_STRATA_MODELS[7],
+  {
+    id: 'qwen36-ud-q4_k_xl',
+    family: 'qwen36',
+    quant: 'UD-Q4_K_XL',
+    name: 'Unsloth Qwen3.6-35B-A3B UD-Q4_K_XL',
+    gb: 22.85,
+    ram: 32
+  },
+  {
+    id: 'qwen36-ud-q6_k_xl',
+    family: 'qwen36',
+    quant: 'UD-Q6_K_XL',
+    name: 'Unsloth Qwen3.6-35B-A3B UD-Q6_K_XL',
+    gb: 32.61,
+    ram: 44
+  },
+  {
+    id: 'qwen36-q8_0',
+    family: 'qwen36',
+    quant: 'Q8_0',
+    name: 'Unsloth Qwen3.6-35B-A3B Q8_0',
+    gb: 37.8,
+    ram: 52
+  }
+] as const
+
+export type StrataModel = (typeof STRATA_MODELS | typeof LEGACY_STRATA_MODELS)[number]
+
+// Q4 is still selectable under its original ID and must occur only once in cleanup/lookups.
+export const ALL_STRATA_MODELS: readonly StrataModel[] = [
+  ...STRATA_MODELS,
+  ...LEGACY_STRATA_MODELS.filter((legacy) => !STRATA_MODELS.some((model) => model.id === legacy.id))
+]
+
+export function getStrataModel(modelId: string): StrataModel | undefined {
+  return ALL_STRATA_MODELS.find((model) => model.id === modelId)
+}
 
 export type StrataSettings = {
   model: string
@@ -78,14 +178,17 @@ export type StrataSettings = {
 }
 
 export function strataHardwareRecommendation(
-  model: (typeof STRATA_MODELS)[number],
+  model: StrataModel,
   platform = process.platform
 ): string {
-  if (platform === 'darwin') return `UMA ${model.gb > 90 ? 128 : model.gb > 70 ? 96 : 80}GB`
-  if (model.family === 'unsloth') return 'RAM+VRAM 64GB+16GB'
-  if (model.family === 'coder') return 'RAM+VRAM 48GB+8GB / 32GB+12GB'
-  if (model.quant === 'Q2_0' || model.quant === 'IQ2_XS') return 'RAM+VRAM 64GB+8GB / 48GB+12GB'
-  const ram = model.ram > 48 ? 64 : model.ram
+  // Recommend resident weights plus OS/cache headroom, not Strata's SSD-streaming minimum.
+  // These are conservative single-session recommendations, not a fit guarantee at 256K context.
+  const weightsGiB = (model.gb * 1e9) / 1024 ** 3
+  const required = Math.max(model.ram, weightsGiB + Math.max(12, weightsGiB * 0.15))
+  const ram =
+    [32, 48, 64, 80, 96, 128, 192, 256].find((size) => size >= required) ??
+    Math.ceil(required / 64) * 64
+  if (platform === 'darwin') return `UMA ${ram}GB`
   return `RAM+VRAM ${ram}GB+12GB`
 }
 
@@ -100,7 +203,7 @@ export function useProDiagnostics(
 }
 
 export const DEFAULT_STRATA_SETTINGS: StrataSettings = {
-  model: 'qwen-iq2_xs',
+  model: 'qwen36-ud-q4_k_xl',
   backend: 'auto',
   context: 32768,
   kv: 'int8',
@@ -108,7 +211,7 @@ export const DEFAULT_STRATA_SETTINGS: StrataSettings = {
 }
 
 export function validateStrataSettings(input: StrataSettings): StrataSettings {
-  if (!input || !STRATA_MODELS.some((model) => model.id === input.model)) {
+  if (!input || !getStrataModel(input.model)) {
     throw new Error('Unknown Pro model')
   }
   if (!['auto', 'cuda', 'hip', 'metal', 'cpu'].includes(input.backend))
@@ -118,9 +221,6 @@ export function validateStrataSettings(input: StrataSettings): StrataSettings {
   }
   if (!['int8', 'q4_0', 'k8v4'].includes(input.kv)) throw new Error('Invalid Pro KV precision')
   if (typeof input.vision !== 'boolean') throw new Error('Invalid Pro vision setting')
-  if (input.model.startsWith('unsloth-') && (input.vision || input.backend === 'hip')) {
-    throw new Error('Experimental Unsloth Q4 requires CUDA with vision disabled')
-  }
   return {
     model: input.model,
     backend: input.backend,
@@ -134,7 +234,7 @@ export function strataSetupArgs(settings: StrataSettings, dataDir: string): stri
   const valid = validateStrataSettings(settings)
   if (valid.backend === 'metal' || valid.backend === 'cpu')
     throw new Error('Strata requires CUDA or HIP')
-  const model = STRATA_MODELS.find((candidate) => candidate.id === valid.model)!
+  const model = getStrataModel(valid.model)!
   return [
     '--setup',
     '--no-start',
@@ -145,10 +245,9 @@ export function strataSetupArgs(settings: StrataSettings, dataDir: string): stri
     model.quant,
     '--context',
     String(valid.context),
-    '--kv',
-    valid.kv,
+    ...(model.family === 'qwen36' ? [] : ['--kv', valid.kv]),
     '--vision',
-    valid.vision ? 'gpu' : 'no',
+    valid.vision ? 'yes' : 'no',
     '--host',
     '127.0.0.1',
     '--port',
@@ -161,45 +260,51 @@ export function strataSetupArgs(settings: StrataSettings, dataDir: string): stri
   ]
 }
 
-export function nativeProFiles(modelId: string) {
-  const model = STRATA_MODELS.find((item) => item.id === modelId)
+export type NativeProFileMetadata = { size: number; sha256: string }
+export type NativeProProjector = NativeProFileMetadata & {
+  repo: string
+  revision: string
+  file: string
+}
+export type NativeProManifest = {
+  repo: string
+  revision: string
+  files: string[]
+  fileMetadata: Record<string, NativeProFileMetadata>
+  projector: string | null
+  projectorSource: NativeProProjector | null
+}
+
+type NativeCatalogFamily = {
+  repo: string
+  revision: string
+  projector: NativeProProjector
+  models: Record<
+    string,
+    {
+      revision?: string
+      files: (NativeProFileMetadata & { path: string })[]
+    }
+  >
+}
+
+const nativeFamilies: Record<StrataModel['family'], NativeCatalogFamily> = nativeCatalog.families
+
+export function nativeProFiles(modelId: string): NativeProManifest {
+  const model = getStrataModel(modelId)
   if (!model) throw new Error('Unknown Pro model')
-  const repos = {
-    qwen: [
-      'ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF',
-      'ed59f92082b1e93c0e96d60a8b11aab089b52f09'
-    ],
-    swift: [
-      'ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF',
-      'b22d729eae29b5796f76fb70f91aef549b9fc52c'
-    ],
-    coder: [
-      'ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF',
-      '5348543e0147355ac9cbcb031184a3546350988e'
-    ],
-    unsloth: ['unsloth/Qwen3.8-Flash-Next-GGUF', '38bb39ee97821de2c9009abb7e93950eec396e66']
-  }
-  const [repo, revision] = repos[model.family]
-  const prefix =
-    model.family === 'swift'
-      ? 'Swift-Qwen3.8-Flash-Next-GSQ-RCO'
-      : model.family === 'unsloth'
-        ? 'Qwen3.8-Flash-Next'
-        : 'Qwen3.8-Flash-Next-GSQ-RCO'
-  const count = model.family === 'unsloth' ? 4 : 2
-  const files = Array.from(
-    { length: count },
-    (_, i) =>
-      `${model.family === 'swift' ? '' : `${model.quant}/`}${prefix}-${model.quant}-0000${i + 1}-of-0000${count}.gguf`
-  )
+  const family = nativeFamilies[model.family]
+  const entry = family.models[model.quant]
   return {
-    repo,
-    revision,
-    files,
-    projector:
-      model.family === 'unsloth'
-        ? null
-        : `mmproj-${model.family === 'swift' ? 'Swift-' : ''}Qwen3.8-Flash-Next-BF16.gguf`
+    repo: family.repo,
+    revision: entry.revision ?? family.revision,
+    files: entry.files.map((file) => file.path),
+    fileMetadata: Object.fromEntries(
+      entry.files.map(({ path, size, sha256 }) => [path, { size, sha256 }])
+    ),
+    projector: family.projector.file,
+    // Unsloth Flash-Next uses ISTA's encoder, not the weights' repository/revision.
+    projectorSource: { ...family.projector }
   }
 }
 
@@ -241,7 +346,7 @@ export function nativeProArgs(
 }
 
 export function strataConfigName(modelId: string): string {
-  const model = STRATA_MODELS.find((candidate) => candidate.id === modelId)
+  const model = getStrataModel(modelId)
   if (!model) throw new Error('Unknown Pro model')
   return `strata-${model.family === 'qwen' ? '' : `${model.family}-`}${model.quant.toLowerCase()}.json`
 }

@@ -1,11 +1,8 @@
-"""Non-interactive adapter for the pinned Strata setup API.
-
-Keep dependency installation in Pro's private venv. Never silently bootstrap a
-compiler/toolkit when a prebuilt runtime is unavailable.
-"""
+"""Use official Control packages without bootstrapping compilers or system Python."""
 
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -25,7 +22,7 @@ def configure_windows_source_paths(setup):
         setup.ROOT = Path(extended)
         try:
             result = get_llama_cpp()
-            return original_root / result.relative_to(setup.ROOT)
+            return original_root / result.relative_to(setup.ROOT) if result is not None else None
         finally:
             setup.ROOT = original_root
 
@@ -35,6 +32,12 @@ def configure_windows_source_paths(setup):
 def main():
     root = Path(sys.argv[1]).resolve()
     action = sys.argv[2]
+    bundled = (root / 'BUNDLE.json').is_file()
+    if bundled and action == 'model':
+        os.environ['STRATA_CONTROL_INSTALL'] = '1'
+        os.environ['STRATA_INSTALL_DIR'] = str(root)
+        os.environ.pop('STRATA_NO_ACQUIRE', None)
+    sys.path.insert(0, str(root))
     spec = importlib.util.spec_from_file_location('strata_setup', root / 'setup.py')
     setup = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(setup)
@@ -47,8 +50,36 @@ def main():
     setup.build_engine_hip = no_build
     setup.install_build_tools = no_build
     if action == 'model':
+        if bundled:
+            setup.CONTROL = True
+            setup._CONTROL_HOME = root
         sys.argv = [str(root / 'setup.py'), *sys.argv[3:]]
         return setup.main()
+    if action in ('install', 'check') and bundled:
+        from strata_cli.cli import main as cli_main
+        from strata_control import engine_component as ec
+        backend = sys.argv[3]
+        args = ['update', '--no-control', '--yes', '--output', 'jsonl']
+        if len(sys.argv) > 4:
+            args += ['--feed', 'https://github.com/Niko1221/Strata/releases/download/' + sys.argv[4] + '/strata-feed.json']
+        if backend != 'auto':
+            args += ['--backend', backend]
+        if action == 'check':
+            args += ['--check']
+        # The official updater verifies the signed feed, archives, GPU support and rollback.
+        code = cli_main(args)
+        if code:
+            return code
+        if action == 'check':
+            from strata_control.updater import State
+            state = State(ec.components_dir()).section('last_check')
+            result = {'available': bool(state.get('engine'))}
+        else:
+            component = ec.resolve(backend=None if backend == 'auto' else backend, full=True)
+            result = {'version': component.version, 'backend': component.backend,
+                      'control': (root / 'VERSION').read_text(encoding='utf-8-sig').strip()}
+        print('AURAPRO_RESULT:' + json.dumps(result), flush=True)
+        return 0
     if action != 'install':
         raise ValueError('Unknown adapter action')
 

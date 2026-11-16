@@ -1011,7 +1011,8 @@ const getPresetModelOverrides = (modelPath: string): Record<string, string> => {
       'top-k': '20',
       'min-p': '0.0',
       'presence-penalty': '1.5',
-      'repeat-penalty': '1.0'
+      'repeat-penalty': '1.0',
+      'repeat-last-n': '64'
     }
   }
 
@@ -1098,6 +1099,10 @@ const writeModelsPreset = async (
     'top-p = 0.95',
     'top-k = 64',
     'min-p = 0.05',
+    'repeat-penalty = 1.05',
+    'repeat-last-n = 256',
+    'presence-penalty = 0.0',
+    'frequency-penalty = 0.0',
     'jinja = true',
     'chat-template-kwargs = {"enable_thinking":false}',
     'load-on-startup = false',

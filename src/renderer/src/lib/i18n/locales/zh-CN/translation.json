@@ -8,7 +8,7 @@
   "diagnostics.appControl.warning": "关闭智能应用控制会降低系统防护；部分 Windows 版本可能需要重置或重装系统才能重新开启。若设置由组织管理、没有此选项或关闭后仍报错，请联系管理员。AuraPro 不会自动修改此设置。",
   "settings.pro.customContext": "自定义",
   "settings.pro.progress.preparing": "正在准备 Pro",
-  "settings.pro.progress.source": "正在下载 Pro 源码",
+  "settings.pro.progress.source": "正在下载 Pro 控制组件",
   "settings.pro.progress.extracting": "正在解压 Pro",
   "settings.pro.progress.environment": "正在创建 Python 环境",
   "settings.pro.progress.dependencies": "正在安装 Python 依赖",

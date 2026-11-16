@@ -8,7 +8,7 @@
   "diagnostics.appControl.warning": "Desactivar el Control inteligente de aplicaciones reduce la protección. En algunas versiones de Windows, volver a activarlo puede requerir restablecer o reinstalar el sistema. Si la organización administra esta opción, no está disponible o el error persiste, contacta con el administrador. AuraPro no modifica esta configuración automáticamente.",
   "settings.pro.customContext": "Personalizado",
   "settings.pro.progress.preparing": "Preparando Pro",
-  "settings.pro.progress.source": "Descargando el código fuente de Pro",
+  "settings.pro.progress.source": "Descargando Pro Control",
   "settings.pro.progress.extracting": "Extrayendo Pro",
   "settings.pro.progress.environment": "Creando el entorno Python",
   "settings.pro.progress.dependencies": "Instalando dependencias de Python",

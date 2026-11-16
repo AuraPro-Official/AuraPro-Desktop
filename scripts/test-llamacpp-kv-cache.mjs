@@ -184,12 +184,14 @@ test('WebUI changes update desktop immediately without a feedback restart loop',
   assert.equal(state.restarts.length, 2)
 })
 
-test('presets apply the selected precision to both K and V for every managed model', async () => {
+test('presets apply KV precision and gentle repetition defaults while preserving high-code overrides', async () => {
   for (const kvCacheType of [undefined, 'q8_0', 'q4_0', 'f16']) {
     let preset
     const context = createContext({
       normalizeKvCacheType,
       path,
+      os: { totalmem: () => 32 * 1024 ** 3 },
+      process: { platform: 'linux', arch: 'x64' },
       log: { info: () => undefined },
       migrateOfficialRootModels: () => undefined,
       ensureAutoMmproj: async () => {},
@@ -197,11 +199,14 @@ test('presets apply the selected precision to both K and V for every managed mod
       normalizePositiveInteger: () => 1,
       getDefaultParallel: () => 1,
       sortModelsForPreset: (models) => models,
-      listLocalLlmModels: () => [{ filepath: '/models/high_Q4.gguf' }],
+      listLocalLlmModels: () => [
+        { filepath: '/models/high_Q4.gguf' },
+        { filepath: '/models/low_E4.gguf' },
+        { filepath: '/models/high-code_Q4.gguf' }
+      ],
       getInstallDir: () => '/test-data',
-      getPresetModelId: () => 'high_Q4',
+      getPresetModelId: (model) => path.basename(model.filepath, '.gguf'),
       findModelMmproj: () => null,
-      getPresetModelOverrides: () => ({}),
       escapeIniSection: (id) => id,
       toIniPath: (file) => file,
       fs: {
@@ -211,7 +216,7 @@ test('presets apply the selected precision to both K and V for every managed mod
         }
       }
     })
-    load(llama, ['writeModelsPreset'], context)
+    load(llama, ['getPresetModelOverrides', 'writeModelsPreset'], context)
     await context.writeModelsPreset('/models', { kvCacheType })
     assert.ok(preset.includes(`cache-type-k = ${kvCacheType ?? 'q8_0'}\n`))
     assert.ok(preset.includes(`cache-type-v = ${kvCacheType ?? 'q8_0'}\n`))
@@ -222,6 +227,21 @@ test('presets apply the selected precision to both K and V for every managed mod
     assert.ok(globalDefaults.includes('top-p = 0.95\n'))
     assert.ok(globalDefaults.includes('top-k = 64\n'))
     assert.ok(globalDefaults.includes('min-p = 0.05\n'))
+    assert.ok(globalDefaults.includes('repeat-penalty = 1.05\n'))
+    assert.ok(globalDefaults.includes('repeat-last-n = 256\n'))
+    assert.ok(globalDefaults.includes('presence-penalty = 0.0\n'))
+    assert.ok(globalDefaults.includes('frequency-penalty = 0.0\n'))
+    assert.ok(!preset.includes('dry-multiplier'))
+    const regularModels = preset.split('[high_Q4]')[1].split('[high-code_Q4]')[0]
+    assert.ok(!regularModels.includes('repeat-penalty'), 'regular models inherit global defaults')
+    const coder = preset.split('[high-code_Q4]')[1]
+    assert.ok(coder.includes('temp = 0.7\n'))
+    assert.ok(coder.includes('top-p = 0.80\n'))
+    assert.ok(coder.includes('top-k = 20\n'))
+    assert.ok(coder.includes('min-p = 0.0\n'))
+    assert.ok(coder.includes('presence-penalty = 1.5\n'))
+    assert.ok(coder.includes('repeat-penalty = 1.0\n'))
+    assert.ok(coder.includes('repeat-last-n = 64\n'))
   }
 })
 
