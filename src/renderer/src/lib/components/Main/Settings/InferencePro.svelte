@@ -7,7 +7,7 @@
   type Info = Awaited<ReturnType<typeof window.electronAPI.getStrataInfo>>
   let info = $state<Info | null>(null)
   let settings = $state<Info['settings']>({
-    model: 'qwen36-ud-q4_k_xl',
+    model: 'unsloth-ud-q2_0',
     backend: 'auto',
     context: 32768,
     kv: 'int8',
@@ -191,7 +191,10 @@
           bind:value={settings.model}
         >
           {#if !info.models.some((model) => model.id === settings.model)}
-            <option value={settings.model}>{settings.model}</option>
+            <option value={settings.model}
+              >{info.legacyModels.find((model) => model.id === settings.model)?.name ??
+                settings.model}</option
+            >
           {/if}
           {#each info.models as model (model.id)}<option value={model.id}>{model.name}</option
             >{/each}</select

@@ -7,7 +7,7 @@ AuraPro Desktop 的重要变更均记录在此文件中。
 本文档遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，
 项目版本遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [3.10.9] - 2026-11-16
+## [3.10.10] - 2026-11-16
 
 ### Added
 
@@ -66,7 +66,7 @@ AuraPro Desktop 的重要变更均记录在此文件中。
 - 优化：未安装 Pro 框架时隐藏Pro_V1模型。
 - 优化：多项依赖更新，修复已知的依赖漏洞。
 - 优化：优化出现重复词汇的概率。
-- 优化：Pro_V1系列模型更换新模型，优化质量和速度。
+- 优化：Pro_V1系列模型更换新模型，优化质量和速度同时降低配置要求。
 
 ### Fixed
 

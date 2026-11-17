@@ -67,9 +67,33 @@ export const LEGACY_STRATA_MODELS = [
     id: 'unsloth-ud-q4_k_xl',
     family: 'unsloth',
     quant: 'UD-Q4_K_XL',
-    name: 'Unsloth Qwen3.8-Flash-Next UD-Q4_K_XL',
+    name: 'Q4_K_XL',
     gb: 111.3,
     ram: 48
+  },
+  {
+    id: 'qwen36-ud-q4_k_xl',
+    family: 'qwen36',
+    quant: 'UD-Q4_K_XL',
+    name: 'Q4_K_XL',
+    gb: 22.85,
+    ram: 32
+  },
+  {
+    id: 'qwen36-ud-q6_k_xl',
+    family: 'qwen36',
+    quant: 'UD-Q6_K_XL',
+    name: 'Q6_K_XL',
+    gb: 32.61,
+    ram: 44
+  },
+  {
+    id: 'qwen36-q8_0',
+    family: 'qwen36',
+    quant: 'Q8_0',
+    name: 'Q8_0',
+    gb: 37.8,
+    ram: 52
   }
 ] as const
 
@@ -78,92 +102,86 @@ export const STRATA_MODELS = [
     id: 'unsloth-ud-iq1_m',
     family: 'unsloth',
     quant: 'UD-IQ1_M',
-    name: 'Unsloth Qwen3.8-Flash-Next UD-IQ1_M',
+    name: 'IQ1_M',
     gb: 68,
-    ram: 48
+    ram: 48,
+    requirements: [[48, 8]]
   },
   {
     id: 'unsloth-ud-q2_0',
     family: 'unsloth',
     quant: 'UD-Q2_0',
-    name: 'Unsloth Qwen3.8-Flash-Next UD-Q2_0',
+    name: 'Q2_0',
     gb: 70.5,
-    ram: 48
+    ram: 48,
+    requirements: [
+      [48, 12],
+      [64, 8]
+    ]
   },
   {
     id: 'unsloth-ud-iq2_xs',
     family: 'unsloth',
     quant: 'UD-IQ2_XS',
-    name: 'Unsloth Qwen3.8-Flash-Next UD-IQ2_XS',
+    name: 'IQ2_XS',
     gb: 75.8,
-    ram: 48
+    ram: 48,
+    requirements: [
+      [48, 12],
+      [64, 8]
+    ]
   },
   {
     id: 'unsloth-ud-q2_k_xl',
     family: 'unsloth',
     quant: 'UD-Q2_K_XL',
-    name: 'Unsloth Qwen3.8-Flash-Next UD-Q2_K_XL',
+    name: 'Q2_K_XL',
     gb: 79.6,
-    ram: 48
+    ram: 48,
+    requirements: [
+      [48, 16],
+      [64, 12]
+    ]
   },
   {
     id: 'unsloth-ud-iq3_xxs',
     family: 'unsloth',
     quant: 'UD-IQ3_XXS',
-    name: 'Unsloth Qwen3.8-Flash-Next UD-IQ3_XXS',
+    name: 'IQ3_XXS',
     gb: 83.6,
-    ram: 48
+    ram: 48,
+    requirements: [
+      [48, 16],
+      [64, 12]
+    ]
   },
   {
     id: 'unsloth-ud-q3_k_xl',
     family: 'unsloth',
     quant: 'UD-Q3_K_XL',
-    name: 'Unsloth Qwen3.8-Flash-Next UD-Q3_K_XL',
+    name: 'Q3_K_XL',
     gb: 89.5,
-    ram: 48
+    ram: 64,
+    requirements: [
+      [64, 16],
+      [96, 12]
+    ]
   },
   {
     id: 'unsloth-ud-iq4_xs-v31',
     family: 'unsloth',
     quant: 'UD-IQ4_XS-v31',
-    name: 'Unsloth Qwen3.8-Flash-Next UD-IQ4_XS-v31',
+    name: 'IQ4_XS',
     gb: 93.7,
-    ram: 48
-  },
-  LEGACY_STRATA_MODELS[7],
-  {
-    id: 'qwen36-ud-q4_k_xl',
-    family: 'qwen36',
-    quant: 'UD-Q4_K_XL',
-    name: 'Unsloth Qwen3.6-35B-A3B UD-Q4_K_XL',
-    gb: 22.85,
-    ram: 32
-  },
-  {
-    id: 'qwen36-ud-q6_k_xl',
-    family: 'qwen36',
-    quant: 'UD-Q6_K_XL',
-    name: 'Unsloth Qwen3.6-35B-A3B UD-Q6_K_XL',
-    gb: 32.61,
-    ram: 44
-  },
-  {
-    id: 'qwen36-q8_0',
-    family: 'qwen36',
-    quant: 'Q8_0',
-    name: 'Unsloth Qwen3.6-35B-A3B Q8_0',
-    gb: 37.8,
-    ram: 52
+    ram: 96,
+    requirements: [[96, 12]]
   }
 ] as const
 
 export type StrataModel = (typeof STRATA_MODELS | typeof LEGACY_STRATA_MODELS)[number]
 
-// Q4 is still selectable under its original ID and must occur only once in cleanup/lookups.
-export const ALL_STRATA_MODELS: readonly StrataModel[] = [
-  ...STRATA_MODELS,
-  ...LEGACY_STRATA_MODELS.filter((legacy) => !STRATA_MODELS.some((model) => model.id === legacy.id))
-]
+// Retired presets remain addressable for existing installations and model cleanup only.
+export const ALL_STRATA_MODELS: readonly StrataModel[] = [...STRATA_MODELS, ...LEGACY_STRATA_MODELS]
 
 export function getStrataModel(modelId: string): StrataModel | undefined {
   return ALL_STRATA_MODELS.find((model) => model.id === modelId)
@@ -181,8 +199,11 @@ export function strataHardwareRecommendation(
   model: StrataModel,
   platform = process.platform
 ): string {
-  // Recommend resident weights plus OS/cache headroom, not Strata's SSD-streaming minimum.
-  // These are conservative single-session recommendations, not a fit guarantee at 256K context.
+  if (platform !== 'darwin' && 'requirements' in model) {
+    const requirements: readonly (readonly [number, number])[] = model.requirements
+    return requirements.map(([ram, vram]) => `RAM+VRAM ${ram}GB+${vram}GB`).join(' / ')
+  }
+  // The Mac llama.cpp path loads resident weights; do not apply Strata's PC streaming requirements.
   const weightsGiB = (model.gb * 1e9) / 1024 ** 3
   const required = Math.max(model.ram, weightsGiB + Math.max(12, weightsGiB * 0.15))
   const ram =
@@ -203,7 +224,7 @@ export function useProDiagnostics(
 }
 
 export const DEFAULT_STRATA_SETTINGS: StrataSettings = {
-  model: 'qwen36-ud-q4_k_xl',
+  model: 'unsloth-ud-q2_0',
   backend: 'auto',
   context: 32768,
   kv: 'int8',

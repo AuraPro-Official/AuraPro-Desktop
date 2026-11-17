@@ -246,11 +246,12 @@ test('Cancelling a Control download preserves the old runtime and removes stagin
 test('Qwen3.6 starts through Control without unsupported Flash-Next KV flags', async () => {
   const f = fixture()
   try {
-    await f.exports.installStrata(false, models.DEFAULT_STRATA_SETTINGS)
+    const settings = { ...models.DEFAULT_STRATA_SETTINGS, model: 'qwen36-ud-q4_k_xl' }
+    await f.exports.installStrata(false, settings)
     const installed = (await f.exports.getStrataInfo()).installed
     const dir = path.join(f.root, 'versions', installed.source)
     fs.writeFileSync(
-      path.join(dir, models.strataConfigName(models.DEFAULT_STRATA_SETTINGS.model)),
+      path.join(dir, models.strataConfigName(settings.model)),
       JSON.stringify({
         exe: 'component:strata-engine',
         backend: 'cuda',
@@ -267,6 +268,18 @@ test('Qwen3.6 starts through Control without unsupported Flash-Next KV flags', a
     assert.equal(config.arch, 'qwen35moe')
     assert.equal(config.tokenizer, 'qwen')
     assert.equal(config.args[config.args.indexOf('--mtp') + 1], '2')
+    const info = await f.exports.getStrataInfo()
+    assert.equal(info.models.length, 7)
+    assert.equal(
+      info.models.some(
+        (model) => model.id.startsWith('qwen36-') || model.id === 'unsloth-ud-q4_k_xl'
+      ),
+      false
+    )
+    assert.equal(
+      info.legacyModels.some((model) => model.id === settings.model),
+      true
+    )
     await f.exports.stopStrata()
   } finally {
     f.cleanup()

@@ -14,6 +14,7 @@ import {
 } from '../src/main/utils/strata-models.ts'
 
 const require = createRequire(import.meta.url)
+const defaultModel = STRATA_MODELS.find((model) => model.id === DEFAULT_STRATA_SETTINGS.model)
 const playwrightPath =
   process.env.PLAYWRIGHT_MODULE ||
   require.resolve('playwright', {
@@ -309,9 +310,9 @@ try {
     await page.goto(`http://127.0.0.1:${port}/__get_started_test?lang=zh-CN`)
     await page.locator('summary').filter({ hasText: '手动选择' }).click()
     {
-      await page.getByText(`Pro_V1 · ${STRATA_MODELS[8].name}`, { exact: true }).waitFor()
+      await page.getByText(`Pro_V1 · ${defaultModel.name}`, { exact: true }).waitFor()
       assert.equal(await page.getByText(/^Pro_V1 · /).count(), STRATA_MODELS.length)
-      await page.getByText(`Pro_V1 · ${STRATA_MODELS[8].name}`, { exact: true }).click()
+      await page.getByText(`Pro_V1 · ${defaultModel.name}`, { exact: true }).click()
       await page
         .getByText(`${platform === 'mac' ? 'llama.cpp' : 'Strata'} · 18882`, { exact: true })
         .waitFor()
@@ -343,8 +344,7 @@ try {
     await page.getByRole('button', { name: 'Download & Finish Setup' }).waitFor()
     await page.locator('summary').click()
     assert.equal(await page.getByText(/^Pro_V1 · /).count(), STRATA_MODELS.length)
-    if (proChoice)
-      await page.getByText(`Pro_V1 · ${STRATA_MODELS[8].name}`, { exact: true }).click()
+    if (proChoice) await page.getByText(`Pro_V1 · ${defaultModel.name}`, { exact: true }).click()
     await page.waitForTimeout(2200)
     await page.screenshot({
       path: path.join(screenshots, `setup-${proChoice ? 'pro' : 'standard'}.png`),
@@ -392,11 +392,24 @@ try {
     if (theme === 'dark') await page.evaluate(() => document.documentElement.classList.add('dark'))
     await page.locator('select').first().waitFor()
     await page.waitForTimeout(600)
-    assert.equal(await page.locator('select').count(), 3)
+    assert.equal(await page.locator('select').count(), 4)
     assert.equal(
       await page.locator('select').first().locator('option').count(),
       STRATA_MODELS.length
     )
+    assert.deepEqual(
+      await page.locator('select').first().locator('option').allTextContents(),
+      STRATA_MODELS.map((model) => model.name)
+    )
+    for (const label of new Set(STRATA_MODELS.map((model) => strataHardwareRecommendation(model))))
+      assert.ok(
+        await page
+          .getByText(
+            `~${STRATA_MODELS.find((model) => strataHardwareRecommendation(model) === label).gb} GB · ${label}`,
+            { exact: true }
+          )
+          .count()
+      )
     assert.equal(await page.locator('fieldset > details').getAttribute('open'), null)
     assert.equal(await page.locator('select:visible').count(), 1)
     assert.equal(

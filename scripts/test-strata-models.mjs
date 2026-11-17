@@ -29,8 +29,7 @@ const unslothQuants = [
   'UD-Q2_K_XL',
   'UD-IQ3_XXS',
   'UD-Q3_K_XL',
-  'UD-IQ4_XS-v31',
-  'UD-Q4_K_XL'
+  'UD-IQ4_XS-v31'
 ]
 const qwen36Quants = ['UD-Q4_K_XL', 'UD-Q6_K_XL', 'Q8_0']
 const legacyIds = [
@@ -41,7 +40,10 @@ const legacyIds = [
   'swift-iq2_xs',
   'swift-iq3_xxs',
   'coder-iq1_m',
-  'unsloth-ud-q4_k_xl'
+  'unsloth-ud-q4_k_xl',
+  'qwen36-ud-q4_k_xl',
+  'qwen36-ud-q6_k_xl',
+  'qwen36-q8_0'
 ]
 const option = (args, flag) => {
   assert.ok(args.includes(flag), `Missing ${flag}`)
@@ -55,25 +57,19 @@ test('release and service exports are stable', () => {
   assert.equal(STRATA_MODEL_ID, 'aurapro-pro')
 })
 
-test('only eight Unsloth Flash-Next and three Qwen3.6 presets are selectable', () => {
+test('only seven Flash-Next presets are selectable with compact quantization names', () => {
   assert.deepEqual(
     STRATA_MODELS.map(({ id, family, quant }) => [id, family, quant]),
-    [
-      ...unslothQuants.map((q) => [`unsloth-${q.toLowerCase()}`, 'unsloth', q]),
-      ...qwen36Quants.map((q) => [`qwen36-${q.toLowerCase()}`, 'qwen36', q])
-    ]
+    unslothQuants.map((q) => [`unsloth-${q.toLowerCase()}`, 'unsloth', q])
   )
-  assert.equal(new Set(STRATA_MODELS.map(({ name }) => name)).size, 11)
-  for (const model of STRATA_MODELS) {
-    assert.ok(model.name.includes('Unsloth'))
-    assert.ok(
-      model.name.includes(model.family === 'qwen36' ? 'Qwen3.6-35B-A3B' : 'Qwen3.8-Flash-Next')
-    )
-    assert.ok(model.name.includes(model.quant))
-  }
+  assert.equal(new Set(STRATA_MODELS.map(({ name }) => name)).size, 7)
+  assert.deepEqual(
+    STRATA_MODELS.map((model) => model.name),
+    ['IQ1_M', 'Q2_0', 'IQ2_XS', 'Q2_K_XL', 'IQ3_XXS', 'Q3_K_XL', 'IQ4_XS']
+  )
 })
 
-test('legacy lookups retain all eight IDs and the full catalog deduplicates shared Q4', () => {
+test('retired Q4 and 35B presets remain compatible without appearing in the selectable catalog', () => {
   assert.deepEqual(
     LEGACY_STRATA_MODELS.map(({ id }) => id),
     legacyIds
@@ -84,7 +80,7 @@ test('legacy lookups retain all eight IDs and the full catalog deduplicates shar
     ALL_STRATA_MODELS.filter(({ id }) => !STRATA_MODELS.some((m) => m.id === id)).map(
       ({ id }) => id
     ),
-    legacyIds.slice(0, -1)
+    legacyIds
   )
   for (const model of [...STRATA_MODELS, ...LEGACY_STRATA_MODELS])
     assert.equal(getStrataModel(model.id), model)
@@ -95,10 +91,10 @@ test('legacy lookups retain all eight IDs and the full catalog deduplicates shar
   }
 })
 
-test('fresh settings default to Qwen3.6 Q4 without migrating any saved legacy setting', () => {
-  assert.equal(DEFAULT_STRATA_SETTINGS.model, 'qwen36-ud-q4_k_xl')
-  assert.equal(getStrataModel(DEFAULT_STRATA_SETTINGS.model).gb, 22.85)
-  for (const model of LEGACY_STRATA_MODELS) {
+test('fresh settings use Q2_0 without changing any saved model selection', () => {
+  assert.equal(DEFAULT_STRATA_SETTINGS.model, 'unsloth-ud-q2_0')
+  assert.ok(STRATA_MODELS.some((model) => model.id === DEFAULT_STRATA_SETTINGS.model))
+  for (const model of ALL_STRATA_MODELS) {
     const saved = Object.freeze({
       model: model.id,
       backend: 'hip',
@@ -124,7 +120,10 @@ test('config lookups preserve old names and use the upstream Qwen3.6 and v3.1 na
       'strata-swift-iq2_xs.json',
       'strata-swift-iq3_xxs.json',
       'strata-coder-iq1_m.json',
-      'strata-unsloth-ud-q4_k_xl.json'
+      'strata-unsloth-ud-q4_k_xl.json',
+      'strata-qwen36-ud-q4_k_xl.json',
+      'strata-qwen36-ud-q6_k_xl.json',
+      'strata-qwen36-q8_0.json'
     ]
   )
   for (const q of qwen36Quants)
@@ -242,18 +241,22 @@ test('native manifests pin exact shard counts, paths, sizes and hashes for all 1
 })
 
 test('v3.1 IQ4 paths use UD-IQ4_XS, while setup and config retain the catalog alias', () => {
+  const model = getStrataModel('unsloth-ud-iq4_xs-v31')
+  assert.equal(model.name, 'IQ4_XS')
+  assert.equal(model.quant, 'UD-IQ4_XS-v31')
   const m = nativeProFiles('unsloth-ud-iq4_xs-v31')
   assert.equal(m.revision, 'd96201194f103c906994f283f504209dc8d2a10c')
   assert.deepEqual(
     m.files,
     [1, 2, 3, 4].map((i) => `UD-IQ4_XS/Qwen3.8-Flash-Next-UD-IQ4_XS-0000${i}-of-00004.gguf`)
   )
-  for (const q of unslothQuants.slice(0, -1))
+  for (const q of unslothQuants)
     assert.equal(nativeProFiles(`unsloth-${q.toLowerCase()}`).revision, m.revision)
 })
 
 test('legacy native layouts and original Q4 revision remain addressable', () => {
   for (const model of LEGACY_STRATA_MODELS) {
+    if (model.family === 'qwen36') continue
     const m = nativeProFiles(model.id)
     const prefix =
       model.family === 'swift'
@@ -316,8 +319,26 @@ test('mutating a returned native manifest cannot corrupt the pinned catalog', ()
   assert.deepEqual(nativeProFiles(DEFAULT_STRATA_SETTINGS.model), before)
 })
 
-test('hardware recommendations reserve resident weight and OS/cache headroom', () => {
-  for (const platform of ['darwin', 'win32', 'linux']) {
+test('PC requirements preserve each approved RAM/VRAM combination rather than summing model bytes', () => {
+  const requirements = [
+    'RAM+VRAM 48GB+8GB',
+    'RAM+VRAM 48GB+12GB / RAM+VRAM 64GB+8GB',
+    'RAM+VRAM 48GB+12GB / RAM+VRAM 64GB+8GB',
+    'RAM+VRAM 48GB+16GB / RAM+VRAM 64GB+12GB',
+    'RAM+VRAM 48GB+16GB / RAM+VRAM 64GB+12GB',
+    'RAM+VRAM 64GB+16GB / RAM+VRAM 96GB+12GB',
+    'RAM+VRAM 96GB+12GB'
+  ]
+  for (const platform of ['win32', 'linux']) {
+    assert.deepEqual(
+      STRATA_MODELS.map((model) => strataHardwareRecommendation(model, platform)),
+      requirements
+    )
+  }
+})
+
+test('Mac recommendations remain separate from PC disk-streaming requirements', () => {
+  for (const platform of ['darwin']) {
     let previous = 0
     for (const model of [...ALL_STRATA_MODELS].sort((a, b) => a.gb - b.gb)) {
       const label = strataHardwareRecommendation(model, platform)
@@ -510,7 +531,8 @@ print(json.dumps(out))
     for (const model of ALL_STRATA_MODELS) {
       assert.deepEqual(nativeProFiles(model.id), upstream[model.id].manifest, model.id)
       assert.equal(strataConfigName(model.id), upstream[model.id].config, model.id)
-      assert.equal(model.ram, upstream[model.id].ram, model.id)
+      if (LEGACY_STRATA_MODELS.some((legacy) => legacy.id === model.id))
+        assert.equal(model.ram, upstream[model.id].ram, model.id)
     }
   }
 )
