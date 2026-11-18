@@ -158,3 +158,43 @@ test('high Q4 2 follows high Q4 in all model lists without replacing recommendat
     assert.doesNotMatch(source, /modelByName\('high_Q4_2.gguf'\)/)
   }
 })
+
+test('no official model enables the DRY sampler (it corrupts copied IDs and numbers)', () => {
+  // DRY penalises repeating any long token run already in context, including the source
+  // text. Measured on lowest_V2: allowed length 6 changed 20/35 copied IDs (order and ID-card
+  // numbers, commands); even 24 still broke a 40-digit serial. Runaways are bounded by the
+  // backend translation token cap instead.
+  const source = ts.createSourceFile(
+    'llamacpp.ts',
+    fs.readFileSync('src/main/utils/llamacpp.ts', 'utf8'),
+    ts.ScriptTarget.Latest,
+    true
+  )
+  const context = vm.createContext({ path, os: { totalmem: () => 32 * 1024 ** 3 }, process })
+  for (const name of ['getMmprojPrefixForModel', 'getPresetModelOverrides']) {
+    const statement = source.statements.find(
+      (node) =>
+        ts.isVariableStatement(node) &&
+        node.declarationList.declarations.some((decl) => decl.name.getText(source) === name)
+    )
+    assert.ok(statement, name)
+    vm.runInContext(
+      ts.transpileModule(`${statement.getText(source)}; globalThis.${name}=${name}`, {
+        compilerOptions: { target: ts.ScriptTarget.ES2022 }
+      }).outputText,
+      context
+    )
+  }
+  for (const model of [
+    'lowest_V2.gguf',
+    'medium_Q4_V2.gguf',
+    'high_Q4_2.gguf',
+    'medium_Q4.gguf',
+    'high_Q4.gguf',
+    'low_E4.gguf'
+  ]) {
+    const overrides = context.getPresetModelOverrides(`/models/x/${model}`)
+    assert.ok(!Object.keys(overrides).some((key) => key.startsWith('dry-')), model)
+  }
+  assert.doesNotMatch(fs.readFileSync('src/main/utils/llamacpp.ts', 'utf8'), /'dry-multiplier = /)
+})
