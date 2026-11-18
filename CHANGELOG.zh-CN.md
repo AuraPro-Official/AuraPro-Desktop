@@ -7,7 +7,7 @@ AuraPro Desktop 的重要变更均记录在此文件中。
 本文档遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，
 项目版本遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [3.10.11] - 2026-11-20
+## [3.10.12] - 2026-11-20
 
 ### Changed
 

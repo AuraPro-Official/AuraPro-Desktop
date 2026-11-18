@@ -14,34 +14,52 @@ const source = ts.createSourceFile(
 
 // Exercise the production orchestration with fake installers, without loading Electron
 // or touching the user's Python environment and package caches.
-const loadFunction = (name, dependencies) => {
-  const statement = source.statements.find(
-    (node) =>
-      ts.isVariableStatement(node) &&
-      node.declarationList.declarations.some(
-        (declaration) => declaration.name.getText(source) === name
-      )
-  )
-  assert.ok(statement, `Missing production function: ${name}`)
-  const { outputText } = ts.transpileModule(statement.getText(source), {
+const loadProduction = (names, dependencies = {}) => {
+  const statements = names.map((name) => {
+    const statement = source.statements.find(
+      (node) =>
+        ts.isVariableStatement(node) &&
+        node.declarationList.declarations.some(
+          (declaration) => declaration.name.getText(source) === name
+        )
+    )
+    assert.ok(statement, `Missing production declaration: ${name}`)
+    return statement.getText(source)
+  })
+  const { outputText } = ts.transpileModule(statements.join('\n'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
   })
   const exports = {}
   runInNewContext(outputText, { exports, ...dependencies })
-  return exports[name]
+  return exports
 }
 
+const loadFunction = (name, dependencies) => loadProduction([name], dependencies)[name]
+
+const versionPolicy = loadProduction([
+  'AURAPRO_UI_MIN_VERSION',
+  'AURAPRO_UI_TARGET_VERSION',
+  'AURAPRO_UI_LATEST_VERSION',
+  'AURAPRO_UI_REPAIR_VERSIONS',
+  'parseSemver',
+  'compareSemver',
+  'isSupportedOpenWebUIVersion',
+  'resolveOpenWebUITargetVersion'
+])
+const { AURAPRO_UI_TARGET_VERSION: target, resolveOpenWebUITargetVersion: resolveTarget } =
+  versionPolicy
+
 const setup = ({
-  versions = { 'aurapro-webui': '3.9.32' },
+  versions = { 'aurapro-webui': target },
+  latestVersion = '3.10.12',
   torchChanged = false,
   epubChanged = false
 } = {}) => {
   const events = []
   const installed = { ...versions }
   const ensure = loadFunction('ensureOpenWebUIPackage', {
-    AURAPRO_UI_TARGET_VERSION: '3.9.32',
+    ...versionPolicy,
     AURAPRO_UI_LAST_VERSION: '3.9.3',
-    resolveOpenWebUITargetVersion: (version) => version,
     isLatestOpenWebUITarget: (version) => version === 'latest',
     getOpenWebUIPackageNameForVersion: () => 'aurapro-webui',
     getExactPackageVersions: async () => ({ ...installed }),
@@ -54,7 +72,7 @@ const setup = ({
     prepareOpenWebUIPackageMutation: async () => events.push('prepare'),
     installPackage: async (name, version) => {
       events.push('install')
-      installed[name] = version ?? '3.9.33'
+      installed[name] = version ?? latestVersion
     },
     removeSupersededOpenWebUIDistribution: (name) => {
       events.push(`remove:${name}`)
@@ -74,8 +92,20 @@ const setup = ({
   return { ensure, events, installed }
 }
 
+test('the default WebUI package changes without raising the minimum or overriding version pins', () => {
+  assert.equal(resolveTarget(), '3.10.11')
+  assert.equal(resolveTarget('  '), '3.10.11')
+  assert.equal(resolveTarget('3.10.8'), '3.10.8')
+  assert.equal(resolveTarget('3.6.0'), '3.6.0')
+  assert.equal(resolveTarget('  v3.10.12  '), '3.10.12')
+  assert.equal(resolveTarget('LATEST'), 'latest')
+  assert.equal(resolveTarget('v3.9.16'), '3.10.11')
+  assert.throws(() => resolveTarget('3.5.9'), /not supported/)
+  assert.throws(() => resolveTarget('invalid'), /not supported/)
+})
+
 test('ordinary startup and latest startup do not clean unchanged package caches', async () => {
-  for (const version of ['3.9.32', 'latest']) {
+  for (const version of [target, 'latest']) {
     const { ensure, events } = setup()
     assert.equal(await ensure(version), 'aurapro-webui')
     assert.deepEqual(events, ['torch', 'epub'])
@@ -83,11 +113,21 @@ test('ordinary startup and latest startup do not clean unchanged package caches'
 })
 
 test('fresh install, update and downgrade clean only after all runtime dependencies finish', async () => {
-  for (const versions of [{}, { 'aurapro-webui': '3.9.31' }, { 'aurapro-webui': '3.9.33' }]) {
+  for (const versions of [{}, { 'aurapro-webui': '3.10.8' }, { 'aurapro-webui': '3.10.12' }]) {
     const { ensure, events, installed } = setup({ versions })
-    await ensure('3.9.32')
-    assert.equal(installed['aurapro-webui'], '3.9.32')
+    await ensure()
+    assert.equal(installed['aurapro-webui'], target)
     assert.deepEqual(events, ['prepare', 'install', 'torch', 'epub', 'cleanup'])
+  }
+})
+
+test('an existing installation is left alone for explicit old pins and latest on startup', async () => {
+  const versions = { 'aurapro-webui': '3.10.8' }
+  for (const version of ['3.10.8', 'latest']) {
+    const { ensure, events, installed } = setup({ versions })
+    await ensure(version)
+    assert.equal(installed['aurapro-webui'], '3.10.8')
+    assert.deepEqual(events, ['torch', 'epub'])
   }
 })
 
@@ -120,7 +160,7 @@ test('repairing torch or EPUB dependencies also triggers exactly one cleanup', a
 test('legacy migration preserves the new distribution and cleans after dependency checks', async () => {
   const { ensure, events, installed } = setup({ versions: { 'aurapro-ui': '3.9.3' } })
   await ensure()
-  assert.deepEqual(installed, { 'aurapro-webui': '3.9.32' })
+  assert.deepEqual(installed, { 'aurapro-webui': target })
   assert.deepEqual(events, ['prepare', 'install', 'remove:aurapro-ui', 'torch', 'epub', 'cleanup'])
 })
 

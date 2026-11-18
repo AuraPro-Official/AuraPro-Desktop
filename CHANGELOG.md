@@ -7,7 +7,7 @@ All notable changes to AuraPro Desktop are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.10.11] - 2026-11-20
+## [3.10.12] - 2026-11-20
 
 ### Changed
 
