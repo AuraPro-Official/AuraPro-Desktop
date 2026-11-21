@@ -11,6 +11,11 @@ import * as path from 'path'
 import log from 'electron-log'
 
 import { getInstallDir } from './index'
+import {
+  getIndexTranslateModel,
+  getIndexTranslateUpgrade,
+  indexTranslatePartialPath
+} from './index-translate'
 
 // ─── Types ──────────────────────────────────────────────
 
@@ -440,7 +445,8 @@ const downloadModelInner = async (
     return destPath
   }
 
-  const tmpPath = destPath + '.tmp'
+  const omniUpgrade = getIndexTranslateUpgrade(destPath, repo, filename)
+  const tmpPath = omniUpgrade ? indexTranslatePartialPath(destPath) : `${destPath}.tmp`
   let resumeBytes = 0
   if (fs.existsSync(tmpPath)) {
     resumeBytes = fs.statSync(tmpPath).size
@@ -487,21 +493,30 @@ const downloadModelInner = async (
     )
   }
 
+  const verificationSize = omniUpgrade?.current.expectedSize ?? remoteSize
+  if (omniUpgrade && remoteSize > 0 && remoteSize !== verificationSize) {
+    activeDownloads.delete(activeKey)
+    throw new Error(`Unexpected file size for ${repo}/${filename}: ${remoteSize} bytes`)
+  }
+
   if (fs.existsSync(destPath)) {
     const stat = fs.statSync(destPath)
-    if (remoteSize > 0) {
-      if (stat.size === remoteSize) {
+    if (verificationSize > 0) {
+      if (stat.size === verificationSize) {
         activeDownloads.delete(activeKey)
         log.info(`[huggingface] Verified cached file: ${destPath}`)
         return recordDownloadedModel()
       }
 
-      log.warn(
-        `[huggingface] Cached file size mismatch for ${repo}/${filename}: local=${stat.size}, remote=${remoteSize}; deleting cached file`
-      )
-      try {
-        fs.unlinkSync(destPath)
-      } catch {}
+      // Keep the previous revision playable until the replacement is ready to rename.
+      if (!omniUpgrade) {
+        log.warn(
+          `[huggingface] Cached file size mismatch for ${repo}/${filename}: local=${stat.size}, remote=${remoteSize}; deleting cached file`
+        )
+        try {
+          fs.unlinkSync(destPath)
+        } catch {}
+      }
     } else if (stat.size > 0 && (!expectedSize || stat.size === expectedSize)) {
       activeDownloads.delete(activeKey)
       log.info(`[huggingface] Reusing cached file without remote size: ${destPath}`)
@@ -509,8 +524,8 @@ const downloadModelInner = async (
     }
   }
 
-  if (remoteSize > 0 && resumeBytes >= remoteSize) {
-    if (resumeBytes === remoteSize) {
+  if (verificationSize > 0 && resumeBytes >= verificationSize) {
+    if (resumeBytes === verificationSize) {
       fs.renameSync(tmpPath, destPath)
       activeDownloads.delete(activeKey)
       log.info(`[huggingface] Resumed file was already complete: ${destPath}`)
@@ -545,7 +560,7 @@ const downloadModelInner = async (
 
   if (response.status === 416 && resumeBytes > 0) {
     const totalFromRange = parseContentRangeTotal(response.headers.get('content-range'))
-    if (totalFromRange > 0 && resumeBytes >= totalFromRange) {
+    if (!omniUpgrade && totalFromRange > 0 && resumeBytes >= totalFromRange) {
       fs.renameSync(tmpPath, destPath)
       activeDownloads.delete(activeKey)
       log.info(`[huggingface] Resumed file was already complete: ${destPath}`)
@@ -593,7 +608,7 @@ const downloadModelInner = async (
   const contentLength = parseContentLength(response.headers.get('content-length'))
   const totalFromRange = parseContentRangeTotal(response.headers.get('content-range'))
   const totalBytes =
-    remoteSize ||
+    verificationSize ||
     totalFromRange ||
     (response.status === 206 ? resumeBytes + contentLength : contentLength) ||
     expectedSize ||
@@ -642,13 +657,13 @@ const downloadModelInner = async (
     await new Promise<void>((resolve) => writeStream.on('finish', () => resolve()))
   }
 
-  if (remoteSize > 0 && downloadedBytes !== remoteSize) {
+  if (verificationSize > 0 && downloadedBytes !== verificationSize) {
     activeDownloads.delete(activeKey)
     log.error(
-      `[huggingface] Download size mismatch for ${repo}/${filename}: downloaded=${downloadedBytes}, remote=${remoteSize}`
+      `[huggingface] Download size mismatch for ${repo}/${filename}: downloaded=${downloadedBytes}, expected=${verificationSize}`
     )
     throw new Error(
-      `Downloaded file is incomplete for ${repo}/${filename}: expected ${remoteSize} bytes, got ${downloadedBytes} bytes`
+      `Downloaded file is incomplete for ${repo}/${filename}: expected ${verificationSize} bytes, got ${downloadedBytes} bytes`
     )
   }
 
@@ -656,17 +671,17 @@ const downloadModelInner = async (
   fs.renameSync(tmpPath, destPath)
   activeDownloads.delete(activeKey)
 
-  if (remoteSize > 0) {
+  if (verificationSize > 0) {
     const finalSize = fs.statSync(destPath).size
-    if (finalSize !== remoteSize) {
+    if (finalSize !== verificationSize) {
       try {
         fs.unlinkSync(destPath)
       } catch {}
       log.error(
-        `[huggingface] Final file size mismatch for ${repo}/${filename}: final=${finalSize}, remote=${remoteSize}`
+        `[huggingface] Final file size mismatch for ${repo}/${filename}: final=${finalSize}, expected=${verificationSize}`
       )
       throw new Error(
-        `Downloaded file failed verification for ${repo}/${filename}: expected ${remoteSize} bytes, got ${finalSize} bytes`
+        `Downloaded file failed verification for ${repo}/${filename}: expected ${verificationSize} bytes, got ${finalSize} bytes`
       )
     }
   }
@@ -743,6 +758,8 @@ export const deleteModel = (repo: string, filename: string): boolean => {
       fs.unlinkSync(filepath)
     }
     if (fs.existsSync(`${filepath}.tmp`)) fs.unlinkSync(`${filepath}.tmp`)
+    if (getIndexTranslateModel(filepath))
+      fs.rmSync(indexTranslatePartialPath(filepath), { force: true })
   } catch (e) {
     log.error(`[huggingface] Failed to delete ${filepath}:`, e)
     return false

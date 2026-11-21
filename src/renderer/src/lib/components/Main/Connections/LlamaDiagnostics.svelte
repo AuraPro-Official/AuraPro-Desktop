@@ -2,6 +2,11 @@
   import { onMount } from 'svelte'
   import { fade, fly } from 'svelte/transition'
   import i18n from '../../../i18n'
+  import SpeechRepairDialog from './SpeechRepairDialog.svelte'
+
+  let { getSpeechRepairGuestId }: { getSpeechRepairGuestId: () => number } = $props()
+  let speechRepairOpen = $state(false)
+  let speechRepairRunning = $state(false)
 
   interface DiagnosticIssue {
     id: string
@@ -707,12 +712,20 @@
         >
           {text('忽略', 'Ignore')}
         </button>
-        <div class="flex items-center gap-2">
+        <div class="flex flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            class="rounded-md border border-black/10 bg-transparent px-3 py-2 text-[12px] text-black/55 hover:bg-black/[0.04] disabled:opacity-35 dark:border-white/10 dark:text-white/55 dark:hover:bg-white/[0.06]"
+            onclick={() => (speechRepairOpen = true)}
+            disabled={repairing || speechRepairRunning}
+          >
+            {$i18n.t('speechRepair.title')}
+          </button>
           <button
             type="button"
             class="rounded-md border border-black/10 bg-transparent px-3 py-2 text-[12px] text-black/55 hover:bg-black/[0.04] disabled:opacity-35 dark:border-white/10 dark:text-white/55 dark:hover:bg-white/[0.06]"
             onclick={runDiagnosis}
-            disabled={diagnosing || repairing}
+            disabled={diagnosing || repairing || speechRepairRunning}
           >
             {text('重新检测', 'Check again')}
           </button>
@@ -720,7 +733,10 @@
             type="button"
             class="rounded-md border-none bg-[#1d1d1f] px-3.5 py-2 text-[12px] font-medium text-white hover:bg-black disabled:cursor-not-allowed disabled:opacity-35 dark:bg-white dark:text-black dark:hover:bg-white/90"
             onclick={runRepair}
-            disabled={repairing || diagnosing || selectedIssueIds.length === 0}
+            disabled={repairing ||
+              diagnosing ||
+              speechRepairRunning ||
+              selectedIssueIds.length === 0}
           >
             {repairing
               ? text('修复中...', 'Repairing...')
@@ -733,4 +749,13 @@
       </div>
     </footer>
   </aside>
+{/if}
+
+{#if speechRepairOpen}
+  <SpeechRepairDialog
+    {getSpeechRepairGuestId}
+    bind:running={speechRepairRunning}
+    onClose={() => (speechRepairOpen = false)}
+    onComplete={() => void runDiagnosis()}
+  />
 {/if}

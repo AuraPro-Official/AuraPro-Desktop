@@ -51,7 +51,7 @@ const { AURAPRO_UI_TARGET_VERSION: target, resolveOpenWebUITargetVersion: resolv
 
 const setup = ({
   versions = { 'aurapro-webui': target },
-  latestVersion = '3.10.12',
+  latestVersion = '3.11.0',
   torchChanged = false,
   epubChanged = false
 } = {}) => {
@@ -93,13 +93,14 @@ const setup = ({
 }
 
 test('the default WebUI package changes without raising the minimum or overriding version pins', () => {
-  assert.equal(resolveTarget(), '3.10.11')
-  assert.equal(resolveTarget('  '), '3.10.11')
+  assert.equal(resolveTarget(), '3.10.13')
+  assert.equal(resolveTarget('  '), '3.10.13')
+  assert.equal(resolveTarget('3.10.11'), '3.10.11')
   assert.equal(resolveTarget('3.10.8'), '3.10.8')
   assert.equal(resolveTarget('3.6.0'), '3.6.0')
   assert.equal(resolveTarget('  v3.10.12  '), '3.10.12')
   assert.equal(resolveTarget('LATEST'), 'latest')
-  assert.equal(resolveTarget('v3.9.16'), '3.10.11')
+  assert.equal(resolveTarget('v3.9.16'), '3.10.13')
   assert.throws(() => resolveTarget('3.5.9'), /not supported/)
   assert.throws(() => resolveTarget('invalid'), /not supported/)
 })
@@ -113,7 +114,7 @@ test('ordinary startup and latest startup do not clean unchanged package caches'
 })
 
 test('fresh install, update and downgrade clean only after all runtime dependencies finish', async () => {
-  for (const versions of [{}, { 'aurapro-webui': '3.10.8' }, { 'aurapro-webui': '3.10.12' }]) {
+  for (const versions of [{}, { 'aurapro-webui': '3.10.11' }, { 'aurapro-webui': '3.11.0' }]) {
     const { ensure, events, installed } = setup({ versions })
     await ensure()
     assert.equal(installed['aurapro-webui'], target)

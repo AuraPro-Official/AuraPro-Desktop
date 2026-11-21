@@ -20,6 +20,7 @@ import {
 } from './index'
 
 import { downloadModel, isDownloadCancelled } from './huggingface'
+import { getIndexTranslateModel, getIndexTranslateProjector } from './index-translate'
 import { ServiceLock, isProcessAlive } from './service-lock'
 import { inferenceCoordinator } from './inference-coordinator'
 import { hasLlamaCppRuntimeAnomaly } from './llamacpp-log-diagnostics'
@@ -802,9 +803,6 @@ const getMmprojPrefixForModel = (modelName: string): string => {
 
 const getMmprojRepoForPrefix = (prefix: string): string | null => {
   if (prefix === 'high-code') return 'unsloth/Qwen3.8-27B-GGUF'
-  if (prefix === 'lowest-v2') return 'IndexTeam/Index-Translate-2B-GGUF'
-  if (prefix === 'medium-v2') return 'IndexTeam/Index-Translate-9B-GGUF'
-  if (prefix === 'high-2') return 'IndexTeam/Index-Translate-35B-A3B-preview-GGUF'
   if (prefix === 'lowest') return 'unsloth/gemma-4-E2B-it-qat-GGUF'
   if (prefix === 'low') return 'unsloth/gemma-4-E4B-it-qat-GGUF'
   if (prefix === 'medium-12b') return 'unsloth/gemma-4-12B-it-qat-GGUF'
@@ -953,13 +951,19 @@ const getPresetModelId = (
 
 const findModelMmproj = (modelPath: string): string | null => {
   const dir = path.dirname(modelPath)
-  const preferred = [
-    path.join(dir, 'Index-Translate-35B-A3B-preview.mmproj-Q8_0.gguf'),
-    path.join(dir, 'Index-Translate-9B.mmproj-Q8_0.gguf'),
-    path.join(dir, 'Index-Translate-2B.mmproj-Q8_0.gguf'),
-    path.join(dir, 'mmproj-F16.gguf'),
-    path.join(dir, 'mmproj.gguf')
-  ]
+  if (getIndexTranslateModel(modelPath)) {
+    const source = getIndexTranslateProjector(modelPath)
+    if (!source) return null
+    const candidate = path.join(dir, source.filename)
+    try {
+      const stat = fs.statSync(candidate)
+      return stat.isFile() && stat.size === source.expectedSize ? candidate : null
+    } catch {
+      return null
+    }
+  }
+
+  const preferred = [path.join(dir, 'mmproj-F16.gguf'), path.join(dir, 'mmproj.gguf')]
 
   for (const candidate of preferred) {
     if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate
@@ -1156,20 +1160,20 @@ const ensureAutoMmproj = async (
     const dir = path.dirname(model.filepath)
     if (findModelMmproj(model.filepath)) continue
 
+    const indexTranslateModel = getIndexTranslateModel(model.filepath)
+    const indexTranslateProjector =
+      indexTranslateModel && getIndexTranslateProjector(model.filepath)
+    if (indexTranslateModel && !indexTranslateProjector) continue
+
     const mmprojPrefix = getMmprojPrefixForModel(path.basename(model.filepath))
-    const repo = hasInternalMtpSupport(model.filepath)
-      ? 'unsloth/Qwen3.6-35B-A3B-GGUF'
-      : getMmprojRepoForPrefix(mmprojPrefix)
+    const repo =
+      indexTranslateProjector?.repo ??
+      (hasInternalMtpSupport(model.filepath)
+        ? 'unsloth/Qwen3.6-35B-A3B-GGUF'
+        : getMmprojRepoForPrefix(mmprojPrefix))
     if (!repo) continue
 
-    const saveAs =
-      mmprojPrefix === 'lowest-v2'
-        ? 'Index-Translate-2B.mmproj-Q8_0.gguf'
-        : mmprojPrefix === 'medium-v2'
-          ? 'Index-Translate-9B.mmproj-Q8_0.gguf'
-          : mmprojPrefix === 'high-2'
-            ? 'Index-Translate-35B-A3B-preview.mmproj-Q8_0.gguf'
-            : 'mmproj-F16.gguf'
+    const saveAs = indexTranslateProjector?.filename ?? 'mmproj-F16.gguf'
     if (isDownloadCancelled(repo, saveAs)) continue
     const relativeDir = path.relative(modelsDir, dir)
     const subDir =
@@ -1189,7 +1193,7 @@ const ensureAutoMmproj = async (
           }
         },
         undefined,
-        undefined,
+        indexTranslateProjector?.expectedSize,
         saveAs,
         subDir ? path.basename(subDir) : mmprojPrefix,
         subDir

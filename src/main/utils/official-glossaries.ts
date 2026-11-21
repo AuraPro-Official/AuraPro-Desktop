@@ -303,6 +303,12 @@ const readInstalledManifest = async (): Promise<OfficialGlossaryManifest | null>
 export const getInstalledOfficialGlossaryVersion = async (): Promise<string | null> =>
   (await readInstalledManifest())?.version ?? null
 
+export const getInstalledOfficialGlossaryFiles = async (): Promise<OfficialGlossaryFile[]> => {
+  const manifest = await readInstalledManifest()
+  const dataDir = getOpenWebUIDataPath()
+  return manifest?.files.filter((file) => existsSync(path.join(dataDir, file.filename))) ?? []
+}
+
 const fetchUpdateMetadata = async (): Promise<OfficialGlossaryUpdateMetadata> => {
   const metadataUrl = new URL(getUpdateMetadataUrl())
   ensureDownloadUrlIsSafe(metadataUrl)

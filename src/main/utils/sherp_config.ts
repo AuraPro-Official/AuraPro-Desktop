@@ -1067,7 +1067,7 @@ def health():
         "ok": True,
         "asr_configured": bool(profiles) or bool(os.getenv("SHERPA_ASR_MODEL") or os.getenv("SHERPA_ASR_ENCODER")),
         "asr_auto_detect": _truthy(os.getenv("SHERPA_ASR_AUTO_DETECT", "true")),
-        "tts_configured": bool(os.getenv("SHERPA_TTS_MODEL")),
+        "tts_configured": bool(_load_tts_profiles()) or bool(os.getenv("SHERPA_TTS_MODEL")),
     }
 
 

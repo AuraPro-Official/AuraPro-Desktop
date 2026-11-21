@@ -3,6 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import log from 'electron-log'
 import * as pty from 'node-pty'
+import { setTimeout as delay } from 'node:timers/promises'
 import {
   getPythonPath,
   getConfig,
@@ -38,14 +39,18 @@ import {
   speechLanguageCode,
   selectedSpeechLanguages,
   speechAsrGroup,
-  glossarySpeechLanguages
+  glossarySpeechLanguages,
+  speechModelSupport
 } from './speech-language-presets'
+
+export const SHERPA_ONNX_VERSION = '1.13.8'
 
 let ptyProcess: pty.IPty | null = null
 let pid: number | null = null
 let url: string | null = null
 let status: string | null = null
 let logBuffer: string[] = []
+let pendingStart: Promise<{ url: string; pid: number }> | null = null
 
 const lock = new ServiceLock('sherpa')
 type SherpaPreset = (typeof DEFAULT_TTS_PRESETS)[number]
@@ -55,6 +60,7 @@ interface SherpaConfig {
   [key: string]: unknown
   enabled?: boolean
   enabledLanguages?: string[]
+  excludedGlossaryLanguages?: string[]
   language?: string
   port?: number
   asrAutoDetect?: boolean
@@ -198,7 +204,14 @@ const requestedSpeechLanguages = (config: SherpaConfig): string[] => {
   } catch (error) {
     log.warn('Unable to read glossary speech languages:', error)
   }
-  return [...new Set([...selectedSpeechLanguages(config), ...dictionaryLanguages])]
+  return [
+    ...new Set([
+      ...selectedSpeechLanguages(config),
+      ...dictionaryLanguages.filter(
+        (language) => !config.excludedGlossaryLanguages?.includes(language)
+      )
+    ])
+  ]
 }
 
 const speechProfileReady = (profile?: Record<string, string>): boolean => {
@@ -913,9 +926,29 @@ export const isSherpaInstalled = (): boolean => {
   return isPackageInstalled('sherpa-onnx')
 }
 
-export const startSherpa = async (
+export const isSherpaStarting = (): boolean => pendingStart !== null
+
+export const startSherpa = (
   port: number | null = null,
-  onStatus?: (status: string) => void
+  onStatus?: (status: string) => void,
+  preparedConfig?: SherpaConfig
+): Promise<{ url: string; pid: number }> => {
+  if (pendingStart) return pendingStart
+  pendingStart = startSherpaInternal(port, onStatus, preparedConfig)
+    .catch((error) => {
+      if (!ptyProcess) lock.release()
+      throw error
+    })
+    .finally(() => {
+      pendingStart = null
+    })
+  return pendingStart
+}
+
+const startSherpaInternal = async (
+  port: number | null,
+  onStatus: ((status: string) => void) | undefined,
+  preparedConfig?: SherpaConfig
 ): Promise<{ url: string; pid: number }> => {
   if (!lock.acquire()) {
     if (url && pid) return { url, pid }
@@ -940,7 +973,7 @@ export const startSherpa = async (
     'faster-whisper'
   ]
 
-  const speechConfig = (await getConfig()).sherpa ?? {}
+  const speechConfig = preparedConfig ?? (await getConfig()).sherpa ?? {}
   if (
     requestedSpeechLanguages(speechConfig).some((language) => speechAsrGroup(language) === 'hindi')
   )
@@ -949,7 +982,7 @@ export const startSherpa = async (
   for (const pkg of requiredPackages) {
     const pinnedVersion =
       pkg === 'sherpa-onnx'
-        ? '1.13.8'
+        ? SHERPA_ONNX_VERSION
         : pkg === 'kaldi-native-fbank'
           ? '1.22.3'
           : pkg === 'onnxruntime' && process.platform === 'darwin' && process.arch === 'x64'
@@ -969,10 +1002,12 @@ export const startSherpa = async (
 
   const config = await getConfig()
   const configEnvVars = config.envVars ?? {}
-  let sherpaConfig: SherpaConfig = { ...(config.sherpa ?? {}) }
-  sherpaConfig = await ensureDefaultAsrModel(sherpaConfig, onStatus, false, false)
-  sherpaConfig = await ensureDefaultTtsModel(sherpaConfig, onStatus, false, false)
-  await setConfig({ sherpa: { ...(config.sherpa ?? {}), ...sherpaConfig } })
+  let sherpaConfig: SherpaConfig = { ...(preparedConfig ?? config.sherpa ?? {}) }
+  if (!preparedConfig) {
+    sherpaConfig = await ensureDefaultAsrModel(sherpaConfig, onStatus, false, false)
+    sherpaConfig = await ensureDefaultTtsModel(sherpaConfig, onStatus, false, false)
+    await setConfig({ sherpa: { ...(config.sherpa ?? {}), ...sherpaConfig } })
+  }
   const asrProfiles = buildAsrProfiles(sherpaConfig)
   const ttsProfiles = buildTtsProfiles(sherpaConfig)
 
@@ -1060,6 +1095,7 @@ export const startSherpa = async (
   })
 
   spawned.onExit(({ exitCode, signal }) => {
+    if (ptyProcess !== spawned) return
     const exitMsg = `\r\n[sherpa exited with code ${exitCode}${signal ? ` signal ${signal}` : ''}]\r\n`
     logBuffer.push(exitMsg)
     log.info(`[sherpa:${spawnedPid}] Exited code=${exitCode} signal=${signal}`)
@@ -1075,10 +1111,125 @@ export const startSherpa = async (
   status = 'started'
   log.info(`sherpa service started - PID: ${spawnedPid}, URL: ${serverUrl}`)
 
-  const currentConfig = await getConfig()
-  await setConfig({ sherpa: { ...currentConfig.sherpa, enabled: true, port: availablePort } })
+  if (!preparedConfig) {
+    const currentConfig = await getConfig()
+    await setConfig({ sherpa: { ...currentConfig.sherpa, enabled: true, port: availablePort } })
+  }
 
   return { url: serverUrl, pid: spawnedPid }
+}
+
+export const prepareSherpaRepairModels = (
+  config: SherpaConfig,
+  onStatus?: (status: string) => void
+) =>
+  queueSpeechDownload(async () => {
+    const withAsr = await ensureAsrModels(config, onStatus, false, false)
+    return ensureTtsModels(withAsr, onStatus, false, false)
+  })
+
+export const checkSherpaRepairModels = (config: SherpaConfig, languages: string[]): string[] => {
+  const asr = buildAsrProfiles(config)
+  const tts = buildTtsProfiles(config)
+  const limitedAsrLanguages: string[] = []
+  for (const language of languages) {
+    const support = speechModelSupport(language)
+    const asrProfile = asr[language] ?? asr[speechAsrGroup(language)]
+    if (support.asr && !speechProfileReady(asrProfile))
+      throw new Error(`Missing Sherpa ASR files: ${language}`)
+    if (support.tts && !speechProfileReady(tts[language]))
+      throw new Error(`Missing Sherpa TTS files: ${language}`)
+    if (asrProfile?.SHERPA_ASR_INDIC_FALLBACK === 'true') limitedAsrLanguages.push(language)
+  }
+  return limitedAsrLanguages
+}
+
+export const waitForSherpaRepairReady = async (server: {
+  url: string
+  pid: number
+}): Promise<void> => {
+  const deadline = Date.now() + 25_000
+  while (Date.now() < deadline) {
+    if (pid !== server.pid || !isProcessAlive(server.pid)) break
+    try {
+      const response = await fetch(new URL('/health', server.url), {
+        signal: AbortSignal.timeout(1_000),
+        redirect: 'error'
+      })
+      const health = response.ok ? await response.json() : (await response.body?.cancel(), null)
+      if (
+        health?.ok === true &&
+        health.asr_configured === true &&
+        health.tts_configured === true &&
+        pid === server.pid
+      )
+        return
+    } catch {
+      // Allow the new process to finish importing dependencies and bind its port.
+    }
+    await delay(400)
+  }
+  throw new Error('Sherpa did not report ready speech models. Check the Sherpa log and try again.')
+}
+
+export const verifySherpaRepairSpeech = async (server: {
+  url: string
+  pid: number
+}): Promise<void> => {
+  // One second of generated PCM silence; no microphone or user recordings are read.
+  const wave = new ArrayBuffer(44 + 32_000)
+  const header = new DataView(wave)
+  header.setUint32(0, 0x52494646) // RIFF
+  header.setUint32(4, wave.byteLength - 8, true)
+  header.setUint32(8, 0x57415645) // WAVE
+  header.setUint32(12, 0x666d7420) // fmt
+  header.setUint32(16, 16, true)
+  header.setUint16(20, 1, true)
+  header.setUint16(22, 1, true)
+  header.setUint32(24, 16_000, true)
+  header.setUint32(28, 32_000, true)
+  header.setUint16(32, 2, true)
+  header.setUint16(34, 16, true)
+  header.setUint32(36, 0x64617461) // data
+  header.setUint32(40, 32_000, true)
+
+  const request = (endpoint: string, body: BodyInit, headers?: HeadersInit) =>
+    fetch(new URL(`/v1/audio/${endpoint}`, server.url), {
+      method: 'POST',
+      body,
+      headers,
+      redirect: 'error',
+      signal: AbortSignal.timeout(45_000)
+    })
+  const form = new FormData()
+  form.append('file', new Blob([wave], { type: 'audio/wav' }), 'speech-repair-test.wav')
+  form.append('language', 'zh')
+  const asr = await request('transcriptions', form)
+  if (!asr.ok) {
+    await asr.body?.cancel()
+    throw new Error(`Sherpa recognition check failed (HTTP ${asr.status}).`)
+  }
+  if (typeof (await asr.json())?.text !== 'string')
+    throw new Error('Invalid Sherpa recognition response.')
+
+  const tts = await request(
+    'speech',
+    JSON.stringify({ input: '\u4f60\u597d', language: 'zh', voice: '0' }),
+    {
+      'Content-Type': 'application/json'
+    }
+  )
+  if (!tts.ok) {
+    await tts.body?.cancel()
+    throw new Error(`Sherpa playback check failed (HTTP ${tts.status}).`)
+  }
+  const audio = await tts.arrayBuffer()
+  if (
+    audio.byteLength <= 44 ||
+    new DataView(audio).getUint32(0) !== 0x52494646 ||
+    pid !== server.pid
+  )
+    throw new Error('Invalid Sherpa playback response.')
 }
 
 export const stopSherpa = async (): Promise<void> => {

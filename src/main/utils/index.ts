@@ -144,7 +144,7 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.10.11'
+export const AURAPRO_UI_TARGET_VERSION = '3.10.13'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
 export const AURAPRO_UI_LAST_VERSION = '3.9.3'
@@ -2444,6 +2444,7 @@ export interface AppConfig {
   }
   sherpa: {
     enabledLanguages?: string[]
+    excludedGlossaryLanguages?: string[]
     enabled: boolean
     port: number
     language: string
@@ -2735,7 +2736,10 @@ type ConfigUpdate = Partial<
   shortcutActions?: Partial<AppConfig['shortcutActions']>
 }
 
-export const setConfig = async (config: ConfigUpdate): Promise<void> => {
+export const setConfig = async (
+  config: ConfigUpdate,
+  options: { replaceSherpa?: boolean } = {}
+): Promise<void> => {
   // Serialize writes so concurrent callers don't race on the tmp file
   const previous = configWriteLock
   let resolve: () => void
@@ -2754,7 +2758,10 @@ export const setConfig = async (config: ConfigUpdate): Promise<void> => {
       localServer: { ...existing.localServer, ...(config.localServer ?? {}) },
       openCode: { ...existing.openCode, ...(config.openCode ?? {}) },
       llamaCpp: { ...existing.llamaCpp, ...(config.llamaCpp ?? {}) },
-      sherpa: { ...existing.sherpa, ...(config.sherpa ?? {}) },
+      sherpa: {
+        ...(options.replaceSherpa ? DEFAULT_CONFIG.sherpa : existing.sherpa),
+        ...(config.sherpa ?? {})
+      },
       shortcutActions: { ...existing.shortcutActions, ...(config.shortcutActions ?? {}) }
     })
     await fs.promises.writeFile(tmpPath, JSON.stringify(merged, null, 2))

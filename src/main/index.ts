@@ -31,6 +31,7 @@ import {
   Tray,
   dialog,
   webContents,
+  type IpcMainInvokeEvent,
   type MenuItemConstructorOptions
 } from 'electron'
 import path, { join } from 'path'
@@ -80,7 +81,21 @@ import { installLocalCertificate } from './utils/local-certificate'
 import { scheduleCacheCleanup } from './utils/cache-cleanup'
 import { normalizeKvCacheType, type KvCacheType } from './utils/llamacpp-settings'
 import { GlossaryStartupReminder } from './utils/glossary-startup-reminder'
-import { glossarySpeechLanguages, selectedSpeechLanguages } from './utils/speech-language-presets'
+import {
+  glossarySpeechLanguages,
+  selectedSpeechLanguages,
+  speechRepairLanguages,
+  speechModelSupport,
+  SPEECH_ASR_LANGUAGES,
+  SPEECH_TTS_REPOS
+} from './utils/speech-language-presets'
+import {
+  configureWebUISpeech,
+  isRecord,
+  localSpeechOrigin,
+  readAdminAccount,
+  SpeechRepairError
+} from './utils/speech-repair-webui'
 
 import {
   setupOpenCode,
@@ -119,9 +134,15 @@ import {
   getSherpaPty,
   validateSherpaProcess,
   isSherpaInstalled,
+  isSherpaStarting,
+  SHERPA_ONNX_VERSION,
   ensureDefaultAsrModel,
   ensureDefaultTtsModel,
-  reinitSherpaServerScript
+  reinitSherpaServerScript,
+  prepareSherpaRepairModels,
+  checkSherpaRepairModels,
+  waitForSherpaRepairReady,
+  verifySherpaRepairSpeech
 } from './utils/sherpa'
 
 import {
@@ -139,6 +160,7 @@ import {
 import { initUpdater, checkForUpdates, downloadUpdate, installUpdate } from './updater'
 import {
   getOfficialGlossaryStatus,
+  getInstalledOfficialGlossaryFiles,
   installOfficialGlossaries,
   uninstallOfficialGlossaries
 } from './utils/official-glossaries'
@@ -1844,8 +1866,21 @@ const startGlossaryCtxSizeSync = async () => {
 
 let glossarySpeechDownloadPending = false
 let glossarySpeechDownloadSignature = ''
+let speechRepairInProgress = false
+let speechOperations = 0
+const existingSpeechOperation =
+  <Args extends unknown[], T>(run: (...args: Args) => Promise<T>) =>
+  async (...args: Args): Promise<T> => {
+    if (speechRepairInProgress) throw new SpeechRepairError('busy')
+    speechOperations++
+    try {
+      return await run(...args)
+    } finally {
+      speechOperations--
+    }
+  }
 const scheduleGlossarySpeechDownloads = () => {
-  if (glossarySpeechDownloadPending) return
+  if (glossarySpeechDownloadPending || speechRepairInProgress) return
   glossarySpeechDownloadPending = true
   void (async () => {
     try {
@@ -1853,7 +1888,9 @@ const scheduleGlossarySpeechDownloads = () => {
       if (!cfg.sherpa?.enabled || !isSherpaInstalled()) return
       if ((await getSherpaInfo()).status !== 'started') return
       const settings = JSON.parse(readFileSync(getGlossarySettingsPath(), 'utf8'))
-      const languages = glossarySpeechLanguages(settings)
+      const languages = glossarySpeechLanguages(settings).filter(
+        (language) => !cfg.sherpa.excludedGlossaryLanguages?.includes(language)
+      )
       const signature = JSON.stringify(languages.slice().sort())
       if (!languages.length || signature === glossarySpeechDownloadSignature) return
       const selected = [...new Set([...selectedSpeechLanguages(cfg.sherpa), ...languages])]
@@ -1884,6 +1921,216 @@ const scheduleGlossarySpeechDownloads = () => {
       glossarySpeechDownloadPending = false
     }
   })()
+}
+
+const getSpeechRepairOptions = async () => {
+  const raw: unknown = await readFile(getGlossarySettingsPath(), 'utf8')
+    .then((body) => JSON.parse(body))
+    .catch(() => null)
+  const defaults = speechRepairLanguages(
+    isRecord(raw) ? raw : {},
+    await getInstalledOfficialGlossaryFiles()
+  )
+  const languages = [
+    ...new Set([...SPEECH_ASR_LANGUAGES, ...Object.keys(SPEECH_TTS_REPOS), ...defaults])
+  ]
+  return { defaults, languages: languages.map((code) => ({ code, ...speechModelSupport(code) })) }
+}
+
+const getSpeechRepairWebUI = async (event: IpcMainInvokeEvent, guestId: number) => {
+  const guest = Number.isSafeInteger(guestId) ? webContents.fromId(guestId) : null
+  const host = mainWindow?.webContents
+  const pid = SERVER_PID
+  const origin = guest && !guest.isDestroyed() && localSpeechOrigin(SERVER_URL, guest.getURL())
+  if (
+    !host ||
+    event.sender !== host ||
+    event.senderFrame !== host.mainFrame ||
+    !pid ||
+    !origin ||
+    !guest ||
+    guest.getType() !== 'webview' ||
+    guest.hostWebContents !== host ||
+    guest.session !== session.fromPartition('persist:connection-local')
+  )
+    throw new SpeechRepairError('openLocal')
+
+  const assertLocal = () => {
+    if (
+      guest.isDestroyed() ||
+      SERVER_PID !== pid ||
+      localSpeechOrigin(SERVER_URL, guest.getURL()) !== origin
+    )
+      throw new SpeechRepairError('openLocal')
+  }
+  const readToken = async (): Promise<string> => {
+    assertLocal()
+    const token: unknown = await guest.executeJavaScriptInIsolatedWorld(1004, [
+      { code: "localStorage.getItem('token') || ''" }
+    ])
+    assertLocal()
+    if (typeof token !== 'string' || !token || token.length > 8192 || /\s/.test(token))
+      throw new SpeechRepairError('signIn')
+    return token
+  }
+  const token = await readToken()
+  const request: Parameters<typeof configureWebUISpeech>[0] = async (route, body) => {
+    if ((await readToken()) !== token) throw new SpeechRepairError('accountChanged')
+    const response = await guest.session.fetch(`${origin}/api/v1/${route}`, {
+      method: body ? 'POST' : 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(body ? { 'Content-Type': 'application/json' } : {})
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      credentials: 'omit',
+      redirect: 'error',
+      signal: AbortSignal.timeout(12000)
+    })
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined)
+      if (response.status === 401) throw new SpeechRepairError('signIn')
+      if (response.status === 403) throw new SpeechRepairError('adminRequired')
+      throw new SpeechRepairError(
+        'webuiFailed',
+        `WebUI returned HTTP ${response.status} (${route}).`
+      )
+    }
+    assertLocal()
+    return response.json()
+  }
+  return { guest, request, assertLocal }
+}
+
+const runSpeechRepair = async (event: IpcMainInvokeEvent, guestId: number, selected: unknown) => {
+  if (
+    speechRepairInProgress ||
+    speechOperations ||
+    glossarySpeechDownloadPending ||
+    isSherpaStarting()
+  )
+    return { ok: false, code: 'busy' } as const
+  speechRepairInProgress = true
+  let runtimeReady = false
+  let stage: 'webuiFailed' | 'sherpaFailed' = 'webuiFailed'
+  let lastStep = ''
+  let lastProgressAt = 0
+  const progress = (step: string, detail?: string) => {
+    const now = Date.now()
+    if (step === lastStep && detail && now - lastProgressAt < 250) return
+    lastStep = step
+    lastProgressAt = now
+    sendToRenderer('speech:repair-progress', { step, detail })
+  }
+  try {
+    progress('checking')
+    const webui = await getSpeechRepairWebUI(event, guestId)
+    const accountId = await readAdminAccount(webui.request)
+    // Check the installed WebUI exposes the required admin route before doing any local work.
+    const audio = await webui.request('audio/config')
+    if (!isRecord(audio) || !isRecord(audio.tts) || !isRecord(audio.stt))
+      throw new SpeechRepairError('webuiFailed')
+
+    const { defaults, languages } = await getSpeechRepairOptions()
+    const allowed = new Set(languages.filter(({ asr, tts }) => asr || tts).map(({ code }) => code))
+    if (
+      !Array.isArray(selected) ||
+      selected.length > allowed.size ||
+      selected.some((code) => typeof code !== 'string' || !allowed.has(code))
+    )
+      throw new SpeechRepairError('invalidSelection')
+    const enabledLanguages = [...new Set<string>(['zh', ...selected])]
+    const previous = (await getConfig()).sherpa
+    const wasRunning = validateSherpaProcess()
+    stage = 'sherpaFailed'
+    sendToRenderer('status:sherpa', 'starting')
+    let repaired: Awaited<ReturnType<typeof startSherpa>>
+    let limitedAsrLanguages: string[]
+    let interruptedService = false
+    try {
+      if (!isPythonInstalled()) {
+        progress('installing')
+        if (!(await installPython(undefined, (detail) => progress('installing', detail))))
+          throw new Error('Python installation failed')
+      }
+      interruptedService = true
+      await stopSherpa()
+      progress('installing')
+      await installPackage(
+        'sherpa-onnx',
+        SHERPA_ONNX_VERSION,
+        (detail) => progress('installing', detail),
+        {
+          reinstallPackages: ['sherpa-onnx']
+        }
+      )
+      progress('downloading')
+      const prepared = await prepareSherpaRepairModels(
+        {
+          enabled: true,
+          port: previous.port,
+          enabledLanguages,
+          excludedGlossaryLanguages: defaults.filter((code) => !enabledLanguages.includes(code))
+        },
+        (detail) => progress('downloading', detail)
+      )
+      limitedAsrLanguages = checkSherpaRepairModels(prepared, enabledLanguages)
+      progress('starting')
+      repaired = await startSherpa(
+        previous.port,
+        (detail) => progress('starting', detail),
+        prepared
+      )
+      await waitForSherpaRepairReady(repaired)
+      progress('testing')
+      await verifySherpaRepairSpeech(repaired)
+      await setConfig(
+        { sherpa: { ...prepared, port: Number(new URL(repaired.url).port) } },
+        { replaceSherpa: true }
+      )
+    } catch (error) {
+      if (interruptedService) await stopSherpa()
+      if (wasRunning && interruptedService) {
+        try {
+          const restored = await startSherpa(previous.port, undefined, previous)
+          sendToRenderer('sherpa:ready', toIpcSafeValue(restored))
+        } catch (restartError) {
+          log.warn(
+            'Unable to restart previous Sherpa configuration after a repair failure:',
+            restartError
+          )
+          sendToRenderer('status:sherpa', 'failed')
+        }
+      } else sendToRenderer('status:sherpa', wasRunning ? 'started' : 'failed')
+      throw error
+    }
+
+    runtimeReady = true
+    CONFIG = await getConfig()
+    sendToRenderer('config:updated', CONFIG)
+    sendToRenderer('status:sherpa', 'started')
+    sendToRenderer('sherpa:ready', toIpcSafeValue(repaired))
+    stage = 'webuiFailed'
+    progress('applying')
+    const current = await getSpeechRepairWebUI(event, guestId)
+    await configureWebUISpeech(current.request, repaired.url, accountId)
+    current.assertLocal()
+    if (!current.guest.isDestroyed()) current.guest.reload()
+    return { ok: true, limitedAsrLanguages } as const
+  } catch (error) {
+    log.warn('Speech repair failed:', error)
+    return {
+      ok: false,
+      code: error instanceof SpeechRepairError ? error.code : stage,
+      detail:
+        error instanceof SpeechRepairError && error.message === error.code
+          ? ''
+          : getErrorMessage(error),
+      runtimeReady
+    } as const
+  } finally {
+    speechRepairInProgress = false
+  }
 }
 
 const reloadLlamaCppModelsAfterDownload = async (filepath: string | null | undefined) => {
@@ -2468,69 +2715,72 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     })
 
     // Package
-    ipcMain.handle('install:package', async () => {
-      let restartSherpa = false
-      try {
-        log.info('Starting package installation...')
-        CONFIG = await getConfig()
-        const owuiVersion = resolveOpenWebUITargetVersion(CONFIG?.localServer?.version)
-        restartSherpa = validateSherpaProcess()
-
-        if (restartSherpa) {
-          sendToRenderer('status:sherpa', 'stopping')
-          await stopSherpa()
-        }
-
-        sendToRenderer('status:install', 'Installing AuraPro…')
-        await ensureOpenWebUIPackage(
-          owuiVersion,
-          (status: string) => {
-            sendToRenderer('status:install', status)
-          },
-          { forceLatest: true, cleanupCaches: false }
-        )
+    ipcMain.handle(
+      'install:package',
+      existingSpeechOperation(async () => {
+        let restartSherpa = false
         try {
-          const packagedDataDir = getPackagedDataDir()
-          const targetDataDir = getOpenWebUIDataPath()
-          const targetHasData =
-            (await pathExists(targetDataDir)) && (await readdir(targetDataDir)).length > 0
-          if ((await pathExists(packagedDataDir)) && !targetHasData) {
-            await cp(packagedDataDir, targetDataDir, { recursive: true })
-            log.info('Copied bundled data to', targetDataDir)
-          } else if (targetHasData) {
-            log.info('Preserving existing AuraPro/Open WebUI data at', targetDataDir)
-          }
-        } catch (e) {
-          log.error('Failed to copy bundled data:', e)
-        }
+          log.info('Starting package installation...')
+          CONFIG = await getConfig()
+          const owuiVersion = resolveOpenWebUITargetVersion(CONFIG?.localServer?.version)
+          restartSherpa = validateSherpaProcess()
 
-        await cleanupPythonPackageCaches((status) => {
-          sendToRenderer('status:install', status)
-        })
-        sendToRenderer('status:package', true)
-        return true
-      } catch (error: unknown) {
-        log.error('Package installation IPC handler error:', error)
-        sendToRenderer('status:package', false)
-        throw new Error(
-          getErrorMessage(error) ||
-            'Package installation failed. Please check your internet connection and try again.'
-        )
-      } finally {
-        if (restartSherpa && CONFIG?.sherpa?.enabled) {
+          if (restartSherpa) {
+            sendToRenderer('status:sherpa', 'stopping')
+            await stopSherpa()
+          }
+
+          sendToRenderer('status:install', 'Installing AuraPro…')
+          await ensureOpenWebUIPackage(
+            owuiVersion,
+            (status: string) => {
+              sendToRenderer('status:install', status)
+            },
+            { forceLatest: true, cleanupCaches: false }
+          )
           try {
-            const result = await startSherpa(CONFIG?.sherpa?.port ?? null, (status: string) =>
-              sendToRenderer('status:sherpa-setup', String(status ?? ''))
-            )
-            sendToRenderer('status:sherpa', 'started')
-            sendToRenderer('sherpa:ready', toIpcSafeValue(result))
-          } catch (error) {
-            log.warn('Failed to restart Sherpa after package update:', error)
-            sendToRenderer('status:sherpa', 'failed')
+            const packagedDataDir = getPackagedDataDir()
+            const targetDataDir = getOpenWebUIDataPath()
+            const targetHasData =
+              (await pathExists(targetDataDir)) && (await readdir(targetDataDir)).length > 0
+            if ((await pathExists(packagedDataDir)) && !targetHasData) {
+              await cp(packagedDataDir, targetDataDir, { recursive: true })
+              log.info('Copied bundled data to', targetDataDir)
+            } else if (targetHasData) {
+              log.info('Preserving existing AuraPro/Open WebUI data at', targetDataDir)
+            }
+          } catch (e) {
+            log.error('Failed to copy bundled data:', e)
+          }
+
+          await cleanupPythonPackageCaches((status) => {
+            sendToRenderer('status:install', status)
+          })
+          sendToRenderer('status:package', true)
+          return true
+        } catch (error: unknown) {
+          log.error('Package installation IPC handler error:', error)
+          sendToRenderer('status:package', false)
+          throw new Error(
+            getErrorMessage(error) ||
+              'Package installation failed. Please check your internet connection and try again.'
+          )
+        } finally {
+          if (restartSherpa && CONFIG?.sherpa?.enabled) {
+            try {
+              const result = await startSherpa(CONFIG?.sherpa?.port ?? null, (status: string) =>
+                sendToRenderer('status:sherpa-setup', String(status ?? ''))
+              )
+              sendToRenderer('status:sherpa', 'started')
+              sendToRenderer('sherpa:ready', toIpcSafeValue(result))
+            } catch (error) {
+              log.warn('Failed to restart Sherpa after package update:', error)
+              sendToRenderer('status:sherpa', 'failed')
+            }
           }
         }
-      }
-    })
+      })
+    )
 
     ipcMain.handle('status:package', async () => {
       const config = await getConfig()
@@ -3478,114 +3728,134 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     })
 
     // sherpa
-    ipcMain.handle('sherpa:start', async () => {
-      try {
-        sendToRenderer('status:sherpa', 'starting')
-        const result = await startSherpa(CONFIG?.sherpa?.port ?? null, (status: string) => {
-          sendToRenderer('status:sherpa-setup', String(status ?? ''))
-        })
-        const safeResult = toIpcSafeValue(result)
-        sendToRenderer('status:sherpa', 'started')
-        sendToRenderer('sherpa:ready', safeResult)
-        if (result.url) {
-          sendToRenderer('audio:sherpa', {
-            action: 'add',
-            url: `${result.url}/v1`
+    ipcMain.handle('speech:repair-options', () => getSpeechRepairOptions())
+    ipcMain.handle('speech:repair', (event, guestId: number, languages: unknown) =>
+      runSpeechRepair(event, guestId, languages)
+    )
+    ipcMain.handle(
+      'sherpa:start',
+      existingSpeechOperation(async () => {
+        try {
+          sendToRenderer('status:sherpa', 'starting')
+          const result = await startSherpa(CONFIG?.sherpa?.port ?? null, (status: string) => {
+            sendToRenderer('status:sherpa-setup', String(status ?? ''))
           })
+          const safeResult = toIpcSafeValue(result)
+          sendToRenderer('status:sherpa', 'started')
+          sendToRenderer('sherpa:ready', safeResult)
+          if (result.url) {
+            sendToRenderer('audio:sherpa', {
+              action: 'add',
+              url: `${result.url}/v1`
+            })
+          }
+          const resultPort = result.url
+            ? Number(new URL(result.url).port)
+            : CONFIG?.sherpa?.port || 39384
+          await setConfig({ sherpa: { ...CONFIG?.sherpa, enabled: true, port: resultPort } })
+          CONFIG = await getConfig()
+          return safeResult
+        } catch (error) {
+          const message = getErrorMessage(error)
+          log.error('Failed to start sherpa:', error)
+          sendToRenderer('status:sherpa', 'failed')
+          sendToRenderer('error', { message: `sherpa failed: ${message}` })
+          throw new Error(message)
         }
-        const resultPort = result.url
-          ? Number(new URL(result.url).port)
-          : CONFIG?.sherpa?.port || 39384
-        await setConfig({ sherpa: { ...CONFIG?.sherpa, enabled: true, port: resultPort } })
-        CONFIG = await getConfig()
-        return safeResult
-      } catch (error) {
-        const message = getErrorMessage(error)
-        log.error('Failed to start sherpa:', error)
-        sendToRenderer('status:sherpa', 'failed')
-        sendToRenderer('error', { message: `sherpa failed: ${message}` })
-        throw new Error(message)
-      }
-    })
+      })
+    )
 
-    ipcMain.handle('sherpa:stop', async () => {
-      try {
-        await stopSherpa()
-        sendToRenderer('status:sherpa', 'stopped')
-        sendToRenderer('audio:sherpa', { action: 'remove' })
-        await setConfig({ sherpa: { ...CONFIG?.sherpa, enabled: false } })
-        CONFIG = await getConfig()
-        return true
-      } catch (error) {
-        log.error('Failed to stop sherpa:', error)
-        return false
-      }
-    })
+    ipcMain.handle(
+      'sherpa:stop',
+      existingSpeechOperation(async () => {
+        try {
+          await stopSherpa()
+          sendToRenderer('status:sherpa', 'stopped')
+          sendToRenderer('audio:sherpa', { action: 'remove' })
+          await setConfig({ sherpa: { ...CONFIG?.sherpa, enabled: false } })
+          CONFIG = await getConfig()
+          return true
+        } catch (error) {
+          log.error('Failed to stop sherpa:', error)
+          return false
+        }
+      })
+    )
 
     ipcMain.handle('sherpa:info', () => getSherpaInfo())
     ipcMain.handle('sherpa:status', () => isSherpaInstalled())
     ipcMain.handle('sherpa:logs', () => getSherpaLog())
     ipcMain.handle('sherpa:pty:connect', () => connectSherpaPtyPort())
     ipcMain.handle('sherpa:models:list', (_event, kind?: 'asr' | 'tts') => listSherpaModels(kind))
-    ipcMain.handle('sherpa:update', async () => {
-      try {
-        sendToRenderer('status:sherpa-setup', 'Updating sherpa-onnx...')
-        await installPackage('sherpa-onnx==1.13.8', undefined, (status: string) => {
-          sendToRenderer('status:sherpa-setup', status)
-        })
-        sendToRenderer('status:sherpa-setup', 'Updating faster-whisper...')
-        await installPackage('faster-whisper', undefined, (status: string) => {
-          sendToRenderer('status:sherpa-setup', status)
-        })
-        if (CONFIG?.sherpa?.enabled) {
-          await stopSherpa()
-          const result = await startSherpa(CONFIG?.sherpa?.port ?? null, (status: string) => {
-            sendToRenderer('status:sherpa-setup', String(status ?? ''))
+    ipcMain.handle(
+      'sherpa:update',
+      existingSpeechOperation(async () => {
+        try {
+          sendToRenderer('status:sherpa-setup', 'Updating sherpa-onnx...')
+          await installPackage('sherpa-onnx', SHERPA_ONNX_VERSION, (status: string) => {
+            sendToRenderer('status:sherpa-setup', status)
           })
+          sendToRenderer('status:sherpa-setup', 'Updating faster-whisper...')
+          await installPackage('faster-whisper', undefined, (status: string) => {
+            sendToRenderer('status:sherpa-setup', status)
+          })
+          if (CONFIG?.sherpa?.enabled) {
+            await stopSherpa()
+            const result = await startSherpa(CONFIG?.sherpa?.port ?? null, (status: string) => {
+              sendToRenderer('status:sherpa-setup', String(status ?? ''))
+            })
+            sendToRenderer('sherpa:ready', toIpcSafeValue(result))
+          }
+          return true
+        } catch (error) {
+          const message = getErrorMessage(error)
+          log.error('Failed to update sherpa:', error)
+          sendToRenderer('error', { message: `sherpa update failed: ${message}` })
+          return false
+        }
+      })
+    )
+    ipcMain.handle(
+      'sherpa:downloadTTSModel',
+      existingSpeechOperation(async (_event: IpcMainInvokeEvent, isDelete?: boolean) => {
+        const config = await getConfig()
+        const sherpaConfig = config.sherpa ?? {}
+        await ensureDefaultTtsModel(
+          sherpaConfig,
+          (status) => sendToRenderer('status:sherpa-setup', status),
+          isDelete
+        )
+        if (sherpaConfig.enabled) {
+          await stopSherpa()
+          const result = await startSherpa(null, (status) =>
+            sendToRenderer('status:sherpa-setup', status)
+          )
           sendToRenderer('sherpa:ready', toIpcSafeValue(result))
         }
-        return true
-      } catch (error) {
-        const message = getErrorMessage(error)
-        log.error('Failed to update sherpa:', error)
-        sendToRenderer('error', { message: `sherpa update failed: ${message}` })
-        return false
-      }
-    })
-    ipcMain.handle('sherpa:downloadTTSModel', async (_event, isDelete?: boolean) => {
-      const config = await getConfig()
-      const sherpaConfig = config.sherpa ?? {}
-      await ensureDefaultTtsModel(
-        sherpaConfig,
-        (status) => sendToRenderer('status:sherpa-setup', status),
-        isDelete
-      )
-      if (sherpaConfig.enabled) {
-        await stopSherpa()
-        const result = await startSherpa(null, (status) =>
-          sendToRenderer('status:sherpa-setup', status)
+      })
+    )
+    ipcMain.handle(
+      'sherpa:downloadAsrModel',
+      existingSpeechOperation(async (_event: IpcMainInvokeEvent, isDelete?: boolean) => {
+        const config = await getConfig()
+        const sherpaConfig = config.sherpa ?? {}
+        await ensureDefaultAsrModel(
+          sherpaConfig,
+          (status) => sendToRenderer('status:sherpa-setup', status),
+          isDelete
         )
-        sendToRenderer('sherpa:ready', toIpcSafeValue(result))
-      }
-    })
-    ipcMain.handle('sherpa:downloadAsrModel', async (_event, isDelete?: boolean) => {
-      const config = await getConfig()
-      const sherpaConfig = config.sherpa ?? {}
-      await ensureDefaultAsrModel(
-        sherpaConfig,
-        (status) => sendToRenderer('status:sherpa-setup', status),
-        isDelete
-      )
-      if (sherpaConfig.enabled) {
-        await stopSherpa()
-        const result = await startSherpa(null, (status) =>
-          sendToRenderer('status:sherpa-setup', status)
-        )
-        sendToRenderer('sherpa:ready', toIpcSafeValue(result))
-      }
-    })
+        if (sherpaConfig.enabled) {
+          await stopSherpa()
+          const result = await startSherpa(null, (status) =>
+            sendToRenderer('status:sherpa-setup', status)
+          )
+          sendToRenderer('sherpa:ready', toIpcSafeValue(result))
+        }
+      })
+    )
 
     ipcMain.handle('sherpa:reinit-server-script', () => {
+      if (speechRepairInProgress) return false
       try {
         reinitSherpaServerScript()
         return true
@@ -3706,6 +3976,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
       getPackageVersion(packageName)
     )
     ipcMain.handle('package:uninstall', async (_event, packageName: string) => {
+      if (speechRepairInProgress && packageName === 'sherpa-onnx') return false
       return uninstallPackage(packageName)
     })
     ipcMain.handle('app:systemInfo', (_event, options?: { includeDedicatedVram?: boolean }) =>

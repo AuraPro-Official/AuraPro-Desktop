@@ -10,6 +10,14 @@ import log from 'electron-log'
 
 import { getConfig, getExactPackageVersions, getInstallDir, portInUse, setConfig } from './index'
 import { downloadModel, getModelsDir, listModels, type HfModel } from './huggingface'
+import { INDEX_TRANSLATE_MODELS } from '../../shared/index-translate-models'
+import {
+  getIndexTranslateModel,
+  getIndexTranslateProjector,
+  getIndexTranslateUpgrade,
+  indexTranslatePartialDestination,
+  indexTranslatePartialPath
+} from './index-translate'
 import {
   getLlamaCppInfo,
   getLlamaCppLog,
@@ -144,6 +152,7 @@ interface OfficialModelSource {
 interface CompanionModelSource {
   repo: string
   filename: string
+  expectedSize?: number
 }
 
 const GB = 1024 * 1024 * 1024
@@ -253,12 +262,12 @@ const getSoftwareVersions = async (): Promise<LlamaDiagnosticReport['software']>
 }
 
 const OFFICIAL_MODEL_SOURCES: Record<string, OfficialModelSource> = {
-  'lowest_V2.gguf': {
-    repo: 'IndexTeam/Index-Translate-2B-GGUF',
-    filename: 'Index-Translate-2B.Q8_0.gguf',
-    saveAs: 'lowest_V2.gguf',
-    expectedSize: 2_076_674_560
-  },
+  ...Object.fromEntries(
+    Object.values(INDEX_TRANSLATE_MODELS).map(({ name, current }) => [
+      name,
+      { ...current, saveAs: name }
+    ])
+  ),
   'low_E4.gguf': {
     repo: 'unsloth/gemma-4-E4B-it-qat-GGUF',
     filename: 'gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf',
@@ -277,23 +286,11 @@ const OFFICIAL_MODEL_SOURCES: Record<string, OfficialModelSource> = {
     saveAs: 'medium_Q4.gguf',
     expectedSize: 7 * GB
   },
-  'medium_Q4_V2.gguf': {
-    repo: 'IndexTeam/Index-Translate-9B-GGUF',
-    filename: 'Index-Translate-9B.Q4_K_M.gguf',
-    saveAs: 'medium_Q4_V2.gguf',
-    expectedSize: 5_780_090_304
-  },
   'high_Q4.gguf': {
     repo: 'unsloth/gemma-4-26B-A4B-it-qat-GGUF',
     filename: 'gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf',
     saveAs: 'high_Q4.gguf',
     expectedSize: 15 * GB
-  },
-  'high_Q4_2.gguf': {
-    repo: 'IndexTeam/Index-Translate-35B-A3B-preview-GGUF',
-    filename: 'Index-Translate-35B-A3B-preview.Q4_K_M.gguf',
-    saveAs: 'high_Q4_2.gguf',
-    expectedSize: 21_713_462_400
   },
   'high-code_IQ4.gguf': {
     repo: 'unsloth/Qwen3.8-27B-GGUF',
@@ -337,18 +334,6 @@ const MTP_SOURCES: Record<string, { repo: string; filename: string }> = {
 }
 
 const MMPROJ_SOURCES: Record<string, CompanionModelSource> = {
-  'high_Q4_2.gguf': {
-    repo: 'IndexTeam/Index-Translate-35B-A3B-preview-GGUF',
-    filename: 'Index-Translate-35B-A3B-preview.mmproj-Q8_0.gguf'
-  },
-  'medium_Q4_V2.gguf': {
-    repo: 'IndexTeam/Index-Translate-9B-GGUF',
-    filename: 'Index-Translate-9B.mmproj-Q8_0.gguf'
-  },
-  'lowest_V2.gguf': {
-    repo: 'IndexTeam/Index-Translate-2B-GGUF',
-    filename: 'Index-Translate-2B.mmproj-Q8_0.gguf'
-  },
   'low_E4.gguf': {
     repo: 'unsloth/gemma-4-E4B-it-qat-GGUF',
     filename: 'mmproj-F16.gguf'
@@ -390,8 +375,15 @@ const hasLegacyInternalMtp = (modelPath: string): boolean => {
   }
 }
 
-const getMmprojSource = (modelName: string, modelPath: string): CompanionModelSource | undefined =>
-  hasLegacyInternalMtp(modelPath) ? LEGACY_HIGH_CODE_MMPROJ_SOURCE : MMPROJ_SOURCES[modelName]
+const getMmprojSource = (
+  modelName: string,
+  modelPath: string
+): CompanionModelSource | undefined => {
+  if (getIndexTranslateModel(modelPath)) return getIndexTranslateProjector(modelPath)
+  return hasLegacyInternalMtp(modelPath)
+    ? LEGACY_HIGH_CODE_MMPROJ_SOURCE
+    : MMPROJ_SOURCES[modelName]
+}
 
 const normalizeVariant = (variant: string | undefined): string => {
   if (!variant || variant === 'auto') return 'auto'
@@ -666,7 +658,11 @@ const listPartialGgufFiles = (root: string): string[] => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const filepath = path.join(dir, entry.name)
         if (entry.isDirectory()) scan(filepath)
-        else if (entry.isFile() && entry.name.toLowerCase().endsWith('.gguf.tmp'))
+        else if (
+          entry.isFile() &&
+          (entry.name.toLowerCase().endsWith('.gguf.tmp') ||
+            indexTranslatePartialDestination(filepath))
+        )
           files.push(filepath)
       }
     } catch {
@@ -1284,9 +1280,11 @@ export const diagnoseLlamaCpp = async (
   }
 
   const partialFiles = listPartialGgufFiles(getModelsDir())
+  const partialPaths = new Set(partialFiles)
   let partialModels = 0
   for (const tmpPath of partialFiles) {
-    const finalPath = tmpPath.slice(0, -4)
+    const omniFinalPath = indexTranslatePartialDestination(tmpPath)
+    const finalPath = omniFinalPath ?? tmpPath.slice(0, -4)
     const finalName = path.basename(finalPath)
     const lowerFinalName = finalName.toLowerCase()
     if (
@@ -1298,6 +1296,9 @@ export const diagnoseLlamaCpp = async (
     if (
       lowerFinalName.startsWith('mtp-') ||
       lowerFinalName.includes('mmproj') ||
+      (!omniFinalPath &&
+        getIndexTranslateModel(finalPath) &&
+        partialPaths.has(indexTranslatePartialPath(finalPath))) ||
       handledPaths.has(path.normalize(finalPath).toLowerCase())
     )
       continue
@@ -1307,7 +1308,10 @@ export const diagnoseLlamaCpp = async (
       id: `model-partial:${finalName}`,
       severity: 'error',
       title: 'Model download is incomplete',
-      detail: `${finalName} has a resumable partial download.`,
+      detail:
+        getIndexTranslateModel(finalPath) && !omniFinalPath
+          ? `${finalName} has a partial download from the previous model revision.`
+          : `${finalName} has a resumable partial download.`,
       repairable: Boolean(source),
       action: source ? 'repair-model' : undefined,
       data: { filepath: finalPath, source, removeBeforeDownload: false }
@@ -1325,9 +1329,20 @@ export const diagnoseLlamaCpp = async (
     const modelName = path.basename(filepath)
     const source = getMmprojSource(modelName, filepath)
     if (!source) continue
-    const projectorPath = findCompanionGguf(path.dirname(filepath), source.filename, 'mmproj')
-    const partial = hasCompanionPartial(path.dirname(filepath), 'mmproj')
-    if (!isGgufValid(projectorPath) || partial) {
+    const directory = path.dirname(filepath)
+    const strictPair = Boolean(getIndexTranslateModel(filepath))
+    const projectorPath = strictPair
+      ? path.join(directory, source.filename)
+      : findCompanionGguf(directory, source.filename, 'mmproj')
+    const partial = strictPair
+      ? fs.existsSync(`${projectorPath}.tmp`)
+      : hasCompanionPartial(directory, 'mmproj')
+    if (
+      partial ||
+      !isGgufValid(projectorPath) ||
+      (source.expectedSize !== undefined &&
+        fs.statSync(projectorPath, { throwIfNoEntry: false })?.size !== source.expectedSize)
+    ) {
       visionProjectorMissing++
       addIssue(issues, {
         id: `mmproj-incomplete:${modelName}`,
@@ -1607,7 +1622,13 @@ const runLlamaCppRepair = async (
       if (issue.data?.removeBeforeDownload && fs.existsSync(filepath)) {
         await files.preserve(filepath)
       }
-      if (issue.data?.removeBeforeDownload) await files.preserve(`${filepath}.tmp`)
+      if (issue.data?.removeBeforeDownload) {
+        await files.preserve(
+          getIndexTranslateUpgrade(filepath, source.repo, source.filename)
+            ? indexTranslatePartialPath(filepath)
+            : `${filepath}.tmp`
+        )
+      }
       await downloadOfficialModel(source, filepath, onStatus)
       if (!isGgufValid(filepath))
         throw new Error(`Downloaded model failed its basic check: ${filepath}`)
@@ -1615,10 +1636,16 @@ const runLlamaCppRepair = async (
     }
 
     for (const issue of selected.filter((item) => item.action === 'repair-mmproj')) {
-      const source = issue.data?.source as CompanionModelSource | undefined
-      const filepath = String(issue.data?.filepath ?? '')
+      let source = issue.data?.source as CompanionModelSource | undefined
+      let filepath = String(issue.data?.filepath ?? '')
       const modelName = String(issue.data?.modelName ?? '')
       if (!source || !filepath || !modelName) continue
+      if (getIndexTranslateModel(modelName)) {
+        const directory = path.dirname(filepath)
+        source = getIndexTranslateProjector(path.join(directory, modelName))
+        if (!source) continue
+        filepath = path.join(directory, source.filename)
+      }
       const tmpPath = `${filepath}.tmp`
       if (issue.data?.removeBeforeDownload) {
         if (fs.existsSync(filepath)) await files.preserve(filepath)
@@ -1640,7 +1667,7 @@ const runLlamaCppRepair = async (
         source.filename,
         (progress) => onStatus?.(`Repairing vision projector ${progress.percent.toFixed(0)}%`),
         undefined,
-        undefined,
+        source.expectedSize,
         source.filename,
         modelKey,
         subDir

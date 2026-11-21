@@ -150,6 +150,36 @@ export function glossarySpeechLanguages(settings: Record<string, unknown>): stri
   ]
 }
 
+export function speechModelSupport(language: string): { asr: boolean; tts: boolean } {
+  return {
+    asr: speechAsrGroup(language) !== 'unsupported',
+    tts: Object.hasOwn(SPEECH_TTS_REPOS, language === 'pt' ? 'pt-PT' : language)
+  }
+}
+
+export function speechRepairLanguages(
+  settings: Record<string, unknown>,
+  installedGlossaries: unknown[]
+): string[] {
+  const customGlossaries = Array.isArray(settings.glossaries) ? settings.glossaries : []
+  const values = [settings, ...customGlossaries, ...installedGlossaries].flatMap((value) => {
+    if (!value || typeof value !== 'object') return []
+    const pair = value as Record<string, unknown>
+    return [
+      pair.source_lang,
+      pair.target_lang,
+      pair.glossary_lang,
+      pair.smart_source_lang,
+      pair.smart_target_lang
+    ]
+  })
+  const codes = values.flatMap((value) => {
+    const code = typeof value === 'string' ? speechLanguageCode(value) : undefined
+    return code ? [code] : []
+  })
+  return [...new Set(['zh', ...(codes.length > 0 ? codes : ['en'])])]
+}
+
 export function speechAsrGroup(language: string): string {
   const code = language.toLowerCase().split('-')[0]
   if (['zh', 'ru', 'tl', 'ar', 'ka', 'hy'].includes(code)) return code

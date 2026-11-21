@@ -1,4 +1,8 @@
 <script lang="ts">
+  import {
+    INDEX_TRANSLATE_MODELS,
+    indexTranslateCatalogEntry
+  } from '../../../../../shared/index-translate-models'
   import { untrack } from 'svelte'
   import { fade } from 'svelte/transition'
   import { onMount } from 'svelte'
@@ -83,17 +87,7 @@
   let modelPreference = $state<'quality' | 'speed'>('quality')
 
   const AURA_MODELS: AuraModel[] = [
-    {
-      name: 'lowest_V2.gguf',
-      sizeStr: '~2GB',
-      repo: 'AuraPro',
-      hfRepo: 'IndexTeam/Index-Translate-2B-GGUF',
-      filename: 'Index-Translate-2B.Q8_0.gguf',
-      mmprojRepo: 'IndexTeam/Index-Translate-2B-GGUF',
-      mmprojFilename: 'Index-Translate-2B.mmproj-Q8_0.gguf',
-      sizeBytes: 2_076_674_560,
-      ramInfo: 'RAM 8G+'
-    },
+    indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.lowest),
     {
       name: 'low_E4.gguf',
       sizeStr: '~5GB',
@@ -120,17 +114,7 @@
       sizeBytes: 11 * 1024 * 1024 * 1024,
       ramInfo: 'RAM+VRAM 24G+4G / UMA 18G'
     },
-    {
-      name: 'medium_Q4_V2.gguf',
-      sizeStr: '~5.8GB',
-      repo: 'AuraPro',
-      hfRepo: 'IndexTeam/Index-Translate-9B-GGUF',
-      filename: 'Index-Translate-9B.Q4_K_M.gguf',
-      mmprojRepo: 'IndexTeam/Index-Translate-9B-GGUF',
-      mmprojFilename: 'Index-Translate-9B.mmproj-Q8_0.gguf',
-      sizeBytes: 5_780_090_304,
-      ramInfo: 'RAM+VRAM 16G+8G / UMA 10G'
-    },
+    indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.medium),
     {
       name: 'medium_Q4.gguf',
       sizeStr: '~7GB',
@@ -157,17 +141,7 @@
       sizeBytes: 15 * 1024 * 1024 * 1024,
       ramInfo: 'RAM+VRAM 32G+4G / UMA 24G'
     },
-    {
-      name: 'high_Q4_2.gguf',
-      sizeStr: '~21.7GB',
-      repo: 'AuraPro',
-      hfRepo: 'IndexTeam/Index-Translate-35B-A3B-preview-GGUF',
-      filename: 'Index-Translate-35B-A3B-preview.Q4_K_M.gguf',
-      mmprojRepo: 'IndexTeam/Index-Translate-35B-A3B-preview-GGUF',
-      mmprojFilename: 'Index-Translate-35B-A3B-preview.mmproj-Q8_0.gguf',
-      sizeBytes: 21_713_462_400,
-      ramInfo: 'RAM+VRAM 32G+6G / UMA 32G'
-    },
+    indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.high),
     {
       name: 'high-code_IQ4.gguf',
       sizeStr: '~14GB',

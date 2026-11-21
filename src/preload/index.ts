@@ -252,6 +252,9 @@ const api = {
   getSherpaStatus: () => ipcRenderer.invoke('sherpa:status'),
   getSherpaLogs: () => ipcRenderer.invoke('sherpa:logs'),
   listSherpaModels: (kind?: 'asr' | 'tts') => ipcRenderer.invoke('sherpa:models:list', kind),
+  getSpeechRepairOptions: () => ipcRenderer.invoke('speech:repair-options'),
+  repairSpeech: (guestId: number, languages: string[]) =>
+    ipcRenderer.invoke('speech:repair', guestId, languages),
   updateSherpa: () => ipcRenderer.invoke('sherpa:update'),
   reinitSherpaServerScript: () => ipcRenderer.invoke('sherpa:reinit-server-script'),
   connectSherpaPty: (onOutput: (data: string) => void) => {

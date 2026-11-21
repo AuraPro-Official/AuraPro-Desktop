@@ -111,6 +111,20 @@
   let activeCoreDownloadKey = $state('')
   let settingsOpen = $state(false)
   let activeConnectionId = $state('')
+  const getSpeechRepairGuestId = (): number => {
+    if (view !== 'connected' || activeConnectionId !== 'local') return 0
+    try {
+      return (
+        document
+          .querySelector<Electron.WebviewTag>(
+            '.content-webview-container webview[partition="persist:connection-local"]'
+          )
+          ?.getWebContentsId() ?? 0
+      )
+    } catch {
+      return 0
+    }
+  }
   let connectingId = $state('')
   let lastInstallOptions = $state<InstallOptions | null>(null)
   const openConnections = new SvelteMap<string, string>()
@@ -1362,6 +1376,6 @@
     onPrepareDiagnostics={loadLlamaDiagnostics}
   />
   {#if LlamaDiagnosticsComponent}
-    <LlamaDiagnosticsComponent />
+    <LlamaDiagnosticsComponent {getSpeechRepairGuestId} />
   {/if}
 </div>
