@@ -176,6 +176,7 @@ test('repair checks admin before reinstalling and switches WebUI only after Sher
     URL,
     CONFIG: null,
     speechRepairInProgress: false,
+    startupRepairInProgress: false,
     speechOperations: 0,
     glossarySpeechDownloadPending: false,
     isSherpaStarting: () => false,
@@ -206,10 +207,11 @@ test('repair checks admin before reinstalling and switches WebUI only after Sher
     stopSherpa: async () => calls.push('stop'),
     SHERPA_ONNX_VERSION: 'test-version',
     installPackage: async (name, version, _progress, options) => {
-      assert.equal(name, 'sherpa-onnx')
+      assert.ok(['sherpa-onnx-core', 'sherpa-onnx'].includes(name))
       assert.equal(version, 'test-version')
       assert.equal(options.reinstallPackages[0], name)
-      calls.push('reinstall')
+      assert.equal(options.noDeps, true)
+      calls.push(`reinstall:${name}`)
     },
     prepareSherpaRepairModels: async (config) => {
       assert.equal(config.enabledLanguages.join(','), 'zh,es')
@@ -243,7 +245,8 @@ test('repair checks admin before reinstalling and switches WebUI only after Sher
   assert.equal((await context.runSpeechRepair({}, 1, ['es'])).code, 'sherpaFailed')
   assert.deepEqual(calls.splice(0), [
     'stop',
-    'reinstall',
+    'reinstall:sherpa-onnx-core',
+    'reinstall:sherpa-onnx',
     'models',
     'start',
     'health',
@@ -255,7 +258,8 @@ test('repair checks admin before reinstalling and switches WebUI only after Sher
   assert.equal((await context.runSpeechRepair({}, 1, ['es'])).ok, true)
   assert.deepEqual(calls, [
     'stop',
-    'reinstall',
+    'reinstall:sherpa-onnx-core',
+    'reinstall:sherpa-onnx',
     'models',
     'start',
     'health',

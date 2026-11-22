@@ -931,12 +931,15 @@ export const isSherpaStarting = (): boolean => pendingStart !== null
 export const startSherpa = (
   port: number | null = null,
   onStatus?: (status: string) => void,
-  preparedConfig?: SherpaConfig
+  preparedConfig?: SherpaConfig,
+  { installedOnly = false } = {}
 ): Promise<{ url: string; pid: number }> => {
   if (pendingStart) return pendingStart
-  pendingStart = startSherpaInternal(port, onStatus, preparedConfig)
+  pendingStart = startSherpaInternal(port, onStatus, preparedConfig, installedOnly)
     .catch((error) => {
       if (!ptyProcess) lock.release()
+      status = 'failed'
+      logBuffer.push(`\r\n[Sherpa startup failed] ${String(error)}\r\n`)
       throw error
     })
     .finally(() => {
@@ -945,35 +948,20 @@ export const startSherpa = (
   return pendingStart
 }
 
-const startSherpaInternal = async (
-  port: number | null,
-  onStatus: ((status: string) => void) | undefined,
-  preparedConfig?: SherpaConfig
-): Promise<{ url: string; pid: number }> => {
-  if (!lock.acquire()) {
-    if (url && pid) return { url, pid }
-    throw new Error('Sherpa is already starting')
-  }
-
-  await stopSherpa()
-  ensureServerScript()
-
-  if (!isPythonInstalled()) {
-    onStatus?.('Installing Python...')
-    const ok = await installPython(undefined, onStatus)
-    if (!ok) throw new Error('Python installation failed')
-  }
-
+export const ensureSherpaStartupDependencies = async (
+  speechConfig: SherpaConfig,
+  onStatus?: (status: string) => void
+): Promise<void> => {
   const requiredPackages = [
     'sherpa-onnx',
     'fast_langdetect',
     'soundfile',
     'fastapi',
     'uvicorn',
+    'python-multipart',
     'faster-whisper'
   ]
 
-  const speechConfig = preparedConfig ?? (await getConfig()).sherpa ?? {}
   if (
     requestedSpeechLanguages(speechConfig).some((language) => speechAsrGroup(language) === 'hindi')
   )
@@ -993,17 +981,45 @@ const startSherpaInternal = async (
       await installPackage(pinnedVersion ? `${pkg}==${pinnedVersion}` : pkg, undefined, onStatus)
     }
   }
+}
 
-  try {
-    await ensureFfmpeg(onStatus)
-  } catch (err) {
-    log.warn('Failed to ensure ffmpeg for sherpa audio decoding:', err)
+const startSherpaInternal = async (
+  port: number | null,
+  onStatus: ((status: string) => void) | undefined,
+  preparedConfig: SherpaConfig | undefined,
+  installedOnly: boolean
+): Promise<{ url: string; pid: number }> => {
+  if (!lock.acquire()) {
+    if (url && pid) return { url, pid }
+    throw new Error('Sherpa is already starting')
+  }
+
+  await stopSherpa()
+  ensureServerScript()
+
+  if (!isPythonInstalled()) {
+    if (installedOnly) throw new Error('Bundled Python is missing or incomplete.')
+    onStatus?.('Installing Python...')
+    const ok = await installPython(undefined, onStatus, { preserveExisting: true })
+    if (!ok) throw new Error('Python installation failed')
+  }
+
+  if (!installedOnly) {
+    await ensureSherpaStartupDependencies(
+      preparedConfig ?? (await getConfig()).sherpa ?? {},
+      onStatus
+    )
+    try {
+      await ensureFfmpeg(onStatus)
+    } catch (err) {
+      log.warn('Failed to ensure ffmpeg for sherpa audio decoding:', err)
+    }
   }
 
   const config = await getConfig()
   const configEnvVars = config.envVars ?? {}
   let sherpaConfig: SherpaConfig = { ...(preparedConfig ?? config.sherpa ?? {}) }
-  if (!preparedConfig) {
+  if (!preparedConfig && !installedOnly) {
     sherpaConfig = await ensureDefaultAsrModel(sherpaConfig, onStatus, false, false)
     sherpaConfig = await ensureDefaultTtsModel(sherpaConfig, onStatus, false, false)
     await setConfig({ sherpa: { ...(config.sherpa ?? {}), ...sherpaConfig } })
@@ -1016,6 +1032,7 @@ const startSherpaInternal = async (
   const desiredPort = port || sherpaConfig.port || 39384
   let availablePort = desiredPort
   while (await portInUse(availablePort, host)) {
+    if (installedOnly) throw new Error(`Sherpa port ${desiredPort} is occupied.`)
     availablePort++
     if (availablePort > desiredPort + 100) {
       throw new Error('No available port found for sherpa')
@@ -1090,7 +1107,9 @@ const startSherpaInternal = async (
   status = 'starting'
 
   spawned.onData((data: string) => {
+    if (ptyProcess !== spawned) return
     logBuffer.push(data)
+    if (logBuffer.length > 500) logBuffer.shift()
     log.info(`[sherpa:${spawnedPid}] ${data.replace(/[\r\n]+/g, ' ').trim()}`)
   })
 
@@ -1102,12 +1121,18 @@ const startSherpaInternal = async (
     ptyProcess = null
     pid = null
     url = null
-    status = 'stopped'
+    status = 'failed'
     lock.release()
   })
 
   const serverUrl = `http://${host}:${availablePort}`
   url = serverUrl
+  try {
+    await waitForSherpaRepairReady({ url: serverUrl, pid: spawnedPid }, false)
+  } catch (error) {
+    await stopSherpa(true)
+    throw error
+  }
   status = 'started'
   log.info(`sherpa service started - PID: ${spawnedPid}, URL: ${serverUrl}`)
 
@@ -1144,10 +1169,10 @@ export const checkSherpaRepairModels = (config: SherpaConfig, languages: string[
   return limitedAsrLanguages
 }
 
-export const waitForSherpaRepairReady = async (server: {
-  url: string
-  pid: number
-}): Promise<void> => {
+export const waitForSherpaRepairReady = async (
+  server: { url: string; pid: number },
+  requireModels = true
+): Promise<void> => {
   const deadline = Date.now() + 25_000
   while (Date.now() < deadline) {
     if (pid !== server.pid || !isProcessAlive(server.pid)) break
@@ -1159,8 +1184,7 @@ export const waitForSherpaRepairReady = async (server: {
       const health = response.ok ? await response.json() : (await response.body?.cancel(), null)
       if (
         health?.ok === true &&
-        health.asr_configured === true &&
-        health.tts_configured === true &&
+        (!requireModels || (health.asr_configured === true && health.tts_configured === true)) &&
         pid === server.pid
       )
         return
@@ -1169,7 +1193,11 @@ export const waitForSherpaRepairReady = async (server: {
     }
     await delay(400)
   }
-  throw new Error('Sherpa did not report ready speech models. Check the Sherpa log and try again.')
+  throw new Error(
+    requireModels
+      ? 'Sherpa did not report ready speech models. Check the Sherpa log and try again.'
+      : 'Sherpa did not become ready. Check the Sherpa log and try again.'
+  )
 }
 
 export const verifySherpaRepairSpeech = async (server: {
@@ -1232,26 +1260,35 @@ export const verifySherpaRepairSpeech = async (server: {
     throw new Error('Invalid Sherpa playback response.')
 }
 
-export const stopSherpa = async (): Promise<void> => {
+export const stopSherpa = async (preserveLog = false): Promise<void> => {
   if (ptyProcess) {
+    const current = ptyProcess
+    const currentPid = pid
+    ptyProcess = null
     try {
-      ptyProcess.kill()
+      current.kill()
     } catch (e) {
       log.warn('Failed to kill sherpa PTY:', e)
     }
-    await new Promise((r) => setTimeout(r, 1000))
-    if (pid) {
+    await delay(1000)
+    if (currentPid && isProcessAlive(currentPid)) {
       try {
-        process.kill(pid, 0)
-        process.kill(pid, 'SIGKILL')
+        process.kill(currentPid, 'SIGKILL')
       } catch {}
+      for (let attempt = 0; attempt < 10 && isProcessAlive(currentPid); attempt++) {
+        await delay(100)
+      }
+      if (isProcessAlive(currentPid)) {
+        ptyProcess = current
+        throw new Error('The Sherpa process is still using Python files.')
+      }
     }
   }
   ptyProcess = null
   pid = null
   url = null
-  status = null
-  logBuffer = []
+  if (!preserveLog || status !== 'failed') status = null
+  if (!preserveLog) logBuffer = []
   lock.release()
 }
 

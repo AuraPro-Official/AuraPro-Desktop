@@ -144,7 +144,7 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.10.13'
+export const AURAPRO_UI_TARGET_VERSION = '3.10.14'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
 export const AURAPRO_UI_LAST_VERSION = '3.9.3'
@@ -830,8 +830,12 @@ const checkInternet = async () => {
 
 export const installPython = async (
   installationDir?: string,
-  onStatus?: (status: string) => void
+  onStatus?: (status: string) => void,
+  { preserveExisting = false } = {}
 ): Promise<boolean> => {
+  installationDir ||= path.join(getInstallDir(), 'python')
+  if (preserveExisting && !(await canRestoreMissingPython(installationDir)))
+    throw new Error('Bundled Python is missing or incomplete. Its existing files were preserved.')
   const pythonDownloadPath = getPythonDownloadPath()
   if (!fs.existsSync(pythonDownloadPath)) {
     if (!(await checkInternet())) {
@@ -856,16 +860,17 @@ export const installPython = async (
     )
   }
 
-  installationDir = installationDir || getPythonInstallationDir()
   log.info('Installing Python to:', installationDir)
 
   try {
     // Ensure no servers are running that might lock files in the python dir
     await stopAllServers()
+    if (preserveExisting && !(await canRestoreMissingPython(installationDir)))
+      throw new Error('Bundled Python is missing or incomplete. Its existing files were preserved.')
 
     // If the directory already exists, try to remove it for a clean install
     // (especially important on Windows if files are corrupted or partial)
-    if (fs.existsSync(installationDir)) {
+    if (!preserveExisting && fs.existsSync(installationDir)) {
       log.info('Removing existing Python directory for clean installation')
       try {
         fs.rmSync(installationDir, { recursive: true, force: true })
@@ -1014,6 +1019,15 @@ export const getPythonPath = (installationDir?: string) => {
   return path.normalize(getPythonExecutablePath(installationDir || getPythonInstallationDir()))
 }
 
+export const canRestoreMissingPython = async (directory: string): Promise<boolean> => {
+  try {
+    if (!(await fs.promises.lstat(directory)).isDirectory()) return false
+    return (await fs.promises.readdir(directory)).length === 0
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT'
+  }
+}
+
 const runPythonCacheCommand = async (
   args: string[],
   label: string,
@@ -1109,6 +1123,96 @@ export const isUvInstalled = (installationDir?: string) => {
     return false
   }
 }
+
+export const repairStartupPythonPackage = async (
+  spec: string,
+  onStatus?: (status: string) => void
+): Promise<void> => {
+  const python = getPythonPath()
+  const env = pythonEnv()
+  for (const key of Object.keys(env)) {
+    if (/^(?:PIP|UV)_/i.test(key)) delete env[key]
+  }
+  env.PIP_CONFIG_FILE = process.platform === 'win32' ? 'NUL' : '/dev/null'
+  const run = (args: string[]) =>
+    new Promise<void>((resolve, reject) => {
+      const child = execFile(
+        python,
+        args,
+        { env, timeout: 5 * 60_000, windowsHide: true, maxBuffer: 1024 * 1024 },
+        (error, _stdout, stderr) => {
+          if (error) reject(new Error(stderr.trim().slice(-4500) || error.message))
+          else resolve()
+        }
+      )
+      child.stderr?.on('data', (chunk: Buffer) => onStatus?.(chunk.toString().trim().slice(-500)))
+    })
+  if (spec !== 'uv') {
+    try {
+      await run([
+        '-I',
+        '-m',
+        'uv',
+        'pip',
+        'install',
+        '--python',
+        python,
+        '--no-config',
+        '--no-cache',
+        '--no-deps',
+        '--only-binary',
+        ':all:',
+        '--reinstall',
+        spec
+      ])
+      return
+    } catch (error) {
+      // Corrupt package metadata may not contain an uninstall file list.
+      if (
+        isPackageFileLockedError(error) ||
+        !/(?:missing|no) [`'"]?RECORD\b|\bRECORD[`'"]? file.*(?:missing|not found)/i.test(
+          getErrorMessage(error)
+        )
+      )
+        throw error
+    }
+  }
+  await run([
+    '-I',
+    '-m',
+    'pip',
+    '--isolated',
+    'install',
+    '--disable-pip-version-check',
+    '--no-cache-dir',
+    '--no-deps',
+    '--only-binary=:all:',
+    '--ignore-installed',
+    spec
+  ])
+}
+
+export const checkSherpaStartupImports = (): Promise<void> =>
+  new Promise((resolve, reject) => {
+    execFile(
+      getPythonPath(),
+      [
+        '-IB',
+        '-c',
+        [
+          'from tokenizers import Tokenizer',
+          'from faster_whisper import WhisperModel',
+          'from fast_langdetect import detect_language',
+          'import av, numpy, soundfile, sherpa_onnx, uvicorn, python_multipart, fastapi'
+        ].join('\n')
+      ],
+      { env: pythonEnv(), timeout: 20_000, windowsHide: true, maxBuffer: 512 * 1024 },
+      (error, _stdout, stderr) => {
+        if (error) reject(new Error(stderr.trim().slice(-4500) || error.message))
+        else resolve()
+      }
+    )
+  })
 
 const isPackageFileLockedError = (error: unknown): boolean => {
   const message = getErrorMessage(error).toLowerCase()
@@ -1307,6 +1411,7 @@ export const installPackage = (
   version?: string,
   onStatus?: (status: string) => void,
   options: {
+    noDeps?: boolean
     reinstallPackages?: string[]
     refreshPackages?: string[]
   } = {}
@@ -1341,6 +1446,7 @@ export const installPackage = (
           'install',
           ...(localOpenWebUISourcePath ? ['-e', localOpenWebUISourcePath] : [packageSpec]),
           ...(localOpenWebUISourcePath || version ? [] : ['-U']),
+          ...(options.noDeps ? ['--no-deps'] : []),
           ...(options.reinstallPackages ?? []).flatMap((name) => ['--reinstall-package', name]),
           ...(options.refreshPackages ?? []).flatMap((name) => ['--refresh-package', name]),
           ...(isAuraProUiPackage && !localOpenWebUISourcePath
@@ -2046,10 +2152,11 @@ export type WebUIStartPhase = 'checking' | 'updating' | 'starting'
 export const startServer = async (
   expose = false,
   port: number | null = null,
-  onStatus?: (status: string, phase: WebUIStartPhase) => void
+  onStatus?: (status: string, phase: WebUIStartPhase) => void,
+  { installedOnly = false } = {}
 ): Promise<{ url: string; pid: number }> => {
   await stopAllServers()
-  await killStaleOpenWebUIProcesses((status) => onStatus?.(status, 'checking'))
+  if (!installedOnly) await killStaleOpenWebUIProcesses((status) => onStatus?.(status, 'checking'))
   onStatus?.('Checking the installed WebUI version...', 'checking')
   const config = await getConfig()
   const configEnvVars = config.envVars ?? {}
@@ -2096,23 +2203,36 @@ export const startServer = async (
   const useHttps = Boolean(expose && config.localServer?.httpsEnabled !== false)
   if (!isPythonInstalled()) throw new Error('Python is not installed')
   let webUIPackageName: OpenWebUIPackageName
-  try {
-    webUIPackageName = await ensureOpenWebUIPackage(
-      resolveOpenWebUITargetVersion(config.localServer?.version),
-      (status) => onStatus?.(status, 'updating')
+  if (installedOnly) {
+    const configured = getOpenWebUIPackageNameForVersion(
+      resolveOpenWebUITargetVersion(config.localServer?.version)
     )
-  } catch (error) {
-    const fallbackPackage = getInstalledOpenWebUIPackageName()
-    if (!fallbackPackage) throw error
-    webUIPackageName = fallbackPackage
-    log.warn(
-      `Open WebUI package update failed; continuing with installed ${fallbackPackage}:`,
-      error
-    )
-    onStatus?.(
-      'WebUI update failed. Continuing with the previously installed version...',
-      'updating'
-    )
+    const candidates = [
+      ...new Set<OpenWebUIPackageName>([configured, 'aurapro-webui', 'aurapro-ui', 'open-webui'])
+    ]
+    const versions = await getExactPackageVersions(candidates)
+    const installed = candidates.find((name) => versions[name] && hasOpenWebUICoreFiles(name))
+    if (!installed) throw new Error('Open WebUI has an incomplete package or is not installed.')
+    webUIPackageName = installed
+  } else {
+    try {
+      webUIPackageName = await ensureOpenWebUIPackage(
+        resolveOpenWebUITargetVersion(config.localServer?.version),
+        (status) => onStatus?.(status, 'updating')
+      )
+    } catch (error) {
+      const fallbackPackage = getInstalledOpenWebUIPackageName()
+      if (!fallbackPackage) throw error
+      webUIPackageName = fallbackPackage
+      log.warn(
+        `Open WebUI package update failed; continuing with installed ${fallbackPackage}:`,
+        error
+      )
+      onStatus?.(
+        'WebUI update failed. Continuing with the previously installed version...',
+        'updating'
+      )
+    }
   }
   const localOpenWebUISourcePath = getLocalOpenWebUISourcePath()
   const localFrontendBuildDir = localOpenWebUISourcePath
@@ -2120,10 +2240,12 @@ export const startServer = async (
     : null
 
   // Ensure ffmpeg is available
-  try {
-    await ensureFfmpeg((status) => onStatus?.(status, 'updating'))
-  } catch (err) {
-    log.warn('Failed to ensure ffmpeg (non-fatal, but some features may not work):', err)
+  if (!installedOnly) {
+    try {
+      await ensureFfmpeg((status) => onStatus?.(status, 'updating'))
+    } catch (err) {
+      log.warn('Failed to ensure ffmpeg (non-fatal, but some features may not work):', err)
+    }
   }
 
   const pythonPath = getPythonPath()
@@ -2133,7 +2255,23 @@ export const startServer = async (
     throw new Error(`Python executable not found at: ${pythonPath}`)
   }
 
-  const commandArgs = ['-m', 'uv', 'run', webUIPackageName, 'serve', '--host', host]
+  const commandArgs = installedOnly
+    ? [
+        '-I',
+        '-u',
+        '-c',
+        [
+          'import sys, importlib.metadata as metadata',
+          'name = sys.argv.pop(1)',
+          'sys.argv[0] = name',
+          'entry = next((ep for ep in metadata.distribution(name).entry_points if ep.group == "console_scripts" and ep.name == name), None)',
+          'if entry is None: raise RuntimeError("Open WebUI has an incomplete package (entry point missing).")',
+          'sys.exit(entry.load()())'
+        ].join('\n'),
+        webUIPackageName
+      ]
+    : ['-m', 'uv', 'run', webUIPackageName]
+  commandArgs.push('serve', '--host', host)
   if (useHttps) {
     const certDir = path.join(getUserDataPath(), 'certs')
     const lanHosts = getLocalNetworkAddresses()
@@ -2345,15 +2483,28 @@ export function getServerLog(pid: number): string[] {
 
 export const checkUrlAndOpen = async (
   url: string,
-  callback: () => void | Promise<void> = async () => {}
+  callback: () => void | Promise<void> = async () => {},
+  options: { active?: () => boolean; onTimeout?: () => void } = {}
 ) => {
-  const maxAttempts = 1800
+  const deadline = Date.now() + 600_000
   const interval = 2000
-  let attempts = 0
 
   const checkUrl = async (): Promise<boolean> => {
     try {
-      const response = await electronNet.fetch(url, { method: 'HEAD' })
+      const readiness = await electronNet.fetch(new URL('/ready', url).href, {
+        redirect: 'error',
+        signal: AbortSignal.timeout(2500)
+      })
+      const isJson = readiness.headers.get('content-type')?.includes('application/json')
+      if (readiness.ok && isJson) return (await readiness.json())?.status === true
+      await readiness.body?.cancel()
+      // Older WebUI packages may not expose readiness, or serve their HTML catch-all.
+      if (!((readiness.ok && !isJson) || [404, 405].includes(readiness.status))) return false
+      const response = await electronNet.fetch(url, {
+        method: 'HEAD',
+        redirect: 'error',
+        signal: AbortSignal.timeout(2500)
+      })
       return response.ok
     } catch {
       return false
@@ -2361,9 +2512,9 @@ export const checkUrlAndOpen = async (
   }
 
   const pollUrl = async () => {
-    while (attempts < maxAttempts) {
-      attempts++
+    while (Date.now() < deadline && (options.active?.() ?? true)) {
       const isAvailable = await checkUrl()
+      if (options.active && !options.active()) return
       if (isAvailable) {
         log.info('URL is now available')
         await callback()
@@ -2371,7 +2522,10 @@ export const checkUrlAndOpen = async (
       }
       await new Promise((resolve) => setTimeout(resolve, interval))
     }
-    log.info('URL check timed out')
+    if (options.active?.() ?? true) {
+      log.info('URL check timed out')
+      options.onTimeout?.()
+    }
   }
 
   pollUrl().catch((error) => {

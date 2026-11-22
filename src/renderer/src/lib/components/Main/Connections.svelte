@@ -131,6 +131,7 @@
   let localInstalled = $state(false)
   let showAddConnectionModal = $state(false)
   let LlamaDiagnosticsComponent = $state<LlamaDiagnosticsComponentType | null>(null)
+  let diagnosticAlert = $state.raw<unknown>(null)
   let llamaDiagnosticsLoadPromise: Promise<LlamaDiagnosticsComponentType> | null = null
 
   // Active log panel
@@ -920,6 +921,11 @@
     void refreshPro()
     const proTimer = setInterval(refreshPro, 2000)
     const disposeDataListener = window.electronAPI.onData((data: MainEvent) => {
+      if (data.type === 'llamacpp:diagnostic-alert') {
+        diagnosticAlert = data.data
+        void loadLlamaDiagnostics()
+        return
+      }
       const payload =
         data.data && typeof data.data === 'object' ? (data.data as MainEventPayload) : undefined
       const textPayload = typeof data.data === 'string' ? data.data : ''
@@ -928,7 +934,7 @@
         const connId = payload.connectionId ?? ''
         const incomingUrl = payload.url
 
-        if (!openConnections.has(connId)) {
+        if (openConnections.get(connId) !== incomingUrl) {
           openConnections.set(connId, incomingUrl)
         }
 
@@ -1320,7 +1326,9 @@
       connectPty={getConnectPty(activeLog)}
       disconnectPty={getDisconnectPty(activeLog)}
       readonly={activeLog !== 'server'}
-      showBufferedLogs={activeLog === 'pro'}
+      showBufferedLogs={activeLog === 'pro' ||
+        (activeLog === 'server' && serverStatus === 'failed') ||
+        (activeLog === 'sherpa' && sherpaStatus === 'failed')}
       onWrite={getOnWrite(activeLog)}
       onResize={getOnResize(activeLog)}
       onStop={activeLog === 'opencode'
@@ -1376,6 +1384,6 @@
     onPrepareDiagnostics={loadLlamaDiagnostics}
   />
   {#if LlamaDiagnosticsComponent}
-    <LlamaDiagnosticsComponent {getSpeechRepairGuestId} />
+    <LlamaDiagnosticsComponent {getSpeechRepairGuestId} {diagnosticAlert} />
   {/if}
 </div>

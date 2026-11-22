@@ -1,6 +1,6 @@
 {
   "name": "aurapro",
-  "version": "3.10.13",
+  "version": "3.10.14",
   "private": true,
   "license": "AGPL-3.0",
   "packageManager": "npm@12.0.1",
@@ -23,7 +23,7 @@
     "format": "prettier --plugin prettier-plugin-svelte --write .",
     "lint": "eslint --cache .",
     "lint:ci": "eslint --max-warnings 0 .",
-    "test:diagnostic-recovery": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/test-diagnostic-recovery.mjs scripts/test-speech-repair.mjs",
+    "test:diagnostic-recovery": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/test-diagnostic-recovery.mjs scripts/test-speech-repair.mjs scripts/test-startup-diagnostics.mjs",
     "test:llamacpp-releases": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/test-llamacpp-release-resolution.mjs",
     "test:llamacpp-kv-cache": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/test-llamacpp-kv-cache.mjs",
     "test:llamacpp-models": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/test-lowest-v2.mjs",

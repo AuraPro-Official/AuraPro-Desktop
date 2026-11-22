@@ -57,7 +57,12 @@ import {
   installPackage,
   installPython,
   isPythonInstalled,
+  getPythonPath,
+  canRestoreMissingPython,
+  checkSherpaStartupImports,
+  repairStartupPythonPackage,
   getExactPackageVersion,
+  getExactPackageVersions,
   getPackageVersion,
   ensureOpenWebUIPackage,
   getOpenWebUIPackageNameForVersion,
@@ -124,12 +129,26 @@ import {
   uninstallLlamaCpp,
   setLlamaCppRuntimeAnomalyHandler
 } from './utils/llamacpp'
-import { diagnoseLlamaCpp, repairLlamaCpp } from './utils/llamacpp-diagnostics'
+import {
+  diagnoseLlamaCpp,
+  repairLlamaCpp,
+  type LlamaDiagnosticReport
+} from './utils/llamacpp-diagnostics'
+import {
+  classifyStartupFailure,
+  dependencySpec,
+  lastStartupEvidence,
+  makeStartupIssue,
+  startupPackage,
+  type StartupService
+} from './utils/startup-diagnostics'
 
 import {
   startSherpa,
   stopSherpa,
   getSherpaInfo,
+  ensureSherpaStartupDependencies,
+  getSherpaServiceState,
   getSherpaLog,
   getSherpaPty,
   validateSherpaProcess,
@@ -250,6 +269,10 @@ let SERVER_URL: string | null = null
 let SERVER_STATUS: string | null = null
 let SERVER_REACHABLE = false
 let SERVER_PID: number | null = null
+let webUIStartupEvidence = ''
+let agentStartupError = ''
+let startupRepairInProgress = false
+const WEBUI_DIAGNOSTIC_WAIT_MS = 120_000
 type RuntimeStartupBusyPhase = 'checking' | 'updating' | 'starting' | 'waiting'
 type RuntimeStartupPhase = 'idle' | RuntimeStartupBusyPhase | 'ready' | 'failed'
 interface RuntimeStartupState {
@@ -911,16 +934,18 @@ const connectTo = async (connection: Connection) => {
     // startServerHandler returns as soon as the process spawns, but the HTTP
     // endpoint might not be ready yet (especially on first launch).
     if (!SERVER_REACHABLE) {
+      const stillWaiting = () => Boolean(SERVER_PID && WEBUI_STARTUP_STATE.phase !== 'failed')
+      if (!stillWaiting()) return null
       updateWebUIStartupState('waiting', 'Waiting for the WebUI service to become ready...')
       const maxWait = 600_000
       const poll = 2_000
       const t0 = Date.now()
-      while (!SERVER_REACHABLE && Date.now() - t0 < maxWait) {
+      while (!SERVER_REACHABLE && stillWaiting() && Date.now() - t0 < maxWait) {
         await new Promise((r) => setTimeout(r, poll))
       }
       if (!SERVER_REACHABLE) {
         log.warn('connectTo: server did not become reachable within timeout')
-        updateWebUIStartupState('failed', 'The WebUI service did not become ready in time.')
+        if (stillWaiting()) markWebUIReadyTimeout()
         return null
       }
     }
@@ -940,15 +965,16 @@ const connectTo = async (connection: Connection) => {
 
 const glossaryStartupReminder = new GlossaryStartupReminder()
 let serverStartPending: Promise<boolean> | null = null
-const startServerHandler = (): Promise<boolean> => {
+const startServerHandler = (fromRepair = false, portOverride?: number): Promise<boolean> => {
+  if (startupRepairInProgress && !fromRepair) return Promise.resolve(false)
   if (serverStartPending) return serverStartPending
-  serverStartPending = startWebUIServer().finally(() => {
+  serverStartPending = startWebUIServer(fromRepair, portOverride).finally(() => {
     serverStartPending = null
   })
   return serverStartPending
 }
 
-const startWebUIServer = async (): Promise<boolean> => {
+const startWebUIServer = async (installedOnly = false, portOverride?: number): Promise<boolean> => {
   if (SERVER_STATUS === 'starting') {
     log.info('[server] Already running or starting, skipping duplicate start')
     return true
@@ -958,12 +984,13 @@ const startWebUIServer = async (): Promise<boolean> => {
     updateWebUIStartupState(SERVER_REACHABLE ? 'ready' : 'waiting')
     return true
   }
-  await stopServerHandler(true)
-  updateWebUIStartupState('checking', 'Preparing to check the installed WebUI version...')
-  SERVER_STATUS = 'starting'
-  sendToRenderer('status:server', SERVER_STATUS)
-
+  webUIStartupEvidence = ''
   try {
+    if (!(await stopServerHandler(true)))
+      throw new Error('Could not stop the previous WebUI process.')
+    updateWebUIStartupState('checking', 'Preparing to check the installed WebUI version...')
+    SERVER_STATUS = 'starting'
+    sendToRenderer('status:server', SERVER_STATUS)
     CONFIG = await getConfig()
     // Optional glossary checks and user input must never delay WebUI startup.
     void glossaryStartupReminder
@@ -974,8 +1001,9 @@ const startWebUIServer = async (): Promise<boolean> => {
       .catch((error) => log.warn('Failed to check optional official glossaries:', error))
     const { url, pid } = await startServer(
       CONFIG?.localServer?.serveOnLocalNetwork ?? true,
-      CONFIG?.localServer?.port ?? null,
-      (status, phase) => updateWebUIStartupState(phase, status)
+      portOverride ?? CONFIG?.localServer?.port ?? null,
+      (status, phase) => updateWebUIStartupState(phase, status),
+      { installedOnly }
     )
     SERVER_URL = url
     SERVER_PID = pid
@@ -1016,18 +1044,28 @@ const startWebUIServer = async (): Promise<boolean> => {
 
     // Handle unexpected exit
     const pty = getServerPty(pid)
+    if (!pty && !getServerPIDs().includes(pid)) {
+      webUIStartupEvidence = getServerLog(pid).slice(-60).join('')
+      SERVER_PID = null
+      throw new Error('The WebUI service exited before it became ready.')
+    }
     pty?.onExit(({ exitCode, signal }) => {
       if (SERVER_PID === pid) {
+        webUIStartupEvidence = getServerLog(pid).slice(-60).join('')
         log.error(`Server process ${pid} exited unexpectedly: code=${exitCode}, signal=${signal}`)
-        SERVER_STATUS = SERVER_REACHABLE ? 'stopped' : 'failed'
+        const wasReady = SERVER_REACHABLE
+        SERVER_STATUS = 'failed'
         SERVER_REACHABLE = false
         SERVER_PID = null
         sendToRenderer('status:server', SERVER_STATUS)
         updateWebUIStartupState(
           'failed',
-          `The WebUI service exited before it became ready (code ${exitCode}).`
+          wasReady
+            ? `The WebUI service stopped unexpectedly (code ${exitCode}).`
+            : `The WebUI service exited before it became ready (code ${exitCode}).`
         )
         updateTray()
+        scheduleStartupDiagnostic()
       }
     })
 
@@ -1035,22 +1073,32 @@ const startWebUIServer = async (): Promise<boolean> => {
     connectPtyPort(pid)
     updateTray()
 
-    checkUrlAndOpen(SERVER_URL, async () => {
-      if (SERVER_PID !== pid) return
-      SERVER_REACHABLE = true
-      sendToRenderer('server:ready', { url: SERVER_URL })
-      updateWebUIStartupState('ready')
-      updateTray()
-    })
+    void checkUrlAndOpen(
+      SERVER_URL,
+      async () => {
+        if (SERVER_PID !== pid) return
+        SERVER_REACHABLE = true
+        webUIStartupEvidence = ''
+        sendToRenderer('server:ready', { url: SERVER_URL })
+        updateWebUIStartupState('ready')
+        updateTray()
+      },
+      {
+        active: () => SERVER_PID === pid && WEBUI_STARTUP_STATE.phase !== 'failed',
+        onTimeout: markWebUIReadyTimeout
+      }
+    )
 
     return true
   } catch (error) {
+    webUIStartupEvidence = [webUIStartupEvidence, getErrorMessage(error)].filter(Boolean).join('\n')
     log.error('Failed to start server:', error)
     SERVER_STATUS = 'failed'
     sendToRenderer('status:server', SERVER_STATUS)
     updateWebUIStartupState('failed', getErrorMessage(error))
     sendToRenderer('error', { message: `Failed to start server: ${getErrorMessage(error)}` })
     updateTray()
+    scheduleStartupDiagnostic()
     return false
   }
 }
@@ -1073,7 +1121,9 @@ const connectPtyPort = (pid?: number): void => {
   const { port1, port2 } = new MessageChannelMain()
 
   if (!targetPid) {
-    if (SERVER_STATUS === 'starting') {
+    if (webUIStartupEvidence) {
+      port1.postMessage({ type: 'output', data: webUIStartupEvidence })
+    } else if (SERVER_STATUS === 'starting') {
       log.info('pty:connect — server is starting, no PID yet')
     } else {
       log.info('pty:connect — no active server')
@@ -1206,17 +1256,13 @@ const connectSherpaPtyPort = (): void => {
   const { port1, port2 } = new MessageChannelMain()
 
   const sherpaPty = getSherpaPty()
+  activeSherpaDisposable?.dispose()
+  activeSherpaDisposable = null
+  for (const chunk of getSherpaLog()) port1.postMessage({ type: 'output', data: chunk })
   if (!sherpaPty) {
     port1.postMessage({ type: 'output', data: '[sherpa is not running]\r\n' })
     mainWindow.webContents.postMessage('sherpa:pty:port', null, [port2])
     return
-  }
-
-  activeSherpaDisposable?.dispose()
-
-  const buffer = getSherpaLog()
-  for (const chunk of buffer) {
-    port1.postMessage({ type: 'output', data: chunk })
   }
 
   const disposable = sherpaPty.onData((data: string) => {
@@ -1239,7 +1285,10 @@ const stopServerHandler = async (preserveStartupState = false): Promise<boolean>
     SERVER_REACHABLE = false
     SERVER_URL = null
     sendToRenderer('status:server', SERVER_STATUS)
-    if (!preserveStartupState) updateWebUIStartupState('idle')
+    if (!preserveStartupState) {
+      webUIStartupEvidence = ''
+      updateWebUIStartupState('idle')
+    }
     return true
   } catch (error) {
     log.error('Failed to stop server:', error)
@@ -1871,7 +1920,7 @@ let speechOperations = 0
 const existingSpeechOperation =
   <Args extends unknown[], T>(run: (...args: Args) => Promise<T>) =>
   async (...args: Args): Promise<T> => {
-    if (speechRepairInProgress) throw new SpeechRepairError('busy')
+    if (speechRepairInProgress || startupRepairInProgress) throw new SpeechRepairError('busy')
     speechOperations++
     try {
       return await run(...args)
@@ -1880,7 +1929,7 @@ const existingSpeechOperation =
     }
   }
 const scheduleGlossarySpeechDownloads = () => {
-  if (glossarySpeechDownloadPending || speechRepairInProgress) return
+  if (glossarySpeechDownloadPending || speechRepairInProgress || startupRepairInProgress) return
   glossarySpeechDownloadPending = true
   void (async () => {
     try {
@@ -2005,6 +2054,7 @@ const getSpeechRepairWebUI = async (event: IpcMainInvokeEvent, guestId: number) 
 const runSpeechRepair = async (event: IpcMainInvokeEvent, guestId: number, selected: unknown) => {
   if (
     speechRepairInProgress ||
+    startupRepairInProgress ||
     speechOperations ||
     glossarySpeechDownloadPending ||
     isSherpaStarting()
@@ -2056,14 +2106,17 @@ const runSpeechRepair = async (event: IpcMainInvokeEvent, guestId: number, selec
       interruptedService = true
       await stopSherpa()
       progress('installing')
-      await installPackage(
-        'sherpa-onnx',
-        SHERPA_ONNX_VERSION,
-        (detail) => progress('installing', detail),
-        {
-          reinstallPackages: ['sherpa-onnx']
-        }
-      )
+      for (const name of ['sherpa-onnx-core', 'sherpa-onnx']) {
+        await installPackage(
+          name,
+          SHERPA_ONNX_VERSION,
+          (detail) => progress('installing', detail),
+          {
+            reinstallPackages: [name],
+            noDeps: true
+          }
+        )
+      }
       progress('downloading')
       const prepared = await prepareSherpaRepairModels(
         {
@@ -2089,7 +2142,7 @@ const runSpeechRepair = async (event: IpcMainInvokeEvent, guestId: number, selec
         { replaceSherpa: true }
       )
     } catch (error) {
-      if (interruptedService) await stopSherpa()
+      if (interruptedService) await stopSherpa(true)
       if (wasRunning && interruptedService) {
         try {
           const restored = await startSherpa(previous.port, undefined, previous)
@@ -2131,6 +2184,350 @@ const runSpeechRepair = async (event: IpcMainInvokeEvent, guestId: number, selec
   } finally {
     speechRepairInProgress = false
   }
+}
+
+const diagnoseLocalStartup = async (trigger = 'manual'): Promise<LlamaDiagnosticReport> => {
+  const report = await diagnoseLlamaCpp(trigger)
+  const config = await getConfig()
+  const sherpa = getSherpaServiceState()
+  const pythonDirectory = join(getInstallDir(), 'python')
+  const pythonPath = getPythonPath(pythonDirectory)
+  const addonIssues: ReturnType<typeof makeStartupIssue>[] = []
+  const add = (service: StartupService, evidence: string, fallback: string) => {
+    const failure = classifyStartupFailure(evidence || fallback)
+    addonIssues.push(makeStartupIssue(service, failure, evidence || fallback))
+  }
+  if (
+    SERVER_STATUS === 'failed' ||
+    WEBUI_STARTUP_STATE.phase === 'failed' ||
+    (!SERVER_REACHABLE &&
+      WEBUI_STARTUP_STATE.phase === 'waiting' &&
+      Date.now() - WEBUI_STARTUP_STATE.updatedAt > WEBUI_DIAGNOSTIC_WAIT_MS)
+  ) {
+    const evidence = [
+      webUIStartupEvidence,
+      SERVER_PID ? getServerLog(SERVER_PID).slice(-60).join('') : '',
+      WEBUI_STARTUP_STATE.phase === 'failed' ? WEBUI_STARTUP_STATE.detail : 'Startup timed out'
+    ]
+      .filter(Boolean)
+      .join('\n')
+    add('webui', evidence, 'WebUI startup failed.')
+  } else if (
+    config.defaultConnectionId === 'local' &&
+    !report.software.webuiVersion &&
+    !SERVER_STATUS
+  ) {
+    add(
+      'webui',
+      !existsSync(pythonPath) ? 'Python executable not found' : "No module named 'open_webui'",
+      'WebUI is not installed.'
+    )
+  }
+
+  if (
+    !isSherpaStarting() &&
+    (sherpa.status === 'failed' ||
+      (config.sherpa?.enabled &&
+        report.software.optionalComponents.some(
+          ({ id, health }) => id === 'sherpa' && health === 'exited'
+        )))
+  ) {
+    add(
+      'sherpa',
+      sherpa.status === 'failed'
+        ? getSherpaLog().slice(-60).join('')
+        : 'Sherpa health check failed',
+      'Sherpa startup failed.'
+    )
+  } else if (
+    config.sherpa?.enabled &&
+    !sherpa.status &&
+    !isSherpaStarting() &&
+    !report.software.optionalComponents.some(({ id }) => id === 'sherpa')
+  ) {
+    add(
+      'sherpa',
+      !existsSync(pythonPath) ? 'Python executable not found' : "No module named 'sherpa_onnx'",
+      'Sherpa is not installed.'
+    )
+  }
+
+  if (agentStartupError && !validateOpenCodeProcess())
+    add('agent', agentStartupError, 'Agent startup failed.')
+  else if (config.openCode?.enabled && !isOpenCodeInstalled())
+    add('agent', '', 'Agent executable is missing.')
+
+  if (
+    report.runtime.name === 'Pro_V1' &&
+    ['unresponsive', 'stopped'].includes(report.runtime.health)
+  ) {
+    const issue = report.issues.find(({ id }) => id === 'pro-runtime-failed')
+    if (issue) {
+      report.issues = report.issues.filter((item) => item !== issue)
+      add('pro', issue.detail, 'Pro health check failed.')
+    }
+  }
+
+  if (
+    addonIssues.some(({ data }) => data.repair === 'python') &&
+    !(await canRestoreMissingPython(pythonDirectory))
+  ) {
+    for (const issue of addonIssues.filter(({ data }) => data.repair === 'python')) {
+      issue.data.repair = undefined
+      issue.repairable = false
+    }
+  }
+  return {
+    ...report,
+    healthy: report.healthy && addonIssues.length === 0,
+    fingerprint: `${report.fingerprint}|${addonIssues.map(({ id, data }) => `${id}:${data.packageName ?? ''}`).join('|')}`,
+    issues: [...addonIssues, ...report.issues]
+  }
+}
+
+let startupDiagnosticTimer: ReturnType<typeof setTimeout> | undefined
+let lastStartupDiagnosticFingerprint = ''
+const scheduleStartupDiagnostic = (): void => {
+  if (isQuiting || startupRepairInProgress || startupDiagnosticTimer) return
+  startupDiagnosticTimer = setTimeout(() => {
+    startupDiagnosticTimer = undefined
+    if (startupRepairInProgress) return
+    void diagnoseLocalStartup('service-startup')
+      .then((report) => {
+        if (startupRepairInProgress) return
+        if (!report.issues.some(({ id }) => id.startsWith('service-startup:'))) {
+          lastStartupDiagnosticFingerprint = ''
+          return
+        }
+        if (lastStartupDiagnosticFingerprint !== report.fingerprint) {
+          lastStartupDiagnosticFingerprint = report.fingerprint
+          sendToRenderer('llamacpp:diagnostic-alert', report)
+        }
+      })
+      .catch((error) => log.warn('Service startup diagnostics failed:', error))
+  }, 500)
+}
+
+const markWebUIReadyTimeout = (): void => {
+  SERVER_STATUS = 'failed'
+  sendToRenderer('status:server', SERVER_STATUS)
+  updateWebUIStartupState('failed', 'The WebUI service did not become ready in time.')
+  scheduleStartupDiagnostic()
+}
+
+const waitForWebUIAfterRepair = async (): Promise<void> => {
+  const deadline = Date.now() + WEBUI_DIAGNOSTIC_WAIT_MS
+  while (
+    SERVER_PID &&
+    !SERVER_REACHABLE &&
+    WEBUI_STARTUP_STATE.phase !== 'failed' &&
+    Date.now() < deadline
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+  if (SERVER_REACHABLE) return
+  if (SERVER_PID && WEBUI_STARTUP_STATE.phase !== 'failed') markWebUIReadyTimeout()
+  throw new Error('WebUI did not become ready after repair. Check the diagnostic result.')
+}
+
+const repairLocalStartup = async (
+  report: LlamaDiagnosticReport,
+  issueIds: string[],
+  onStatus: (status: string) => void
+): Promise<{
+  actions: string[]
+  errors: string[]
+  repairIssue?: ReturnType<typeof makeStartupIssue>
+}> => {
+  const selected = report.issues.filter(
+    ({ id, repairable }) => id.startsWith('service-startup:') && repairable && issueIds.includes(id)
+  ) as ReturnType<typeof makeStartupIssue>[]
+  const actions: string[] = []
+  const errors: string[] = []
+  let repairIssue: ReturnType<typeof makeStartupIssue> | undefined
+  if (!selected.length) return { actions, errors }
+  const pythonIssues = selected.filter(({ data }) => ['webui', 'sherpa'].includes(data.service))
+  const mutations = pythonIssues.filter(({ data }) => data.repair !== 'restart')
+  const webWasRunning = SERVER_REACHABLE || (SERVER_STATUS === 'started' && SERVER_PID !== null)
+  const previousWebURL = SERVER_URL
+  const previousWebPort =
+    webWasRunning && previousWebURL ? Number(new URL(previousWebURL).port) : undefined
+  const sherpaWasRunning = validateSherpaProcess() && getSherpaServiceState().status === 'started'
+  const restartWebUI = webWasRunning || pythonIssues.some(({ data }) => data.service === 'webui')
+  const restartSherpa =
+    sherpaWasRunning || pythonIssues.some(({ data }) => data.service === 'sherpa')
+  if (pythonIssues.length) {
+    let webStopped = false
+    let sherpaStopped = false
+    let canRestartSelected = true
+    let repairService = mutations[0]?.data.service
+    try {
+      if (isSherpaStarting()) throw new Error('Wait for Sherpa setup to finish.')
+      if (mutations.length || pythonIssues.some(({ data }) => data.service === 'webui')) {
+        if (serverStartPending) throw new Error('Wait for the current WebUI setup to finish.')
+        onStatus('Stopping the managed Python services before repair...')
+        if (!(await stopServerHandler(true)) || getServerPIDs().length)
+          throw new Error('The WebUI process is still using Python files.')
+        webStopped = true
+      }
+      if (mutations.length || pythonIssues.some(({ data }) => data.service === 'sherpa')) {
+        await stopSherpa(true)
+        sherpaStopped = true
+      }
+      const config = await getConfig()
+      const pythonDirectory = join(getInstallDir(), 'python')
+      if (mutations.length && !existsSync(getPythonPath(pythonDirectory))) {
+        if (!(await canRestoreMissingPython(pythonDirectory)))
+          throw new Error(
+            'Existing Python installation is incomplete. Do not overwrite it automatically.'
+          )
+        if (!(await installPython(pythonDirectory, onStatus, { preserveExisting: true })))
+          throw new Error('Python installation failed.')
+        actions.push('Installed the bundled Python runtime')
+      }
+      if (mutations.length && !isUvInstalled()) {
+        await repairStartupPythonPackage('uv', onStatus)
+        actions.push('Repaired the Python package installer')
+      }
+      // Deduplicate common dependencies when both services fail at the same import.
+      const repaired = new Set<string>()
+      const patchDependency = async (
+        dependency: NonNullable<(typeof selected)[number]['data']['dependency']>
+      ) => {
+        const dependencyPackage = startupPackage(dependency)
+        if (repaired.has(dependencyPackage) || repaired.size >= 5) return false
+        repaired.add(dependencyPackage)
+        onStatus(`Repairing Python dependency ${dependencyPackage}...`)
+        const spec = dependencySpec(
+          dependency,
+          (await getExactPackageVersions([dependencyPackage]))[dependencyPackage]
+        )
+        await repairStartupPythonPackage(spec, onStatus)
+        actions.push(`Repaired Python dependency ${spec}`)
+        return true
+      }
+      const speechMutations = mutations.filter(({ data }) => data.service === 'sherpa')
+      const speechBootstrap =
+        speechMutations.some(({ data }) => data.repair === 'python') ||
+        (speechMutations.some(({ data }) => data.dependency === 'sherpa_onnx') &&
+          !(await getExactPackageVersions(['sherpa-onnx']))['sherpa-onnx'])
+      if (speechBootstrap) {
+        repairService = 'sherpa'
+        await ensureSherpaStartupDependencies(config.sherpa ?? {}, onStatus)
+      }
+      for (const { data } of mutations) {
+        repairService = data.service
+        if (
+          data.repair === 'dependencies' &&
+          data.dependency &&
+          !(speechBootstrap && data.service === 'sherpa' && data.dependency === 'sherpa_onnx')
+        ) {
+          await patchDependency(data.dependency)
+          if (data.dependency === 'sherpa_onnx') await patchDependency('sherpa_onnx_core')
+        }
+        if (data.repair === 'package' || (data.repair === 'python' && data.service === 'webui')) {
+          const target = resolveOpenWebUITargetVersion(config.localServer?.version)
+          const name = getOpenWebUIPackageNameForVersion(target)
+          const installed = (await getExactPackageVersions([name]))[name]
+          if (installed && /^\d+\.\d+\.\d+$/.test(installed))
+            await repairStartupPythonPackage(`${name}==${installed}`, onStatus)
+          else await ensureOpenWebUIPackage(target, onStatus)
+          actions.push('Repaired the local WebUI installation')
+        }
+      }
+      if (speechMutations.length) {
+        repairService = 'sherpa'
+        for (;;) {
+          try {
+            await checkSherpaStartupImports()
+            break
+          } catch (error) {
+            const failure = classifyStartupFailure(getErrorMessage(error))
+            if (
+              failure.repair !== 'dependencies' ||
+              !failure.dependency ||
+              !(await patchDependency(failure.dependency))
+            )
+              throw error
+          }
+        }
+      }
+    } catch (error) {
+      canRestartSelected = false
+      const message = getErrorMessage(error)
+      errors.push(lastStartupEvidence(message))
+      const failure = classifyStartupFailure(message)
+      // The installer can fail for a different reason than the service originally did.
+      if (repairService && failure.kind !== 'unknown') {
+        repairIssue = makeStartupIssue(repairService, { ...failure, repair: undefined }, message)
+      }
+    }
+    if (sherpaStopped && restartSherpa && (canRestartSelected || sherpaWasRunning)) {
+      try {
+        onStatus('Starting and checking Sherpa...')
+        const config = await getConfig()
+        sendToRenderer('status:sherpa', 'starting')
+        const result = await startSherpa(config.sherpa?.port ?? null, onStatus, undefined, {
+          installedOnly: true
+        })
+        sendToRenderer('status:sherpa', 'started')
+        sendToRenderer('sherpa:ready', toIpcSafeValue(result))
+        if (result.url) sendToRenderer('audio:sherpa', { action: 'add', url: `${result.url}/v1` })
+        actions.push('Sherpa is responding')
+      } catch (error) {
+        sendToRenderer('status:sherpa', 'failed')
+        errors.push(getErrorMessage(error))
+      }
+    }
+    if (webStopped && restartWebUI && (canRestartSelected || webWasRunning)) {
+      try {
+        onStatus('Starting and checking WebUI...')
+        if (!(await startServerHandler(true, previousWebPort)))
+          throw new Error('WebUI failed to start.')
+        await waitForWebUIAfterRepair()
+        actions.push('WebUI is responding')
+        const config = await getConfig()
+        if (
+          (SERVER_URL !== previousWebURL ||
+            pythonIssues.some(({ data }) => data.service === 'webui')) &&
+          config.defaultConnectionId === 'local' &&
+          SERVER_URL
+        )
+          sendToRenderer('connection:open', { url: SERVER_URL, connectionId: 'local' })
+      } catch (error) {
+        errors.push(getErrorMessage(error))
+      }
+    }
+  }
+  for (const service of ['agent', 'pro'] as const) {
+    if (!selected.some(({ data }) => data.service === service)) continue
+    try {
+      if (service === 'agent') {
+        onStatus('Starting and checking Agent...')
+        const result = await startOpenCode((await getConfig()).openCode?.port ?? null, onStatus)
+        agentStartupError = ''
+        sendToRenderer('status:opencode', 'started')
+        sendToRenderer('opencode:ready', result)
+        actions.push('Agent runtime verified')
+      } else {
+        if (inferenceCoordinator.current === 'standard')
+          throw new Error(
+            'The standard inference runtime is active. Select Pro before repairing it.'
+          )
+        onStatus('Restarting the Pro runtime...')
+        await stopStrata()
+        await startStrata()
+        actions.push('Pro runtime is responding')
+      }
+    } catch (error) {
+      if (service === 'agent') {
+        agentStartupError = getErrorMessage(error)
+        sendToRenderer('status:opencode', 'failed')
+      }
+      errors.push(getErrorMessage(error))
+    }
+  }
+  return { actions, errors, repairIssue }
 }
 
 const reloadLlamaCppModelsAfterDownload = async (filepath: string | null | undefined) => {
@@ -2201,7 +2598,12 @@ const startConfiguredServices = async (defaultConnection?: Connection): Promise<
     }
   }
 
-  if (!isQuiting && CONFIG?.openCode?.enabled && isOpenCodeInstalled()) {
+  if (
+    !isQuiting &&
+    !startupRepairInProgress &&
+    CONFIG?.openCode?.enabled &&
+    isOpenCodeInstalled()
+  ) {
     startupTasks.push(
       (async () => {
         try {
@@ -2209,23 +2611,27 @@ const startConfiguredServices = async (defaultConnection?: Connection): Promise<
           const result = await startOpenCode(CONFIG?.openCode?.port ?? null, (message) => {
             sendToRenderer('status:opencode-setup', message)
           })
+          agentStartupError = ''
           sendToRenderer('status:opencode', 'started')
           sendToRenderer('status:opencode-setup', '')
           sendToRenderer('opencode:ready', result)
         } catch (error) {
+          agentStartupError = getErrorMessage(error)
           log.error('Auto-start Agent failed:', error)
           sendToRenderer('status:opencode', 'failed')
           sendToRenderer('status:opencode-setup', getErrorMessage(error))
+          scheduleStartupDiagnostic()
         }
       })()
     )
   }
 
-  if (!isQuiting && CONFIG?.inferenceRuntime === 'pro') {
+  if (!isQuiting && !startupRepairInProgress && CONFIG?.inferenceRuntime === 'pro') {
     startupTasks.push(
       startStrata().catch((error) => {
         log.error('Auto-start Pro failed:', error)
         sendToRenderer('error', { message: `Pro_V1: ${getErrorMessage(error)}` })
+        scheduleStartupDiagnostic()
       })
     )
   }
@@ -2261,7 +2667,12 @@ const startConfiguredServices = async (defaultConnection?: Connection): Promise<
     )
   }
 
-  if (!isQuiting && CONFIG?.sherpa?.enabled) {
+  if (
+    !isQuiting &&
+    !startupRepairInProgress &&
+    CONFIG?.sherpa?.enabled &&
+    !validateSherpaProcess()
+  ) {
     startupTasks.push(
       (async () => {
         try {
@@ -2281,6 +2692,7 @@ const startConfiguredServices = async (defaultConnection?: Connection): Promise<
         } catch (error) {
           log.error('Auto-start sherpa failed:', error)
           sendToRenderer('status:sherpa', 'failed')
+          scheduleStartupDiagnostic()
         }
       })()
     )
@@ -2690,25 +3102,28 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     })
 
     // Python/uv
-    ipcMain.handle('install:python', async () => {
-      try {
-        log.info('Starting Python installation...')
-        sendToRenderer('status:install', 'Downloading Python…')
-        const res = await installPython(undefined, (status: string) => {
-          sendToRenderer('status:install', status)
-        })
-        sendToRenderer('status:python', res)
-        return res
-      } catch (error: unknown) {
-        log.error('Python installation IPC handler error:', error)
-        sendToRenderer('status:python', false)
-        // Re-throw so the renderer's promise rejects with the actual error message
-        throw new Error(
-          getErrorMessage(error) ||
-            'Python installation failed. Please check your internet connection and try again.'
-        )
-      }
-    })
+    ipcMain.handle(
+      'install:python',
+      existingSpeechOperation(async () => {
+        try {
+          log.info('Starting Python installation...')
+          sendToRenderer('status:install', 'Downloading Python…')
+          const res = await installPython(undefined, (status: string) => {
+            sendToRenderer('status:install', status)
+          })
+          sendToRenderer('status:python', res)
+          return res
+        } catch (error: unknown) {
+          log.error('Python installation IPC handler error:', error)
+          sendToRenderer('status:python', false)
+          // Re-throw so the renderer's promise rejects with the actual error message
+          throw new Error(
+            getErrorMessage(error) ||
+              'Python installation failed. Please check your internet connection and try again.'
+          )
+        }
+      })
+    )
 
     ipcMain.handle('status:python', async () => {
       return (await isPythonInstalled()) && (await isUvInstalled())
@@ -2792,13 +3207,19 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
 
     // Server
     ipcMain.handle('server:start', () => startServerHandler())
-    ipcMain.handle('server:stop', () => stopServerHandler())
+    ipcMain.handle('server:stop', () => (startupRepairInProgress ? false : stopServerHandler()))
     ipcMain.handle('server:restart', async () => {
+      if (startupRepairInProgress) return false
       await stopServerHandler()
       return startServerHandler()
     })
-    ipcMain.handle('server:logs', () => (SERVER_PID ? getServerLog(SERVER_PID) : []))
-    ipcMain.handle('server:logs:clear', () => clearAllServerLogs())
+    ipcMain.handle('server:logs', () =>
+      SERVER_PID ? getServerLog(SERVER_PID) : webUIStartupEvidence ? [webUIStartupEvidence] : []
+    )
+    ipcMain.handle('server:logs:clear', () => {
+      webUIStartupEvidence = ''
+      clearAllServerLogs()
+    })
     ipcMain.handle('security:installLocalCertificate', async () => {
       const certificatePath = join(getUserDataPath(), 'certs', 'aurapro-lan.cert.pem')
       const result = await installLocalCertificate(certificatePath)
@@ -2815,6 +3236,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     ipcMain.handle('pty:connect', (_event, pid?: number) => connectPtyPort(pid))
     ipcMain.handle('server:info', getServerInfoSnapshot)
     ipcMain.handle('server:share-local', async () => {
+      if (startupRepairInProgress) throw new Error('A repair is already running.')
       const config = await getConfig()
       const port = config.localServer?.port ?? 8081
       const needsLanRestart = config.localServer?.serveOnLocalNetwork !== true
@@ -2958,7 +3380,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     })
 
     // Misc
-    ipcMain.handle('app:reset', () => resetAppHandler())
+    ipcMain.handle('app:reset', () => (startupRepairInProgress ? false : resetAppHandler()))
 
     // Spotlight
     ipcMain.handle('spotlight:submit', async (_event, query: string, images?: string[]) => {
@@ -3434,11 +3856,13 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     })
 
     ipcMain.handle('opencode:start', async () => {
+      if (startupRepairInProgress) throw new Error('A repair is already running.')
       try {
         sendToRenderer('status:opencode', 'starting')
         const result = await startOpenCode(CONFIG?.openCode?.port ?? null, (message) => {
           sendToRenderer('status:opencode-setup', message)
         })
+        agentStartupError = ''
         const resultPort = Number(new URL(result.url).port)
         await setConfig({
           openCode: { ...CONFIG?.openCode, enabled: true, port: resultPort }
@@ -3450,15 +3874,18 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
         return result
       } catch (error) {
         const message = getErrorMessage(error)
+        agentStartupError = message
         log.error('Failed to start Agent:', error)
         sendToRenderer('status:opencode', 'failed')
         sendToRenderer('status:opencode-setup', message)
+        scheduleStartupDiagnostic()
         throw new Error(message)
       }
     })
 
     ipcMain.handle('opencode:stop', async () => {
       await stopOpenCode()
+      agentStartupError = ''
       await setConfig({ openCode: { ...CONFIG?.openCode, enabled: false } })
       CONFIG = await getConfig()
       sendToRenderer('status:opencode', 'stopped')
@@ -3595,31 +4022,68 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     ipcMain.handle('llamacpp:logs', () => getLlamaCppLog())
     ipcMain.handle('llamacpp:pty:connect', () => connectLlamaCppPtyPort())
     ipcMain.handle('llamacpp:diagnose', async () => {
-      const report = await diagnoseLlamaCpp('manual')
+      const report = await diagnoseLocalStartup()
       sendToRenderer('llamacpp:diagnostic-report', report)
       return report
     })
     ipcMain.handle('llamacpp:repair', async (_event, issueIds?: string[]) => {
+      if (
+        startupRepairInProgress ||
+        speechRepairInProgress ||
+        speechOperations ||
+        glossarySpeechDownloadPending ||
+        isSherpaStarting()
+      )
+        throw new Error('Another installation or repair is in progress.')
+      startupRepairInProgress = true
       try {
-        sendToRenderer('llamacpp:repair-progress', 'Preparing repair...')
-        const result = await repairLlamaCpp(
-          Array.isArray(issueIds) ? issueIds.filter((value) => typeof value === 'string') : [],
-          (status) => sendToRenderer('llamacpp:repair-progress', status)
+        const onStatus = (status: string) => sendToRenderer('llamacpp:repair-progress', status)
+        onStatus('Preparing repair...')
+        const current = await diagnoseLocalStartup()
+        const requested = Array.isArray(issueIds) ? new Set(issueIds) : new Set()
+        const selected = current.issues.filter(
+          (issue) => issue.repairable && requested.has(issue.id)
         )
-        const info = getLlamaCppInfo()
-        if (info.status === 'started' && info.url) {
-          sendToRenderer('status:llamacpp', 'started')
-          sendToRenderer('llamacpp:ready', info)
-          updateLlamaCppStartupState('ready')
-          sendToRenderer('connections:openai', {
-            action: 'add',
-            url: `${info.url}/v1`
-          })
-          setTimeout(() => sendToRenderer('models:refresh'), 1000)
-        } else {
-          sendToRenderer('status:llamacpp', 'failed')
-          updateLlamaCppStartupState('failed', 'The repair did not start llama.cpp.')
+        const runtimeIds = selected
+          .filter(({ id }) => !id.startsWith('service-startup:'))
+          .map(({ id }) => id)
+        const services = await repairLocalStartup(
+          current,
+          selected.map(({ id }) => id),
+          onStatus
+        )
+        if (runtimeIds.length) {
+          const runtime = await repairLlamaCpp(runtimeIds, onStatus)
+          services.actions.push(...runtime.actions)
+          if (runtime.restartError) services.errors.push(runtime.restartError)
+          const info = getLlamaCppInfo()
+          if (info.status === 'started' && info.url) {
+            sendToRenderer('status:llamacpp', 'started')
+            sendToRenderer('llamacpp:ready', info)
+            updateLlamaCppStartupState('ready')
+            sendToRenderer('connections:openai', { action: 'add', url: `${info.url}/v1` })
+            setTimeout(() => sendToRenderer('models:refresh'), 1000)
+          } else {
+            sendToRenderer('status:llamacpp', 'failed')
+            updateLlamaCppStartupState('failed', 'The repair did not start llama.cpp.')
+          }
         }
+        onStatus('Checking repair results...')
+        const report = await diagnoseLocalStartup()
+        if (
+          services.repairIssue &&
+          !report.issues.some(({ id }) => id === services.repairIssue?.id)
+        ) {
+          report.issues.unshift(services.repairIssue)
+          report.healthy = false
+        }
+        const result = {
+          actions: services.actions,
+          restartError: services.errors.join('\n') || null,
+          report
+        }
+        if (!result.report.issues.some(({ id }) => id.startsWith('service-startup:')))
+          lastStartupDiagnosticFingerprint = ''
         CONFIG = await getConfig()
         sendToRenderer('config:updated', CONFIG)
         lastAutomaticLlamaDiagnosticFingerprint = result.report.healthy
@@ -3631,7 +4095,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
         return safeResult
       } catch (error) {
         const message = getErrorMessage(error)
-        log.error('Failed to repair llama.cpp:', error)
+        log.error('Desktop diagnostic repair failed:', error)
         try {
           CONFIG = await getConfig()
           sendToRenderer('config:updated', CONFIG)
@@ -3639,9 +4103,10 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
           log.warn('Failed to refresh config after llama.cpp repair error:', configError)
         }
         sendToRenderer('llamacpp:repair-progress', '')
-        updateLlamaCppStartupState('failed', message)
         sendToRenderer('llamacpp:repair-failed', { message })
         throw new Error(message)
+      } finally {
+        startupRepairInProgress = false
       }
     })
 
@@ -3760,6 +4225,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
           log.error('Failed to start sherpa:', error)
           sendToRenderer('status:sherpa', 'failed')
           sendToRenderer('error', { message: `sherpa failed: ${message}` })
+          scheduleStartupDiagnostic()
           throw new Error(message)
         }
       })
@@ -3855,7 +4321,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     )
 
     ipcMain.handle('sherpa:reinit-server-script', () => {
-      if (speechRepairInProgress) return false
+      if (speechRepairInProgress || startupRepairInProgress) return false
       try {
         reinitSherpaServerScript()
         return true
@@ -3976,7 +4442,8 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
       getPackageVersion(packageName)
     )
     ipcMain.handle('package:uninstall', async (_event, packageName: string) => {
-      if (speechRepairInProgress && packageName === 'sherpa-onnx') return false
+      if (startupRepairInProgress || (speechRepairInProgress && packageName === 'sherpa-onnx'))
+        return false
       return uninstallPackage(packageName)
     })
     ipcMain.handle('app:systemInfo', (_event, options?: { includeDedicatedVram?: boolean }) =>

@@ -93,14 +93,14 @@ const setup = ({
 }
 
 test('the default WebUI package changes without raising the minimum or overriding version pins', () => {
-  assert.equal(resolveTarget(), '3.10.13')
-  assert.equal(resolveTarget('  '), '3.10.13')
+  assert.equal(resolveTarget(), '3.10.14')
+  assert.equal(resolveTarget('  '), '3.10.14')
   assert.equal(resolveTarget('3.10.11'), '3.10.11')
   assert.equal(resolveTarget('3.10.8'), '3.10.8')
   assert.equal(resolveTarget('3.6.0'), '3.6.0')
   assert.equal(resolveTarget('  v3.10.12  '), '3.10.12')
   assert.equal(resolveTarget('LATEST'), 'latest')
-  assert.equal(resolveTarget('v3.9.16'), '3.10.13')
+  assert.equal(resolveTarget('v3.9.16'), '3.10.14')
   assert.throws(() => resolveTarget('3.5.9'), /not supported/)
   assert.throws(() => resolveTarget('invalid'), /not supported/)
 })

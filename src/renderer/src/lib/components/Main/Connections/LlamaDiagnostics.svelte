@@ -1,10 +1,14 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, untrack } from 'svelte'
   import { fade, fly } from 'svelte/transition'
   import i18n from '../../../i18n'
   import SpeechRepairDialog from './SpeechRepairDialog.svelte'
+  import { startupDiagnosticCopy } from './startup-diagnostic-copy'
 
-  let { getSpeechRepairGuestId }: { getSpeechRepairGuestId: () => number } = $props()
+  let {
+    getSpeechRepairGuestId,
+    diagnosticAlert
+  }: { getSpeechRepairGuestId: () => number; diagnosticAlert: unknown } = $props()
   let speechRepairOpen = $state(false)
   let speechRepairRunning = $state(false)
 
@@ -110,6 +114,9 @@
   const errorCount = $derived(
     report?.issues.filter((issue) => issue.severity === 'error').length ?? 0
   )
+  const hasStartupIssues = $derived(
+    report?.issues.some(({ id }) => id.startsWith('service-startup:')) ?? false
+  )
   const formatMemory = (bytes: number): string => `${(bytes / 1024 ** 3).toFixed(1)} GB`
 
   const serviceHealthText = (health: string): string => {
@@ -142,8 +149,19 @@
   }
 
   const baseIssueId = (id: string): string => id.split(':')[0]
+  const startupCopy = (issue: DiagnosticIssue) => {
+    const kind = String(issue.data?.kind)
+    const key = kind === 'locked' && issue.repairable ? 'locked-repair' : kind
+    return (startupDiagnosticCopy[key] ?? startupDiagnosticCopy.unknown)[isChinese ? 0 : 1]
+  }
+  const startupServiceLabel = (issue: DiagnosticIssue): string =>
+    ({ webui: 'WebUI', sherpa: 'Sherpa', agent: 'Agent', pro: 'Pro_V1' })[
+      String(issue.data?.service)
+    ] ?? ''
 
   const localizedIssueTitle = (issue: DiagnosticIssue): string => {
+    if (baseIssueId(issue.id) === 'service-startup')
+      return `${startupServiceLabel(issue)} · ${startupCopy(issue)[0]}`
     if (issue.id === 'windows-app-control-blocked') return $i18n.t('diagnostics.appControl.title')
     if (!isChinese) return issue.title
     const titles: Record<string, string> = {
@@ -180,6 +198,7 @@
   }
 
   const localizedIssueDetail = (issue: DiagnosticIssue): string => {
+    if (baseIssueId(issue.id) === 'service-startup') return startupCopy(issue)[1]
     if (issue.id === 'windows-app-control-blocked') return $i18n.t('diagnostics.appControl.detail')
     if (!isChinese) return issue.detail
     const details: Record<string, string> = {
@@ -261,12 +280,13 @@
     }
   }
 
+  $effect(() => {
+    const nextReport = diagnosticAlert as DiagnosticReport | undefined
+    if (nextReport) untrack(() => acceptAutomaticReport(nextReport))
+  })
+
   onMount(() => {
     return window.electronAPI.onData((message: RendererMessage) => {
-      if (message.type === 'llamacpp:diagnostic-alert') {
-        acceptAutomaticReport(message.data as DiagnosticReport)
-        return
-      }
       if (message.type === 'llamacpp:diagnostic-report') {
         const nextReport = message.data as DiagnosticReport
         setReport(nextReport)
@@ -365,13 +385,20 @@
       <div class="flex items-start justify-between gap-3">
         <div class="min-w-0">
           <div class="text-[13px] font-semibold text-[#1d1d1f] dark:text-[#fafafa]">
-            {text('本地推理运行异常', 'Local inference needs attention')}
+            {hasStartupIssues
+              ? text('本机服务启动异常', 'Local services need attention')
+              : text('本地推理运行异常', 'Local inference needs attention')}
           </div>
           <div class="mt-1 text-[12px] leading-5 text-black/50 dark:text-white/50">
-            {text(
-              `检测到 ${errorCount} 个可能导致本地模型无法加载或推理失败的问题。`,
-              `${errorCount} issue${errorCount === 1 ? '' : 's'} may prevent local models from loading or running.`
-            )}
+            {hasStartupIssues
+              ? text(
+                  '打开诊断查看未能启动的组件、错误原因和修复方式。',
+                  'Open diagnostics for the affected services, causes, and available fixes.'
+                )
+              : text(
+                  `检测到 ${errorCount} 个可能导致本地模型无法加载或推理失败的问题。`,
+                  `${errorCount} issue${errorCount === 1 ? '' : 's'} may prevent local models from loading or running.`
+                )}
           </div>
         </div>
         <button
@@ -579,8 +606,8 @@
           {#if report.issues.length === 0}
             <div class="px-4 py-8 text-center text-[12px] text-black/35 dark:text-white/35">
               {text(
-                '运行库、加速后端、模型及附加模型检查均已通过。',
-                'Runtime, accelerator, model, and companion-model checks passed.'
+                '未发现需要处理的本机服务或推理问题。',
+                'No local service or inference issues require action.'
               )}
             </div>
           {:else}
@@ -642,6 +669,20 @@
                     <div class="mt-1 text-[11px] leading-[1.55] text-black/45 dark:text-white/45">
                       {localizedIssueDetail(issue)}
                     </div>
+                    {#if issue.data?.packageName}
+                      <div class="mt-1 break-all font-mono text-[11px]">
+                        {String(issue.data.packageName)}
+                      </div>
+                    {/if}
+                    {#if issue.data?.evidence}
+                      <details class="mt-1.5 text-[11px]">
+                        <summary>{text('错误详情', 'Error details')}</summary>
+                        <pre
+                          class="mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-all opacity-75">{String(
+                            issue.data.evidence
+                          )}</pre>
+                      </details>
+                    {/if}
                     {#if issue.data?.manualDriverUpdate}
                       <button
                         type="button"
@@ -702,6 +743,14 @@
         <div class="mb-2.5 text-[11px] text-black/45 dark:text-white/45">
           {repairProgress || text('正在修复...', 'Repairing...')}
         </div>
+      {/if}
+      {#if !repairing && report?.issues.some(({ id, data }) => isIssueSelected(id) && ['dependencies', 'python', 'installer', 'package'].includes(String(data?.repair)) && ['webui', 'sherpa'].includes(String(data?.service)))}
+        <p class="mb-2 text-[11px] leading-relaxed text-black/55 dark:text-white/55">
+          {text(
+            '修复依赖时会暂时停止本机 WebUI 和 Sherpa；请先结束进行中的对话或录音。',
+            'Dependency repair briefly stops local WebUI and Sherpa. Finish active chats or recordings before continuing.'
+          )}
+        </p>
       {/if}
       <div class="flex items-center justify-between gap-2">
         <button

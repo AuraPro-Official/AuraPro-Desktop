@@ -91,11 +91,12 @@ const startup = (getStatus, failNotify = false) => {
     SERVER_URL: null,
     SERVER_PID: null,
     SERVER_REACHABLE: false,
+    webUIStartupEvidence: '',
     glossaryStartupReminder: new GlossaryStartupReminder(),
     getConfig: async () => config,
     setConfig: async () => {},
     getOfficialGlossaryStatus: getStatus,
-    stopServerHandler: async () => {},
+    stopServerHandler: async () => true,
     updateWebUIStartupState: () => {},
     sendToRenderer: (type, data) => {
       if (failNotify && type === 'official-glossaries:startup-prompt') {
@@ -108,9 +109,12 @@ const startup = (getStatus, failNotify = false) => {
       return { url: 'http://localhost:8081', pid: 12345 }
     },
     getServerPty: () => null,
+    getServerPIDs: () => [12345],
     connectPtyPort: () => {},
     updateTray: () => {},
     checkUrlAndOpen: () => {},
+    markWebUIReadyTimeout: () => {},
+    scheduleStartupDiagnostic: () => {},
     getErrorMessage: (error) => error.message,
     log: { info: () => {}, warn: (...args) => warnings.push(args), error: assert.fail }
   })
