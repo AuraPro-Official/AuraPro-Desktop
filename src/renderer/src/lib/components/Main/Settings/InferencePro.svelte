@@ -294,8 +294,7 @@
               const selected = $state.snapshot(settings)
               if (info?.upgradeRequired) await window.electronAPI.installStrata(false, selected)
               await window.electronAPI.prepareStrataModel(selected)
-            })}
-          >{t('prepare')}</button
+            })}>{t('prepare')}</button
         >
       </div>
     </fieldset>

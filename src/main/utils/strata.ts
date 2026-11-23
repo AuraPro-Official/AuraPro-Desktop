@@ -556,7 +556,11 @@ async function installControl(
   setProgress('extracting')
   // Only extract the archive after verifying its official release digest.
   if (process.platform === 'win32') {
-    const systemTar = path.win32.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+    const systemTar = path.win32.join(
+      process.env.SystemRoot || 'C:\\Windows',
+      'System32',
+      'tar.exe'
+    )
     await promisify(execFile)(systemTar, ['-xf', archive, '-C', dir], { windowsHide: true, signal })
   } else {
     await tar.x({ file: archive, cwd: dir })
@@ -788,7 +792,8 @@ export async function installStrata(
               for (const key of ['exe', 'cpu_exe']) {
                 if (typeof vision[key] === 'string') {
                   const name = path.basename(vision[key] as string)
-                  if (/^strata-vision(?:-hip)?(?:\.exe)?$/.test(name)) vision[key] = `component:${name}`
+                  if (/^strata-vision(?:-hip)?(?:\.exe)?$/.test(name))
+                    vision[key] = `component:${name}`
                   else delete vision[key]
                 }
               }
@@ -1178,7 +1183,10 @@ async function startWithUpdates(): Promise<void> {
     append(`[Pro] Restoring the previous runtime: ${String(err)}\n`)
     writeJson(path.join(root(), 'settings.json'), settings)
     writeJson(path.join(root(), 'installed.json'), runtime)
-    if (staged.source !== runtime.source && /^engine-\d+\.\d+\.\d+-[a-f0-9]{8}$/.test(staged.source)) {
+    if (
+      staged.source !== runtime.source &&
+      /^engine-\d+\.\d+\.\d+-[a-f0-9]{8}$/.test(staged.source)
+    ) {
       void removeProPath(sourceDir(staged.source)).catch((cleanupError) => {
         append(`[Pro] Could not remove the failed update: ${String(cleanupError)}\n`)
       })
@@ -1196,7 +1204,7 @@ async function startWithUpdates(): Promise<void> {
     return
   }
   if (staged?.rollback) {
-    const { rollback, ...confirmed } = staged
+    const { rollback: _rollback, ...confirmed } = staged
     try {
       writeJson(path.join(root(), 'installed.json'), confirmed)
       fs.rmSync(path.join(root(), 'failed-update.json'), { force: true })

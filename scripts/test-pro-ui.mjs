@@ -322,7 +322,9 @@ try {
       assert.equal(await page.getByText(/^Pro_V1 · /).count(), STRATA_MODELS.length)
       await page.getByText(`Pro_V1 · ${defaultModel.name}`, { exact: true }).click()
       await page
-        .getByText(`${platform === 'mac' ? 'llama.cpp' : 'AuraPro-Engine'} · 18882`, { exact: true })
+        .getByText(`${platform === 'mac' ? 'llama.cpp' : 'AuraPro-Engine'} · 18882`, {
+          exact: true
+        })
         .waitFor()
       await page.screenshot({
         path: path.join(screenshots, `get-started-${platform}.png`),

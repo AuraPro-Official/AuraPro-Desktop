@@ -141,9 +141,15 @@ function fixture({
                   'data',
                   Buffer.from(
                     'AURAPRO_RESULT:' +
-                      JSON.stringify(args.includes('select')
-                        ? { name: nativeAsset, sha256: state.wrongNativePin ? '0'.repeat(64) : digest, size: archive.length }
-                        : { version: '0.1.66', backend: 'cuda' }) +
+                      JSON.stringify(
+                        args.includes('select')
+                          ? {
+                              name: nativeAsset,
+                              sha256: state.wrongNativePin ? '0'.repeat(64) : digest,
+                              size: archive.length
+                            }
+                          : { version: '0.1.66', backend: 'cuda' }
+                      ) +
                       '\n'
                   )
                 )
@@ -167,7 +173,10 @@ function fixture({
           server.emit('exit', 1)
           return new Response(null, { status: 503 })
         }
-        return Response.json({ service: server.managed ? 'aurapro-engine' : 'strata', loaded: true })
+        return Response.json({
+          service: server.managed ? 'aurapro-engine' : 'strata',
+          loaded: true
+        })
       }
       if (url.startsWith('https://api.github.com/')) {
         if (state.offline) throw new Error('offline')
@@ -218,7 +227,11 @@ test('Control verifies downloads, migrates configs and starts offline without pr
     assert.equal(info.installed.productVersion, models.AURAPRO_ENGINE_RELEASE)
     assert.equal(info.upgradeRequired, false)
     assert.equal(f.calls.filter(([type]) => type === 'fetch').length, 3)
-    assert.ok(f.calls.filter(([type]) => type === 'fetch').every(([, url]) => url.includes(models.AURAPRO_ENGINE_REPO)))
+    assert.ok(
+      f.calls
+        .filter(([type]) => type === 'fetch')
+        .every(([, url]) => url.includes(models.AURAPRO_ENGINE_REPO))
+    )
     assert.equal(info.settings.model, f.oldModel)
     assert.equal(info.legacyModels[0].id, f.oldModel)
     const migrated = JSON.parse(
@@ -240,8 +253,13 @@ test('Control verifies downloads, migrates configs and starts offline without pr
       ['http://127.0.0.1:18882/health']
     )
     const launch = startup.find(([type]) => type === 'spawn')
-    assert.deepEqual(Array.from(launch[2].slice(0, 5)),
-      ['-B', '-E', '-s', path.join(launch[3].cwd, 'desktop_runtime.py'), 'serve'])
+    assert.deepEqual(Array.from(launch[2].slice(0, 5)), [
+      '-B',
+      '-E',
+      '-s',
+      path.join(launch[3].cwd, 'desktop_runtime.py'),
+      'serve'
+    ])
     assert.ok(launch[2].includes('--offline'))
     assert.equal(launch[3].env.STRATA_NO_ACQUIRE, '1')
     assert.equal(launch[3].env.STRATA_REQUIRE_SIGNED_COMPONENTS, '1')
@@ -340,7 +358,10 @@ test('a recent failed migration skips its payload, but manual update still retri
   try {
     await f.exports.startStrata()
     assert.deepEqual(JSON.parse(fs.readFileSync(f.installedFile)), f.oldInstalled)
-    assert.equal(f.calls.some(([kind, url]) => kind === 'fetch' && url.includes('/download/')), false)
+    assert.equal(
+      f.calls.some(([kind, url]) => kind === 'fetch' && url.includes('/download/')),
+      false
+    )
     await f.exports.installStrata(true)
     await f.exports.startStrata()
     assert.equal((await f.exports.getStrataInfo()).installed.managed, 'aurapro-engine')
@@ -373,7 +394,9 @@ test('updates compare AuraPro Engine product versions, without reinstalling or d
     assert.equal(installed.productVersion, 'v0.0.2')
     fs.writeFileSync(f.installedFile, JSON.stringify({ ...installed, productVersion: 'v0.0.3' }))
     assert.equal((await f.exports.checkStrataUpdate()).available, false)
-    const downloads = f.calls.filter(([kind, url]) => kind === 'fetch' && url.includes('/download/')).length
+    const downloads = f.calls.filter(
+      ([kind, url]) => kind === 'fetch' && url.includes('/download/')
+    ).length
     await f.exports.installStrata(true)
     assert.equal(
       f.calls.filter(([kind, url]) => kind === 'fetch' && url.includes('/download/')).length,
