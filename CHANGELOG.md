@@ -9,20 +9,16 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [3.10.15] - 2026-11-23
 
-### Added
+AuraPro-3.10.15-2026-11-23
 
-- Added `lite_Q4` and `lite_Q6` to Pro. Existing Strata installs on Windows and Linux x64 migrate to AuraPro-Engine without downloading models again. Pro checks for updates at startup and restores the previous runtime if the new one fails to start.
-
-### Changed
-
-- Simplified Pro installation and removed `high-code` from the standard model catalog.
-- Expanded WebUI and Sherpa repair to cover missing or damaged dependencies and empty dependency directories.
-- Updated the default WebUI package to `3.10.15`. Uninstall now removes local certificates installed by AuraPro.
-
-### Fixed
-
-- Fixed voice repair failing on Windows when WebUI and Sherpa share a dependency that is still in use.
-- Report a broken `brotlicffi` dependency as a dependency issue rather than an HTTPS certificate issue.
+- Improved: Repair now covers more cases where WebUI or Sherpa cannot install or start because dependencies are missing, damaged, or their entire dependency directory has been emptied.
+- Fixed: On Windows, speech repair no longer fails with an "Access denied" error when WebUI and Sherpa are using the same dependency.
+- Fixed: At WebUI startup, a broken `brotlicffi` dependency is no longer misreported as an HTTPS certificate problem. Diagnostics recommend repairing the dependency without reinstalling the certificate.
+- Added: The Pro inference runtime now offers `lite_Q4` and `lite_Q6` model options.
+- Improved: Simplified installation and startup for Pro models.
+- Improved: Removed the `high-code` series from the standard model download list. It has been replaced by the Pro series.
+- Improved: Adjusted several settings to prepare for integration with other plugins and software.
+- Improved: Uninstalling AuraPro now also removes its local security certificate.
 
 ## [3.10.14] - 2026-11-22
 
