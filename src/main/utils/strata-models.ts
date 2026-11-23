@@ -4,6 +4,8 @@ export const STRATA_PORT = 18882
 export const STRATA_MODEL_ID = 'aurapro-pro'
 export const STRATA_SOURCE = 'c77572806996349b49995e4f98d41b5294d36a21'
 export const STRATA_RELEASE = 'v0.2.15'
+export const AURAPRO_ENGINE_RELEASE = 'v0.0.1'
+export const AURAPRO_ENGINE_REPO = 'AuraPro-Official/AuraPro-Engine'
 
 // Compatibility only: never replace a saved model ID with the new default.
 export const LEGACY_STRATA_MODELS = [
@@ -70,22 +72,6 @@ export const LEGACY_STRATA_MODELS = [
     name: 'Q4_K_XL',
     gb: 111.3,
     ram: 48
-  },
-  {
-    id: 'qwen36-ud-q4_k_xl',
-    family: 'qwen36',
-    quant: 'UD-Q4_K_XL',
-    name: 'Q4_K_XL',
-    gb: 22.85,
-    ram: 32
-  },
-  {
-    id: 'qwen36-ud-q6_k_xl',
-    family: 'qwen36',
-    quant: 'UD-Q6_K_XL',
-    name: 'Q6_K_XL',
-    gb: 32.61,
-    ram: 44
   },
   {
     id: 'qwen36-q8_0',
@@ -175,6 +161,22 @@ export const STRATA_MODELS = [
     gb: 93.7,
     ram: 96,
     requirements: [[96, 12]]
+  },
+  {
+    id: 'qwen36-ud-q4_k_xl',
+    family: 'qwen36',
+    quant: 'UD-Q4_K_XL',
+    name: 'lite_Q4',
+    gb: 22.85,
+    ram: 32
+  },
+  {
+    id: 'qwen36-ud-q6_k_xl',
+    family: 'qwen36',
+    quant: 'UD-Q6_K_XL',
+    name: 'lite_Q6',
+    gb: 32.61,
+    ram: 44
   }
 ] as const
 
@@ -185,6 +187,11 @@ export const ALL_STRATA_MODELS: readonly StrataModel[] = [...STRATA_MODELS, ...L
 
 export function getStrataModel(modelId: string): StrataModel | undefined {
   return ALL_STRATA_MODELS.find((model) => model.id === modelId)
+}
+
+export function strataModelAliases(modelId: string): string[] {
+  const model = getStrataModel(modelId)
+  return model?.name.startsWith('lite_') ? [STRATA_MODEL_ID, model.name] : [STRATA_MODEL_ID]
 }
 
 export type StrataSettings = {
@@ -254,11 +261,12 @@ export function validateStrataSettings(input: StrataSettings): StrataSettings {
 export function strataSetupArgs(settings: StrataSettings, dataDir: string): string[] {
   const valid = validateStrataSettings(settings)
   if (valid.backend === 'metal' || valid.backend === 'cpu')
-    throw new Error('Strata requires CUDA or HIP')
+    throw new Error('AuraPro Engine requires CUDA or HIP on Windows/Linux')
   const model = getStrataModel(valid.model)!
   return [
     '--setup',
     '--no-start',
+    '--no-browser',
     '--yes',
     '--family',
     model.family,
@@ -342,7 +350,7 @@ export function nativeProArgs(
     '--model',
     model,
     '--alias',
-    STRATA_MODEL_ID,
+    strataModelAliases(valid.model).join(','),
     '--host',
     '127.0.0.1',
     '--port',

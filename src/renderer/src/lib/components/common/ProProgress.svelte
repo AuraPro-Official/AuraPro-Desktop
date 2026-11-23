@@ -6,8 +6,10 @@
   >
   let { progress }: { progress: Progress } = $props()
   const labels: Record<string, string> = {
+    checking: 'Checking for Pro updates',
+    restored: 'Previous runtime restored',
     preparing: 'Preparing Pro',
-    source: 'Downloading Pro Control',
+    source: 'Downloading AuraPro Engine',
     extracting: 'Extracting Pro',
     environment: 'Creating Python environment',
     dependencies: 'Installing Python dependencies',
@@ -42,7 +44,7 @@
       </span>
     {/if}
   </div>
-  {#if !['complete', 'cancelled', 'failed'].includes(progress.stage)}
+  {#if !['complete', 'restored', 'cancelled', 'failed'].includes(progress.stage)}
     <progress class="mt-2 h-1 w-full accent-emerald-500" max="100" value={percent}></progress>
   {/if}
   {#if progress.detail}

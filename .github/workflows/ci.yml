@@ -52,10 +52,5 @@ jobs:
       - name: Typecheck and Build
         run: npm run build
 
-      # scripts/test-runtime-maintenance.mjs is deliberately absent: it is
-      # already red on main.  It lifts ensureOpenWebUIPackage into a VM
-      # sandbox that never defines hasSharedPythonRuntimeImports, a helper
-      # added to src/main/utils/index.ts after the test was written -- which
-      # is precisely what having no CI costs.  Add it back once it is fixed.
       - name: Test
         run: npm run test:node

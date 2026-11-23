@@ -15,6 +15,7 @@ import { execFileSync, spawn, execSync, execFile } from 'child_process'
 import log from 'electron-log'
 import type { KvCacheType } from './llamacpp-settings'
 import { getBundledPythonTarget, isBundledPythonMachineCompatible } from './platform-support'
+import { withRepairedPythonPackageMetadata } from './python-package-metadata'
 log.transports.file.resolvePathFn = () => getLogFilePath('main')
 
 const serverLogger = log.create({ logId: 'server' })
@@ -144,7 +145,7 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.10.14'
+export const AURAPRO_UI_TARGET_VERSION = '3.10.15'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
 export const AURAPRO_UI_LAST_VERSION = '3.9.3'
@@ -1085,8 +1086,9 @@ export const isPythonInstalled = (installationDir?: string) => {
     const pythonInfo = execFileSync(
       pythonPath,
       [
+        '-IBS',
         '-c',
-        "import platform, sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}|{platform.machine()}')"
+        "import platform, sqlite3, ssl, sys, sysconfig; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}|{platform.machine()}')"
       ],
       {
         encoding: 'utf-8',
@@ -1111,7 +1113,7 @@ export const isPythonInstalled = (installationDir?: string) => {
 export const isUvInstalled = (installationDir?: string) => {
   const pythonPath = getPythonPath(installationDir)
   try {
-    const result = execFileSync(pythonPath, ['-m', 'uv', '--version'], {
+    const result = execFileSync(pythonPath, ['-IB', '-m', 'uv', '--version'], {
       encoding: 'utf-8',
       env: pythonEnv(),
       windowsHide: true,
@@ -1147,7 +1149,15 @@ export const repairStartupPythonPackage = async (
       )
       child.stderr?.on('data', (chunk: Buffer) => onStatus?.(chunk.toString().trim().slice(-500)))
     })
-  if (spec !== 'uv') {
+  if (spec === 'uv') {
+    try {
+      await run(['-IB', '-m', 'pip', '--version'])
+    } catch {
+      onStatus?.('Restoring pip from the bundled Python runtime...')
+      await run(['-IB', '-m', 'ensurepip', '--upgrade'])
+      await run(['-IB', '-m', 'pip', '--version'])
+    }
+  } else {
     try {
       await run([
         '-I',
@@ -1190,22 +1200,14 @@ export const repairStartupPythonPackage = async (
     '--ignore-installed',
     spec
   ])
+  if (spec === 'uv') await run(['-IB', '-m', 'uv', '--version'])
 }
 
-export const checkSherpaStartupImports = (): Promise<void> =>
+const checkPythonStartupImports = (imports: string[]): Promise<void> =>
   new Promise((resolve, reject) => {
     execFile(
       getPythonPath(),
-      [
-        '-IB',
-        '-c',
-        [
-          'from tokenizers import Tokenizer',
-          'from faster_whisper import WhisperModel',
-          'from fast_langdetect import detect_language',
-          'import av, numpy, soundfile, sherpa_onnx, uvicorn, python_multipart, fastapi'
-        ].join('\n')
-      ],
+      ['-IB', '-c', imports.join('\n')],
       { env: pythonEnv(), timeout: 20_000, windowsHide: true, maxBuffer: 512 * 1024 },
       (error, _stdout, stderr) => {
         if (error) reject(new Error(stderr.trim().slice(-4500) || error.message))
@@ -1213,6 +1215,72 @@ export const checkSherpaStartupImports = (): Promise<void> =>
       }
     )
   })
+
+export const checkSherpaStartupImports = (): Promise<void> =>
+  checkPythonStartupImports([
+    ...brotliStartupImports,
+    'from tokenizers import Tokenizer',
+    'from faster_whisper import WhisperModel',
+    'from fast_langdetect import detect_language',
+    'import av, numpy, soundfile, sherpa_onnx, uvicorn, python_multipart, fastapi'
+  ])
+
+export const checkWebUIStartupImports = (): Promise<void> =>
+  checkPythonStartupImports([
+    ...brotliStartupImports,
+    'from fastapi import FastAPI',
+    'from pydantic_core import SchemaValidator',
+    'from sqlalchemy.ext.asyncio import AsyncSession',
+    'from alembic.config import Config',
+    'from aiosqlite import connect',
+    'from httpx import AsyncClient',
+    'from aiohttp import ClientSession'
+  ])
+
+const brotliStartupImports = [
+  'from importlib.util import find_spec',
+  // A leftover namespace directory can import successfully but expose no decoder.
+  'if find_spec("brotlicffi") is not None: from brotlicffi import error',
+  'from urllib3 import PoolManager'
+]
+
+export const assertBundledWindowsPythonIdle = async (): Promise<void> => {
+  if (process.platform !== 'win32' || !fs.existsSync(getPythonInstallationDir())) return
+  const root = path.resolve(getPythonInstallationDir()) + path.sep
+  const script = `
+$ErrorActionPreference = 'Stop'
+$root = [System.IO.Path]::GetFullPath($env:AURAPRO_PYTHON_CHECK_ROOT)
+Get-CimInstance Win32_Process -Filter "Name = 'python.exe' OR Name = 'pythonw.exe' OR Name = 'uv.exe' OR Name = 'aurapro-webui.exe' OR Name = 'aurapro-ui.exe' OR Name = 'open-webui.exe'" | ForEach-Object {
+  if ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
+    $_.ProcessId
+  }
+}
+`
+  const output = await new Promise<string>((resolve, reject) => {
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      {
+        env: { ...process.env, AURAPRO_PYTHON_CHECK_ROOT: root },
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 15_000
+      },
+      (error, stdout) => {
+        if (error) reject(new Error('Could not verify that the bundled Python processes exited.'))
+        else resolve(stdout)
+      }
+    )
+  })
+  const pids = output
+    .trim()
+    .split(/\s+/)
+    .filter((value) => /^\d+$/.test(value))
+  if (pids.length)
+    throw new Error(
+      `AuraPro Python files are still in use (PID: ${pids.join(', ')}). Exit the remaining AuraPro processes and retry.`
+    )
+}
 
 const isPackageFileLockedError = (error: unknown): boolean => {
   const message = getErrorMessage(error).toLowerCase()
@@ -1406,6 +1474,78 @@ export const uninstallPython = (installationDir?: string): boolean => {
 
 // ─── Package Management ─────────────────────────────────
 
+const getManagedPythonSiteDirectories = (): Promise<string[]> =>
+  new Promise((resolve, reject) => {
+    execFile(
+      getPythonPath(),
+      [
+        '-IS',
+        '-c',
+        'import json, sysconfig; print(json.dumps([sysconfig.get_path(key) for key in ("purelib", "platlib")]))'
+      ],
+      { env: pythonEnv(), windowsHide: true, timeout: 10_000 },
+      (error, stdout) => {
+        if (error) return reject(error)
+        try {
+          const directories: unknown = JSON.parse(stdout)
+          if (
+            !Array.isArray(directories) ||
+            !directories.every((entry) => typeof entry === 'string')
+          )
+            throw new Error('Could not locate the bundled Python package directories.')
+          resolve(directories)
+        } catch (parseError) {
+          reject(parseError)
+        }
+      }
+    )
+  })
+
+export const hasEmptyBundledPythonDependencies = async (): Promise<boolean> => {
+  try {
+    const root = await fs.promises.realpath(getPythonInstallationDir())
+    const directories = [...new Set(await getManagedPythonSiteDirectories())]
+    if (!directories.length) return false
+    for (const directory of directories) {
+      const relative = path.relative(root, directory)
+      if (
+        !relative ||
+        relative === '..' ||
+        relative.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(relative) ||
+        path.basename(directory) !== 'site-packages'
+      )
+        return false
+      try {
+        const actual = await fs.promises.realpath(directory)
+        if (path.relative(directory, actual)) return false
+        if ((await fs.promises.readdir(actual)).some((name) => name !== '__pycache__')) return false
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return false
+      }
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+export const repairBundledPackageMetadata = async <T>(
+  install: () => Promise<T>,
+  onStatus?: (status: string) => void,
+  onBackedUp?: (packages: string[]) => void
+): Promise<T> =>
+  withRepairedPythonPackageMetadata(
+    getPythonInstallationDir(),
+    await getManagedPythonSiteDirectories(),
+    install,
+    (packages, backup) => {
+      onBackedUp?.(packages)
+      log.warn(`Backed up damaged Python package metadata for ${packages.join(', ')} to ${backup}`)
+      onStatus?.(`Repairing Python package metadata: ${packages.join(', ')}`)
+    }
+  )
+
 export const installPackage = (
   packageName: string,
   version?: string,
@@ -1414,6 +1554,7 @@ export const installPackage = (
     noDeps?: boolean
     reinstallPackages?: string[]
     refreshPackages?: string[]
+    upgrade?: boolean
   } = {}
 ): Promise<boolean> => {
   const runInstall = (): Promise<boolean> =>
@@ -1444,8 +1585,9 @@ export const installPackage = (
           'uv',
           'pip',
           'install',
+          ...(isAuraProUiPackage ? ['--python', pythonPath] : []),
           ...(localOpenWebUISourcePath ? ['-e', localOpenWebUISourcePath] : [packageSpec]),
-          ...(localOpenWebUISourcePath || version ? [] : ['-U']),
+          ...(localOpenWebUISourcePath || version || options.upgrade === false ? [] : ['-U']),
           ...(options.noDeps ? ['--no-deps'] : []),
           ...(options.reinstallPackages ?? []).flatMap((name) => ['--reinstall-package', name]),
           ...(options.refreshPackages ?? []).flatMap((name) => ['--refresh-package', name]),
@@ -1466,31 +1608,25 @@ export const installPackage = (
         }
       )
 
-      let lastLine = ''
-      commandProcess.stdout?.on('data', (data) => {
+      let outputTail = ''
+      const handleOutput = (data: Buffer) => {
         const line = data.toString().trim()
         log.info(line)
-        if (line) {
-          lastLine = line
-          onStatus?.(line)
-        }
+        if (line) onStatus?.(line)
+      }
+      commandProcess.stdout?.on('data', handleOutput)
+      commandProcess.stderr?.on('data', (data: Buffer) => {
+        outputTail = (outputTail + data.toString()).slice(-8000)
+        handleOutput(data)
       })
-      commandProcess.stderr?.on('data', (data) => {
-        const line = data.toString().trim()
-        log.info(line)
-        if (line) {
-          lastLine = line
-          onStatus?.(line)
-        }
-      })
-      commandProcess.on('exit', (code) => {
+      commandProcess.on('close', (code) => {
         log.info(`Package install exited with code ${code}`)
         if (code === 0) {
           resolve(true)
         } else {
           reject(
             new Error(
-              lastLine ||
+              outputTail.trim() ||
                 `Package installation failed (exit code ${code}). Please check your internet connection and try again.`
             )
           )
@@ -1503,10 +1639,10 @@ export const installPackage = (
     })
 
   const isAuraProUiPackage = ['aurapro-webui', 'aurapro-ui', 'open-webui'].includes(packageName)
+  if (!isAuraProUiPackage) return runInstall()
+
   return runInstall().catch(async (error) => {
-    if (!isAuraProUiPackage || !isPackageFileLockedError(error)) {
-      throw error
-    }
+    if (!isPackageFileLockedError(error)) throw error
     log.warn('Open WebUI package install hit a locked file; stopping WebUI and retrying', error)
     await prepareOpenWebUIPackageMutation(onStatus)
     return runInstall()
@@ -1776,7 +1912,7 @@ const removeSupersededOpenWebUIDistribution = (
 export const ensureOpenWebUIPackage = async (
   targetVersion = AURAPRO_UI_TARGET_VERSION,
   onStatus?: (status: string) => void,
-  options: { forceLatest?: boolean; cleanupCaches?: boolean } = {}
+  options: { forceLatest?: boolean; cleanupCaches?: boolean; repairMetadata?: boolean } = {}
 ): Promise<OpenWebUIPackageName> => {
   const desiredVersion = resolveOpenWebUITargetVersion(targetVersion)
   const useLatest = isLatestOpenWebUITarget(desiredVersion)
@@ -1811,7 +1947,9 @@ export const ensureOpenWebUIPackage = async (
   let sharedRuntimeHealthy = coreFilesHealthy && hasSharedPythonRuntimeImports()
   let runtimeHealthy = coreFilesHealthy && sharedRuntimeHealthy
   let targetSatisfied =
-    runtimeHealthy && (useLatest ? options.forceLatest !== true : version === desiredVersion)
+    !options.repairMetadata &&
+    runtimeHealthy &&
+    (useLatest ? options.forceLatest !== true : version === desiredVersion)
 
   const ensureRuntimeDependencies = async (packageVersion: string, packageChanged = false) => {
     let runtimeChanged = packageChanged
@@ -1850,84 +1988,98 @@ export const ensureOpenWebUIPackage = async (
 
   await prepareOpenWebUIPackageMutation(onStatus)
 
-  if (version && coreFilesHealthy && !sharedRuntimeHealthy) {
-    await repairSharedPythonRuntime(desiredPackageName, version, onStatus)
-    sharedRuntimeHealthy = true
-    runtimeHealthy = true
-    targetSatisfied =
-      runtimeHealthy && (useLatest ? options.forceLatest !== true : version === desiredVersion)
-  }
-
-  if (hasSupersededPackage) {
-    const dataDir = getOpenWebUIDataPath()
-    onStatus?.(
-      `Migrating the previous WebUI package to Open WebUI ${
-        useLatest ? 'latest' : desiredVersion
-      }...`
-    )
-    log.info(
-      `Migrating superseded WebUI packages to ${desiredPackageName} ${
-        useLatest ? 'latest' : desiredVersion
-      }. Data directory will be preserved: ${dataDir}`
-    )
-  }
-
-  if (!targetSatisfied) {
-    onStatus?.(
-      useLatest ? 'Installing latest Open WebUI...' : `Installing Open WebUI ${desiredVersion}...`
-    )
-    log.info(
-      useLatest
-        ? `Open WebUI package version ${version ?? 'missing'} will be updated to latest`
-        : `Open WebUI package version ${version ?? 'missing'} does not match ${desiredVersion}; installing in place`
-    )
-    await installPackage(desiredPackageName, useLatest ? undefined : desiredVersion, onStatus)
-  }
-
-  const installedVersion = getExactPackageVersion(desiredPackageName)
-  if (useLatest) {
-    if (!installedVersion) {
-      throw new Error(
-        'Open WebUI update failed: no package was installed. Please check the WebUI install log and retry.'
-      )
+  const install = async (): Promise<OpenWebUIPackageName> => {
+    if (!isUvInstalled()) await repairStartupPythonPackage('uv', onStatus)
+    if (version && coreFilesHealthy && !sharedRuntimeHealthy && !options.repairMetadata) {
+      await repairSharedPythonRuntime(desiredPackageName, version, onStatus)
+      sharedRuntimeHealthy = true
+      runtimeHealthy = true
+      targetSatisfied =
+        runtimeHealthy && (useLatest ? options.forceLatest !== true : version === desiredVersion)
     }
-  } else if (installedVersion !== desiredVersion) {
-    throw new Error(
-      `Open WebUI update failed: expected ${desiredVersion}, but installed ${installedVersion ?? 'none'}. ` +
-        'Please check the WebUI install log and retry.'
-    )
-  }
 
-  if (!hasOpenWebUICoreFiles(desiredPackageName)) {
-    throw new Error(
-      'Open WebUI update produced an incomplete package: required runtime files are missing. Please retry the update.'
-    )
-  }
-  if (!hasSharedPythonRuntimeImports()) {
-    await repairSharedPythonRuntime(
-      desiredPackageName,
-      installedVersion ?? desiredVersion,
-      onStatus
-    )
-  }
-  for (const [packageName, packageVersion] of supersededPackages) {
-    if (!packageVersion) continue
-    onStatus?.(`Removing previous ${packageName} package...`)
-    try {
-      removeSupersededOpenWebUIDistribution(packageName, desiredPackageName)
+    if (hasSupersededPackage) {
+      const dataDir = getOpenWebUIDataPath()
+      onStatus?.(
+        `Migrating the previous WebUI package to Open WebUI ${
+          useLatest ? 'latest' : desiredVersion
+        }...`
+      )
       log.info(
-        `Removed superseded ${packageName} package version ${packageVersion} without deleting shared ${desiredPackageName} files`
-      )
-    } catch (error) {
-      log.warn(
-        `Failed to remove superseded ${packageName}; ${desiredPackageName} remains usable and cleanup will be retried:`,
-        error
+        `Migrating superseded WebUI packages to ${desiredPackageName} ${
+          useLatest ? 'latest' : desiredVersion
+        }. Data directory will be preserved: ${dataDir}`
       )
     }
+
+    if (!targetSatisfied) {
+      const installVersion = useLatest
+        ? options.repairMetadata && !options.forceLatest
+          ? (version ?? undefined)
+          : undefined
+        : desiredVersion
+      onStatus?.(
+        installVersion
+          ? `Installing Open WebUI ${installVersion}...`
+          : 'Installing latest Open WebUI...'
+      )
+      log.info(
+        `Installing WebUI ${installVersion ?? 'latest'} over installed version ${version ?? 'none'}`
+      )
+      await installPackage(desiredPackageName, installVersion, onStatus, {
+        reinstallPackages: coreFilesHealthy || !version ? undefined : [desiredPackageName]
+      })
+    }
+
+    const installedVersion = getExactPackageVersion(desiredPackageName)
+    if (useLatest) {
+      if (!installedVersion) {
+        throw new Error(
+          'Open WebUI update failed: no package was installed. Please check the WebUI install log and retry.'
+        )
+      }
+    } else if (installedVersion !== desiredVersion) {
+      throw new Error(
+        `Open WebUI update failed: expected ${desiredVersion}, but installed ${installedVersion ?? 'none'}. ` +
+          'Please check the WebUI install log and retry.'
+      )
+    }
+
+    if (!hasOpenWebUICoreFiles(desiredPackageName)) {
+      throw new Error(
+        'Open WebUI has an incomplete package: required runtime files are missing. Please retry the update.'
+      )
+    }
+    if (!hasSharedPythonRuntimeImports()) {
+      await repairSharedPythonRuntime(
+        desiredPackageName,
+        installedVersion ?? desiredVersion,
+        onStatus
+      )
+    }
+    for (const [packageName, packageVersion] of supersededPackages) {
+      if (!packageVersion) continue
+      onStatus?.(`Removing previous ${packageName} package...`)
+      try {
+        removeSupersededOpenWebUIDistribution(packageName, desiredPackageName)
+        log.info(
+          `Removed superseded ${packageName} package version ${packageVersion} without deleting shared ${desiredPackageName} files`
+        )
+      } catch (error) {
+        log.warn(
+          `Failed to remove superseded ${packageName}; ${desiredPackageName} remains usable and cleanup will be retried:`,
+          error
+        )
+      }
+    }
+
+    await ensureRuntimeDependencies(installedVersion ?? desiredVersion, true)
+    return desiredPackageName
   }
 
-  await ensureRuntimeDependencies(installedVersion ?? desiredVersion, true)
-  return desiredPackageName
+  return repairBundledPackageMetadata(install, onStatus, (packages) => {
+    if (packages.includes(desiredPackageName)) targetSatisfied = false
+  })
 }
 
 /**

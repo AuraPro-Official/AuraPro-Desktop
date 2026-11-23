@@ -465,7 +465,8 @@
             .catch(() => {})
         }, 1500)
         try {
-          if (!pro.installed) await window.electronAPI.installStrata(false, settings)
+          if (!pro.installed || pro.upgradeRequired)
+            await window.electronAPI.installStrata(false, settings)
           currentInstallStage = 'model-download'
           installProgress = 52
           await window.electronAPI.prepareStrataModel(settings)

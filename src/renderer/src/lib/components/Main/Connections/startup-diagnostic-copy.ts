@@ -18,6 +18,16 @@ export const startupDiagnosticCopy: Record<string, [Copy, Copy]> = {
       'Open the service log and check the last import error. Packages are not installed from arbitrary names in logs.'
     ]
   ],
+  metadata: [
+    [
+      'Python 依赖的安装记录损坏',
+      '立即修复会检查内置 Python，备份损坏的安装记录并补齐受影响服务的依赖。不影响聊天记录、模型和词典。'
+    ],
+    [
+      'Python package metadata is damaged',
+      'Repair checks the bundled Python environment, backs up damaged package records, and restores dependencies for the affected service. Chats, models, and dictionaries are preserved.'
+    ]
+  ],
   python: [
     [
       '内置 Python 缺失或不完整',
@@ -29,8 +39,18 @@ export const startupDiagnosticCopy: Record<string, [Copy, Copy]> = {
     ]
   ],
   installer: [
-    ['Python 包管理器缺失', '可补装 uv 后重新检查服务。'],
-    ['Missing Python package installer', 'Repair can install uv and check the service again.']
+    ['Python 包管理器缺失', '立即修复会恢复 pip 或 uv，再重新检查服务。'],
+    ['Missing Python package installer', 'Repair restores pip or uv and checks the service again.']
+  ],
+  environment: [
+    [
+      '内置 Python 依赖目录缺失或为空',
+      '立即修复会恢复包管理器，并重新安装受影响服务的依赖。不会清除聊天、模型或词典。'
+    ],
+    [
+      'Bundled Python dependencies are missing',
+      'Repair restores the package installer and reinstalls the affected service dependencies. Chats, models, and dictionaries are preserved.'
+    ]
   ],
   package: [
     ['组件安装不完整', '可从官方来源补齐组件，并重新检查服务。'],
@@ -84,6 +104,16 @@ export const startupDiagnosticCopy: Record<string, [Copy, Copy]> = {
     [
       'A Python dependency file could not be replaced',
       'Repair can stop local WebUI and Sherpa before reinstalling this package. If the file is still in use, quit AuraPro completely or restart the computer and retry.'
+    ]
+  ],
+  'locked-retry': [
+    [
+      'Sherpa 依赖文件无法替换',
+      '可先停止本机 WebUI 与 Sherpa，再检查并补齐 Sherpa 所需依赖。如果仍无法替换，请完全退出 AuraPro 或重启后重试。'
+    ],
+    [
+      'A Sherpa dependency file could not be replaced',
+      'Repair can stop local WebUI and Sherpa, then check and restore required Sherpa packages. If the file still cannot be replaced, quit AuraPro completely or restart the computer and retry.'
     ]
   ],
   permission: [

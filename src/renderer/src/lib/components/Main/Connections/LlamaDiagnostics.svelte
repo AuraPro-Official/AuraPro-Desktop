@@ -151,7 +151,12 @@
   const baseIssueId = (id: string): string => id.split(':')[0]
   const startupCopy = (issue: DiagnosticIssue) => {
     const kind = String(issue.data?.kind)
-    const key = kind === 'locked' && issue.repairable ? 'locked-repair' : kind
+    const key =
+      kind === 'locked' && issue.repairable
+        ? issue.data?.repair === 'retry-sherpa-dependencies'
+          ? 'locked-retry'
+          : 'locked-repair'
+        : kind
     return (startupDiagnosticCopy[key] ?? startupDiagnosticCopy.unknown)[isChinese ? 0 : 1]
   }
   const startupServiceLabel = (issue: DiagnosticIssue): string =>

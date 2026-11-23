@@ -14,6 +14,11 @@ import {
   speechRepairLanguages,
   speechModelSupport
 } from '../src/main/utils/speech-language-presets.ts'
+import {
+  dependencySpec,
+  repairFailingPythonImports,
+  startupPackage
+} from '../src/main/utils/startup-diagnostics.ts'
 
 test('speech repair defaults include every installed and custom dictionary pair, not just the active one', () => {
   const settings = {
@@ -166,12 +171,16 @@ const loadBinding = (filename, name, context) => {
   )
 }
 
-test('repair checks admin before reinstalling and switches WebUI only after Sherpa passes both checks', async () => {
+test('speech repair pauses shared Python services, repairs imports and restores WebUI on failure', async () => {
   const calls = []
   const previous = { port: 39384, enabled: true, ttsModel: 'old' }
   const service = { url: 'http://127.0.0.1:39390', pid: 1 }
   let isAdmin = false
   let failCheck = false
+  let pythonInUse = false
+  let brokenBrotli = false
+  let webUIAvailable = true
+  let webUIRestartAllowed = true
   const context = vm.createContext({
     URL,
     CONFIG: null,
@@ -179,15 +188,21 @@ test('repair checks admin before reinstalling and switches WebUI only after Sher
     startupRepairInProgress: false,
     speechOperations: 0,
     glossarySpeechDownloadPending: false,
+    webUIInstallInProgress: false,
+    serverStartPending: null,
+    SERVER_URL: 'http://127.0.0.1:8081',
     isSherpaStarting: () => false,
     isRecord,
     SpeechRepairError,
     readAdminAccount,
     getSpeechRepairWebUI: async () => ({
-      request: async (route) =>
-        route === 'auths/'
+      origin: 'http://127.0.0.1:8081',
+      request: async (route) => {
+        assert.equal(webUIAvailable, true)
+        return route === 'auths/'
           ? { id: 'account', role: isAdmin ? 'admin' : 'user' }
-          : { stt: {}, tts: {} },
+          : { stt: {}, tts: {} }
+      },
       assertLocal: () => undefined,
       guest: { isDestroyed: () => false, reload: () => calls.push('reload') }
     }),
@@ -204,9 +219,50 @@ test('repair checks admin before reinstalling and switches WebUI only after Sher
     },
     validateSherpaProcess: () => true,
     isPythonInstalled: () => true,
-    stopSherpa: async () => calls.push('stop'),
+    isUvInstalled: () => true,
+    ensureFfmpeg: async () => {},
+    stopServerHandler: async () => {
+      webUIAvailable = false
+      calls.push('stop-webui')
+      return true
+    },
+    getServerPIDs: () => [],
+    stopSherpa: async () => calls.push('stop-sherpa'),
+    assertBundledWindowsPythonIdle: async () => {
+      calls.push('verify-idle')
+      if (pythonInUse) throw new Error('Python files still in use')
+    },
+    startServerHandler: async (installedOnly, port) => {
+      assert.equal(installedOnly, true)
+      assert.equal(port, 8081)
+      calls.push('start-webui')
+      return webUIRestartAllowed
+    },
+    waitForWebUIAfterRepair: async () => {
+      webUIAvailable = true
+      calls.push('verify-webui')
+    },
+    getExactPackageVersions: async () => ({}),
+    repairBundledPackageMetadata: async (run) => run(),
+    ensureSherpaStartupDependencies: async (_config, _progress, options) => {
+      assert.equal(options.restore, true)
+    },
+    checkSherpaStartupImports: async () => {
+      calls.push('check-imports')
+      if (brokenBrotli)
+        throw new Error("AttributeError: module 'brotlicffi' has no attribute 'error'")
+    },
+    repairStartupPythonPackage: async (spec) => {
+      calls.push(spec)
+      assert.equal(spec, 'brotlicffi==1.2.1.0')
+      brokenBrotli = false
+    },
+    startupPackage,
+    dependencySpec,
+    repairFailingPythonImports,
     SHERPA_ONNX_VERSION: 'test-version',
     installPackage: async (name, version, _progress, options) => {
+      assert.equal(webUIAvailable, false)
       assert.ok(['sherpa-onnx-core', 'sherpa-onnx'].includes(name))
       assert.equal(version, 'test-version')
       assert.equal(options.reinstallPackages[0], name)
@@ -214,13 +270,15 @@ test('repair checks admin before reinstalling and switches WebUI only after Sher
       calls.push(`reinstall:${name}`)
     },
     prepareSherpaRepairModels: async (config) => {
+      assert.equal(webUIAvailable, true)
       assert.equal(config.enabledLanguages.join(','), 'zh,es')
       assert.equal(config.excludedGlossaryLanguages.join(','), 'en')
       calls.push('models')
       return config
     },
     checkSherpaRepairModels: () => [],
-    startSherpa: async (_port, _progress, config) => {
+    startSherpa: async (_port, _progress, config, options) => {
+      assert.equal(options.installedOnly, true)
       calls.push(config === previous ? 'restore' : 'start')
       return service
     },
@@ -241,33 +299,64 @@ test('repair checks admin before reinstalling and switches WebUI only after Sher
   isAdmin = true
   assert.equal((await context.runSpeechRepair({}, 1, ['invalid'])).code, 'invalidSelection')
   assert.deepEqual(calls, [])
+  pythonInUse = true
+  assert.match((await context.runSpeechRepair({}, 1, ['es'])).detail, /still in use/)
+  assert.deepEqual(calls.splice(0), [
+    'models',
+    'stop-webui',
+    'stop-sherpa',
+    'verify-idle',
+    'stop-sherpa',
+    'restore',
+    'start-webui',
+    'verify-webui'
+  ])
+  pythonInUse = false
   failCheck = true
   assert.equal((await context.runSpeechRepair({}, 1, ['es'])).code, 'sherpaFailed')
   assert.deepEqual(calls.splice(0), [
-    'stop',
+    'models',
+    'stop-webui',
+    'stop-sherpa',
+    'verify-idle',
     'reinstall:sherpa-onnx-core',
     'reinstall:sherpa-onnx',
-    'models',
+    'check-imports',
     'start',
     'health',
     'test-speech',
-    'stop',
-    'restore'
+    'stop-sherpa',
+    'restore',
+    'start-webui',
+    'verify-webui'
   ])
   failCheck = false
+  brokenBrotli = true
   assert.equal((await context.runSpeechRepair({}, 1, ['es'])).ok, true)
-  assert.deepEqual(calls, [
-    'stop',
+  assert.deepEqual(calls.splice(0), [
+    'models',
+    'stop-webui',
+    'stop-sherpa',
+    'verify-idle',
     'reinstall:sherpa-onnx-core',
     'reinstall:sherpa-onnx',
-    'models',
+    'check-imports',
+    'brotlicffi==1.2.1.0',
+    'check-imports',
     'start',
     'health',
     'test-speech',
     'save-desktop',
+    'start-webui',
+    'verify-webui',
     'apply-webui',
     'reload'
   ])
+  webUIRestartAllowed = false
+  const failedRestart = await context.runSpeechRepair({}, 1, ['es'])
+  assert.equal(failedRestart.code, 'webuiFailed')
+  assert.equal(failedRestart.runtimeReady, true)
+  assert.ok(!calls.includes('apply-webui'))
 })
 
 test('repair translations are complete in all four supported locales', () => {

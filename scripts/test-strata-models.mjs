@@ -41,8 +41,6 @@ const legacyIds = [
   'swift-iq3_xxs',
   'coder-iq1_m',
   'unsloth-ud-q4_k_xl',
-  'qwen36-ud-q4_k_xl',
-  'qwen36-ud-q6_k_xl',
   'qwen36-q8_0'
 ]
 const option = (args, flag) => {
@@ -57,19 +55,23 @@ test('release and service exports are stable', () => {
   assert.equal(STRATA_MODEL_ID, 'aurapro-pro')
 })
 
-test('only seven Flash-Next presets are selectable with compact quantization names', () => {
+test('seven Flash-Next presets and only the Q4/Q6 35B presets are selectable', () => {
   assert.deepEqual(
     STRATA_MODELS.map(({ id, family, quant }) => [id, family, quant]),
-    unslothQuants.map((q) => [`unsloth-${q.toLowerCase()}`, 'unsloth', q])
+    [
+      ...unslothQuants.map((q) => [`unsloth-${q.toLowerCase()}`, 'unsloth', q]),
+      ['qwen36-ud-q4_k_xl', 'qwen36', 'UD-Q4_K_XL'],
+      ['qwen36-ud-q6_k_xl', 'qwen36', 'UD-Q6_K_XL']
+    ]
   )
-  assert.equal(new Set(STRATA_MODELS.map(({ name }) => name)).size, 7)
+  assert.equal(new Set(STRATA_MODELS.map(({ name }) => name)).size, 9)
   assert.deepEqual(
     STRATA_MODELS.map((model) => model.name),
-    ['IQ1_M', 'Q2_0', 'IQ2_XS', 'Q2_K_XL', 'IQ3_XXS', 'Q3_K_XL', 'IQ4_XS']
+    ['IQ1_M', 'Q2_0', 'IQ2_XS', 'Q2_K_XL', 'IQ3_XXS', 'Q3_K_XL', 'IQ4_XS', 'lite_Q4', 'lite_Q6']
   )
 })
 
-test('retired Q4 and 35B presets remain compatible without appearing in the selectable catalog', () => {
+test('retired Flash-Next variants and 35B Q8 remain compatible but not selectable', () => {
   assert.deepEqual(
     LEGACY_STRATA_MODELS.map(({ id }) => id),
     legacyIds
@@ -121,8 +123,6 @@ test('config lookups preserve old names and use the upstream Qwen3.6 and v3.1 na
       'strata-swift-iq3_xxs.json',
       'strata-coder-iq1_m.json',
       'strata-unsloth-ud-q4_k_xl.json',
-      'strata-qwen36-ud-q4_k_xl.json',
-      'strata-qwen36-ud-q6_k_xl.json',
       'strata-qwen36-q8_0.json'
     ]
   )
@@ -142,7 +142,7 @@ test('setup is isolated and non-interactive, preserves settings and leaves draft
           { ...DEFAULT_STRATA_SETTINGS, model: model.id, backend, vision },
           'C:/Models/Pro data'
         )
-        assert.deepEqual(args.slice(0, 3), ['--setup', '--no-start', '--yes'])
+        assert.deepEqual(args.slice(0, 4), ['--setup', '--no-start', '--no-browser', '--yes'])
         for (const [flag, expected] of [
           ['--family', model.family],
           ['--model', model.quant],
@@ -327,7 +327,9 @@ test('PC requirements preserve each approved RAM/VRAM combination rather than su
     'RAM+VRAM 48GB+16GB / RAM+VRAM 64GB+12GB',
     'RAM+VRAM 48GB+16GB / RAM+VRAM 64GB+12GB',
     'RAM+VRAM 64GB+16GB / RAM+VRAM 96GB+12GB',
-    'RAM+VRAM 96GB+12GB'
+    'RAM+VRAM 96GB+12GB',
+    'RAM+VRAM 48GB+12GB',
+    'RAM+VRAM 48GB+12GB'
   ]
   for (const platform of ['win32', 'linux']) {
     assert.deepEqual(
@@ -395,7 +397,7 @@ test('native arguments retain official llama.cpp contract for all new and legacy
           ['--parallel', '1'],
           ['--port', '18882'],
           ['--host', '127.0.0.1'],
-          ['--alias', 'aurapro-pro'],
+          ['--alias', model.name.startsWith('lite_') ? `aurapro-pro,${model.name}` : 'aurapro-pro'],
           ['--n-gpu-layers', backend === 'cpu' ? '0' : '99'],
           ['--cache-type-k', k],
           ['--cache-type-v', v],
@@ -443,10 +445,16 @@ test(
     assert.equal(readFileSync(path.join(controlDir, 'COMMIT'), 'utf8').trim(), STRATA_SOURCE)
     const selected = ALL_STRATA_MODELS.map((m) => ({
       ...m,
-      setupArgs: strataSetupArgs(
-        { ...DEFAULT_STRATA_SETTINGS, model: m.id, backend: 'hip', vision: true },
-        'C:/Models/Pro data'
-      )
+      selectable: STRATA_MODELS.some(({ id }) => id === m.id),
+      // This fixture deliberately verifies the old Control parser and saved model layouts.
+      setupArgs: [
+        ...strataSetupArgs(
+          { ...DEFAULT_STRATA_SETTINGS, model: m.id, backend: 'hip', vision: true },
+          'C:/Models/Pro data'
+        ),
+        '--source',
+        'huggingface'
+      ]
     }))
     const result = spawnSync(
       controlPython,
@@ -454,7 +462,7 @@ test(
         '-B',
         '-c',
         String.raw`
-import argparse, json, socket, sys
+import argparse, json, runpy, socket, sys
 def forbidden(*args, **kwargs):
     raise AssertionError('Catalog test must not download or run setup')
 socket.create_connection = forbidden
@@ -462,7 +470,10 @@ socket.socket.connect = forbidden
 sys.path.insert(0, sys.argv[1])
 import setup as s
 s.CONTROL = True
-s.download = forbidden
+checked_urls = []
+s.download = lambda url, *args: checked_urls.append(url)
+managed = runpy.run_path('resources/strata_adapter.py')
+managed['configure_managed_setup'](s)
 from strata_control import private_files
 private_files.adopt_user_defaults = lambda: None
 class ParsedOnly(Exception):
@@ -485,11 +496,15 @@ for item in json.loads(sys.argv[2]):
     files, metadata = [], {}
     for name in names:
         url = base + name
+        if item['selectable']:
+            s.download(url, None)
         file = s.HF_FILE.match(url).group('path')
         size, sha = s.file_pin(url)
         files.append(file)
         metadata[file] = {'size': size, 'sha256': sha}
     proj = s.HF_FILE.match(fam['mmproj_hf'] + fam['mmproj'])
+    if item['selectable']:
+        s.download(proj.group(0), None)
     size, sha = s.file_pin(proj.group(0))
     manifest = {'repo': prefix.group('repo'), 'revision': prefix.group('rev'), 'files': files,
         'fileMetadata': metadata, 'projector': proj.group('path'),
@@ -504,10 +519,12 @@ for item in json.loads(sys.argv[2]):
     parsed = parsed_args[-1]
     assert parsed['family'] == family and parsed['model'] == quant
     assert parsed['setup'] and parsed['no_start'] and parsed['yes']
+    assert parsed['source'] == 'huggingface' and parsed['browser'] is False
     assert parsed['backend'] == 'hip' and parsed['vision'] == 'yes'
     assert parsed['models_dir'] == 'C:/Models/Pro data/models'
     info = fam['models'][quant] if own else s.MODELS[quant]
     out[item['id']] = {'manifest': manifest, 'config': 'strata-' + (fam['tag'] + quant).lower() + '.json', 'ram': info['ram_gb']}
+assert checked_urls
 print(json.dumps(out))
 `,
         controlDir,

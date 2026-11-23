@@ -15,6 +15,9 @@
   let loaded = $state(false)
   let defaultDataPath = $state('')
   let errorMessage = $state('')
+  let removingCertificate = $state(false)
+  let certificateMessage = $state('')
+  let certificateError = $state(false)
 
   onMount(async () => {
     const info = await window.electronAPI.getServerInfo()
@@ -31,6 +34,24 @@
 
   let uninstalling = $state(false)
   let installing = $state(false)
+
+  const removeCertificate = async () => {
+    if (!confirm($i18n.t('settings.openwebui.removeCertificateConfirm'))) return
+    removingCertificate = true
+    certificateMessage = ''
+    certificateError = false
+    try {
+      const result = await window.electronAPI.removeLocalCertificate()
+      if (!result.success) throw new Error(result.error)
+      certificateMessage = $i18n.t('settings.openwebui.removeCertificateDone')
+    } catch (error) {
+      console.error('Failed to remove the local HTTPS certificate:', error)
+      certificateError = true
+      certificateMessage = $i18n.t('settings.openwebui.removeCertificateFailed')
+    } finally {
+      removingCertificate = false
+    }
+  }
 
   const updateConfig = async (key: string, value: unknown) => {
     const current = $config ?? {}
@@ -94,6 +115,30 @@
     updating = false
   }
 </script>
+
+<div
+  class="py-4 flex flex-wrap items-center justify-between gap-3 border-b border-black/5 dark:border-white/5"
+>
+  <div class="min-w-0 flex-1">
+    <div class="text-[13px] opacity-70">{$i18n.t('settings.openwebui.localCertificate')}</div>
+    {#if certificateMessage}
+      <div
+        aria-live="polite"
+        class="mt-1 text-[11px] {certificateError
+          ? 'text-red-600 dark:text-red-400'
+          : 'opacity-60'}"
+      >
+        {certificateMessage}
+      </div>
+    {/if}
+  </div>
+  <button
+    type="button"
+    class="text-[12px] opacity-60 hover:opacity-90 px-3 py-1.5 bg-black/[0.04] dark:bg-white/[0.06] rounded-xl disabled:opacity-30"
+    disabled={removingCertificate}
+    onclick={removeCertificate}>{$i18n.t('settings.openwebui.removeCertificate')}</button
+  >
+</div>
 
 {#if !loaded}
   <div class="py-6 text-[12px] opacity-20 text-center">{$i18n.t('common.loading')}</div>

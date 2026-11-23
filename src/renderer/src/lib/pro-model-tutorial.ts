@@ -109,9 +109,9 @@ export const proModelTutorial: TutorialItem = {
       'Swift 的品質和思考時間資料為參考值，具體效果隨任務和執行環境變化。'
     ),
     text(
-      'Windows/Linux 使用 Strata；Mac M 芯片使用独立配置的 llama.cpp。Q4 的 Strata 预设仅支持 CUDA，不支持 HIP。',
-      'Windows/Linux use Strata; Mac M-series uses independently configured llama.cpp. The Strata Q4 preset supports CUDA only, not HIP.',
-      'Windows/Linux 使用 Strata；Mac M 晶片使用獨立配置的 llama.cpp。Q4 的 Strata 預設僅支援 CUDA，不支援 HIP。'
+      'Windows/Linux 使用 AuraPro Engine；Mac M 芯片继续使用独立配置的 llama.cpp。',
+      'Windows/Linux use AuraPro Engine. M-series Macs continue to use a separately configured llama.cpp.',
+      'Windows/Linux 使用 AuraPro Engine；Mac M 晶片繼續使用獨立配置的 llama.cpp。'
     )
   ]
 }

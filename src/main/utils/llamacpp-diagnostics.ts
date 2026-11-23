@@ -291,18 +291,6 @@ const OFFICIAL_MODEL_SOURCES: Record<string, OfficialModelSource> = {
     filename: 'gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf',
     saveAs: 'high_Q4.gguf',
     expectedSize: 15 * GB
-  },
-  'high-code_IQ4.gguf': {
-    repo: 'unsloth/Qwen3.8-27B-GGUF',
-    filename: 'Qwen3.8-27B-UD-IQ4_XS.gguf',
-    saveAs: 'high-code_IQ4.gguf',
-    expectedSize: 14_252_845_984
-  },
-  'high-code_Q4.gguf': {
-    repo: 'unsloth/Qwen3.8-27B-GGUF',
-    filename: 'Qwen3.8-27B-UD-Q4_K_M.gguf',
-    saveAs: 'high-code_Q4.gguf',
-    expectedSize: 16_464_440_224
   }
 }
 

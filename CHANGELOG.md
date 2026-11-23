@@ -7,6 +7,23 @@ All notable changes to AuraPro Desktop are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.15] - 2026-11-23
+
+### Added
+
+- Added `lite_Q4` and `lite_Q6` to Pro. Existing Strata installs on Windows and Linux x64 migrate to AuraPro-Engine without downloading models again. Pro checks for updates at startup and restores the previous runtime if the new one fails to start.
+
+### Changed
+
+- Simplified Pro installation and removed `high-code` from the standard model catalog.
+- Expanded WebUI and Sherpa repair to cover missing or damaged dependencies and empty dependency directories.
+- Updated the default WebUI package to `3.10.15`. Uninstall now removes local certificates installed by AuraPro.
+
+### Fixed
+
+- Fixed voice repair failing on Windows when WebUI and Sherpa share a dependency that is still in use.
+- Report a broken `brotlicffi` dependency as a dependency issue rather than an HTTPS certificate issue.
+
 ## [3.10.14] - 2026-11-22
 
 ### Added

@@ -59,7 +59,11 @@ import {
   isPythonInstalled,
   getPythonPath,
   canRestoreMissingPython,
+  hasEmptyBundledPythonDependencies,
+  repairBundledPackageMetadata,
+  assertBundledWindowsPythonIdle,
   checkSherpaStartupImports,
+  checkWebUIStartupImports,
   repairStartupPythonPackage,
   getExactPackageVersion,
   getExactPackageVersions,
@@ -67,6 +71,7 @@ import {
   ensureOpenWebUIPackage,
   getOpenWebUIPackageNameForVersion,
   cleanupPythonPackageCaches,
+  ensureFfmpeg,
   AURAPRO_UI_TARGET_VERSION,
   resolveOpenWebUITargetVersion,
   getLocalNetworkAddresses,
@@ -82,7 +87,11 @@ import {
   type AppConfig,
   type Connection
 } from './utils'
-import { installLocalCertificate } from './utils/local-certificate'
+import {
+  installLocalCertificate,
+  localCertificatePath,
+  removeLocalCertificate
+} from './utils/local-certificate'
 import { scheduleCacheCleanup } from './utils/cache-cleanup'
 import { normalizeKvCacheType, type KvCacheType } from './utils/llamacpp-settings'
 import { GlossaryStartupReminder } from './utils/glossary-startup-reminder'
@@ -139,6 +148,7 @@ import {
   dependencySpec,
   lastStartupEvidence,
   makeStartupIssue,
+  repairFailingPythonImports,
   startupPackage,
   type StartupService
 } from './utils/startup-diagnostics'
@@ -270,6 +280,7 @@ let SERVER_STATUS: string | null = null
 let SERVER_REACHABLE = false
 let SERVER_PID: number | null = null
 let webUIStartupEvidence = ''
+let webUIInstallationEvidence = ''
 let agentStartupError = ''
 let startupRepairInProgress = false
 const WEBUI_DIAGNOSTIC_WAIT_MS = 120_000
@@ -965,8 +976,13 @@ const connectTo = async (connection: Connection) => {
 
 const glossaryStartupReminder = new GlossaryStartupReminder()
 let serverStartPending: Promise<boolean> | null = null
+let webUIInstallInProgress = false
 const startServerHandler = (fromRepair = false, portOverride?: number): Promise<boolean> => {
-  if (startupRepairInProgress && !fromRepair) return Promise.resolve(false)
+  if (
+    webUIInstallInProgress ||
+    ((startupRepairInProgress || speechRepairInProgress) && !fromRepair)
+  )
+    return Promise.resolve(false)
   if (serverStartPending) return serverStartPending
   serverStartPending = startWebUIServer(fromRepair, portOverride).finally(() => {
     serverStartPending = null
@@ -2048,7 +2064,7 @@ const getSpeechRepairWebUI = async (event: IpcMainInvokeEvent, guestId: number) 
     assertLocal()
     return response.json()
   }
-  return { guest, request, assertLocal }
+  return { origin, guest, request, assertLocal }
 }
 
 const runSpeechRepair = async (event: IpcMainInvokeEvent, guestId: number, selected: unknown) => {
@@ -2057,6 +2073,8 @@ const runSpeechRepair = async (event: IpcMainInvokeEvent, guestId: number, selec
     startupRepairInProgress ||
     speechOperations ||
     glossarySpeechDownloadPending ||
+    webUIInstallInProgress ||
+    serverStartPending ||
     isSherpaStarting()
   )
     return { ok: false, code: 'busy' } as const
@@ -2093,46 +2111,86 @@ const runSpeechRepair = async (event: IpcMainInvokeEvent, guestId: number, selec
     const previous = (await getConfig()).sherpa
     const wasRunning = validateSherpaProcess()
     stage = 'sherpaFailed'
+    progress('downloading')
+    const prepared = await prepareSherpaRepairModels(
+      {
+        enabled: true,
+        port: previous.port,
+        enabledLanguages,
+        excludedGlossaryLanguages: defaults.filter((code) => !enabledLanguages.includes(code))
+      },
+      (detail) => progress('downloading', detail)
+    )
+    const limitedAsrLanguages = checkSherpaRepairModels(prepared, enabledLanguages)
+    await ensureFfmpeg((detail) => progress('downloading', detail)).catch((error) =>
+      log.warn('Failed to ensure ffmpeg during speech repair:', error)
+    )
+
+    stage = 'webuiFailed'
+    if ((await readAdminAccount(webui.request)) !== accountId)
+      throw new SpeechRepairError('accountChanged')
+    webui.assertLocal()
+    const previousWebURL = new URL(webui.origin)
+    const previousWebPort = Number(previousWebURL.port) || undefined
+    let webStopped = false
+    const restartWebUI = async () => {
+      progress('restartingWebUI')
+      if (!(await startServerHandler(true, previousWebPort)))
+        throw new Error('WebUI failed to restart after speech repair.')
+      await waitForWebUIAfterRepair()
+      const newURL = SERVER_URL
+      if (newURL && new URL(newURL).origin !== previousWebURL.origin)
+        sendToRenderer('connection:open', { url: newURL, connectionId: 'local' })
+    }
+
     sendToRenderer('status:sherpa', 'starting')
     let repaired: Awaited<ReturnType<typeof startSherpa>>
-    let limitedAsrLanguages: string[]
-    let interruptedService = false
+    let sherpaStopped = false
     try {
+      progress('stopping')
+      if (!(await stopServerHandler(true)) || getServerPIDs().length)
+        throw new Error('The WebUI process is still using Python files.')
+      webStopped = true
+      stage = 'sherpaFailed'
+      await stopSherpa(true)
+      sherpaStopped = true
+      await assertBundledWindowsPythonIdle()
+      progress('installing')
+      const onInstall = (detail: string) => progress('installing', detail)
       if (!isPythonInstalled()) {
-        progress('installing')
-        if (!(await installPython(undefined, (detail) => progress('installing', detail))))
+        const pythonDirectory = join(getInstallDir(), 'python')
+        if (!(await canRestoreMissingPython(pythonDirectory)))
+          throw new Error(
+            'Existing Python installation is incomplete. Use startup diagnostics to repair it.'
+          )
+        if (!(await installPython(pythonDirectory, onInstall, { preserveExisting: true })))
           throw new Error('Python installation failed')
       }
-      interruptedService = true
-      await stopSherpa()
-      progress('installing')
-      for (const name of ['sherpa-onnx-core', 'sherpa-onnx']) {
-        await installPackage(
-          name,
-          SHERPA_ONNX_VERSION,
-          (detail) => progress('installing', detail),
-          {
+      if (!isUvInstalled()) await repairStartupPythonPackage('uv', onInstall)
+      await repairBundledPackageMetadata(async () => {
+        for (const name of ['sherpa-onnx-core', 'sherpa-onnx']) {
+          await installPackage(name, SHERPA_ONNX_VERSION, onInstall, {
             reinstallPackages: [name],
             noDeps: true
-          }
-        )
-      }
-      progress('downloading')
-      const prepared = await prepareSherpaRepairModels(
-        {
-          enabled: true,
-          port: previous.port,
-          enabledLanguages,
-          excludedGlossaryLanguages: defaults.filter((code) => !enabledLanguages.includes(code))
-        },
-        (detail) => progress('downloading', detail)
-      )
-      limitedAsrLanguages = checkSherpaRepairModels(prepared, enabledLanguages)
+          })
+        }
+        await ensureSherpaStartupDependencies(prepared, onInstall, { restore: true })
+        const attempted = new Set<string>()
+        await repairFailingPythonImports(checkSherpaStartupImports, async (dependency) => {
+          const name = startupPackage(dependency)
+          if (attempted.has(name) || attempted.size >= 5) return false
+          attempted.add(name)
+          const version = (await getExactPackageVersions([name]))[name]
+          await repairStartupPythonPackage(dependencySpec(dependency, version), onInstall)
+          return true
+        })
+      }, onInstall)
       progress('starting')
       repaired = await startSherpa(
         previous.port,
         (detail) => progress('starting', detail),
-        prepared
+        prepared,
+        { installedOnly: true }
       )
       await waitForSherpaRepairReady(repaired)
       progress('testing')
@@ -2142,11 +2200,16 @@ const runSpeechRepair = async (event: IpcMainInvokeEvent, guestId: number, selec
         { replaceSherpa: true }
       )
     } catch (error) {
-      if (interruptedService) await stopSherpa(true)
-      if (wasRunning && interruptedService) {
+      if (sherpaStopped) {
         try {
-          const restored = await startSherpa(previous.port, undefined, previous)
-          sendToRenderer('sherpa:ready', toIpcSafeValue(restored))
+          await stopSherpa(true)
+          if (wasRunning) {
+            const restored = await startSherpa(previous.port, undefined, previous, {
+              installedOnly: true
+            })
+            sendToRenderer('status:sherpa', 'started')
+            sendToRenderer('sherpa:ready', toIpcSafeValue(restored))
+          } else sendToRenderer('status:sherpa', 'failed')
         } catch (restartError) {
           log.warn(
             'Unable to restart previous Sherpa configuration after a repair failure:',
@@ -2155,15 +2218,29 @@ const runSpeechRepair = async (event: IpcMainInvokeEvent, guestId: number, selec
           sendToRenderer('status:sherpa', 'failed')
         }
       } else sendToRenderer('status:sherpa', wasRunning ? 'started' : 'failed')
+      if (webStopped) {
+        try {
+          await restartWebUI()
+        } catch (restartError) {
+          log.warn('Unable to restart WebUI after speech repair failed:', restartError)
+          throw new SpeechRepairError(
+            stage,
+            `${getErrorMessage(error)}\nWebUI restart also failed: ${getErrorMessage(restartError)}`
+          )
+        }
+      }
       throw error
     }
 
     runtimeReady = true
-    CONFIG = await getConfig()
-    sendToRenderer('config:updated', CONFIG)
     sendToRenderer('status:sherpa', 'started')
     sendToRenderer('sherpa:ready', toIpcSafeValue(repaired))
     stage = 'webuiFailed'
+    await restartWebUI()
+    CONFIG = await getConfig()
+    sendToRenderer('config:updated', CONFIG)
+    if (!SERVER_URL || new URL(SERVER_URL).origin !== previousWebURL.origin)
+      throw new SpeechRepairError('openLocal')
     progress('applying')
     const current = await getSpeechRepairWebUI(event, guestId)
     await configureWebUISpeech(current.request, repaired.url, accountId)
@@ -2212,6 +2289,8 @@ const diagnoseLocalStartup = async (trigger = 'manual'): Promise<LlamaDiagnostic
       .filter(Boolean)
       .join('\n')
     add('webui', evidence, 'WebUI startup failed.')
+  } else if (!SERVER_REACHABLE && webUIInstallationEvidence) {
+    add('webui', webUIInstallationEvidence, 'WebUI installation failed.')
   } else if (
     config.defaultConnectionId === 'local' &&
     !report.software.webuiVersion &&
@@ -2275,6 +2354,26 @@ const diagnoseLocalStartup = async (trigger = 'manual'): Promise<LlamaDiagnostic
     for (const issue of addonIssues.filter(({ data }) => data.repair === 'python')) {
       issue.data.repair = undefined
       issue.repairable = false
+    }
+  }
+  if (
+    addonIssues.some(
+      ({ data }) =>
+        ['webui', 'sherpa'].includes(data.service) &&
+        ['package', 'installer', 'dependency'].includes(data.kind)
+    ) &&
+    existsSync(pythonPath) &&
+    (await hasEmptyBundledPythonDependencies())
+  ) {
+    const evidence = 'Bundled Python package directory is missing or empty.'
+    const failure = classifyStartupFailure(evidence)
+    for (const [index, issue] of addonIssues.entries()) {
+      const service = issue.data.service
+      if (
+        ['webui', 'sherpa'].includes(service) &&
+        ['package', 'installer', 'dependency'].includes(issue.data.kind)
+      )
+        addonIssues[index] = makeStartupIssue(service, failure, evidence)
     }
   }
   return {
@@ -2374,9 +2473,10 @@ const repairLocalStartup = async (
         await stopSherpa(true)
         sherpaStopped = true
       }
+      if (mutations.length) await assertBundledWindowsPythonIdle()
       const config = await getConfig()
       const pythonDirectory = join(getInstallDir(), 'python')
-      if (mutations.length && !existsSync(getPythonPath(pythonDirectory))) {
+      if (mutations.length && !isPythonInstalled(pythonDirectory)) {
         if (!(await canRestoreMissingPython(pythonDirectory)))
           throw new Error(
             'Existing Python installation is incomplete. Do not overwrite it automatically.'
@@ -2408,49 +2508,56 @@ const repairLocalStartup = async (
       }
       const speechMutations = mutations.filter(({ data }) => data.service === 'sherpa')
       const speechBootstrap =
-        speechMutations.some(({ data }) => data.repair === 'python') ||
+        speechMutations.some(
+          ({ data }) =>
+            data.repair === 'python' ||
+            data.repair === 'installer' ||
+            data.repair === 'environment' ||
+            data.repair === 'metadata' ||
+            data.repair === 'retry-sherpa-dependencies'
+        ) ||
         (speechMutations.some(({ data }) => data.dependency === 'sherpa_onnx') &&
           !(await getExactPackageVersions(['sherpa-onnx']))['sherpa-onnx'])
-      if (speechBootstrap) {
-        repairService = 'sherpa'
-        await ensureSherpaStartupDependencies(config.sherpa ?? {}, onStatus)
-      }
       for (const { data } of mutations) {
         repairService = data.service
         if (
-          data.repair === 'dependencies' &&
-          data.dependency &&
-          !(speechBootstrap && data.service === 'sherpa' && data.dependency === 'sherpa_onnx')
+          data.service === 'webui' &&
+          ['metadata', 'environment', 'package', 'installer', 'python'].includes(data.repair ?? '')
         ) {
-          await patchDependency(data.dependency)
-          if (data.dependency === 'sherpa_onnx') await patchDependency('sherpa_onnx_core')
+          await ensureOpenWebUIPackage(
+            resolveOpenWebUITargetVersion(config.localServer?.version),
+            onStatus,
+            {
+              repairMetadata: true
+            }
+          )
+          webUIInstallationEvidence = ''
+          actions.push('Restored Python packages for WebUI')
         }
-        if (data.repair === 'package' || (data.repair === 'python' && data.service === 'webui')) {
-          const target = resolveOpenWebUITargetVersion(config.localServer?.version)
-          const name = getOpenWebUIPackageNameForVersion(target)
-          const installed = (await getExactPackageVersions([name]))[name]
-          if (installed && /^\d+\.\d+\.\d+$/.test(installed))
-            await repairStartupPythonPackage(`${name}==${installed}`, onStatus)
-          else await ensureOpenWebUIPackage(target, onStatus)
-          actions.push('Repaired the local WebUI installation')
+        if (data.repair === 'dependencies' && data.dependency && data.service === 'webui') {
+          const { dependency } = data
+          await repairBundledPackageMetadata(async () => {
+            await patchDependency(dependency)
+            await repairFailingPythonImports(checkWebUIStartupImports, patchDependency)
+          }, onStatus)
         }
       }
       if (speechMutations.length) {
         repairService = 'sherpa'
-        for (;;) {
-          try {
-            await checkSherpaStartupImports()
-            break
-          } catch (error) {
-            const failure = classifyStartupFailure(getErrorMessage(error))
-            if (
-              failure.repair !== 'dependencies' ||
-              !failure.dependency ||
-              !(await patchDependency(failure.dependency))
-            )
-              throw error
+        await repairBundledPackageMetadata(async () => {
+          if (speechBootstrap) {
+            await ensureSherpaStartupDependencies(config.sherpa ?? {}, onStatus, { restore: true })
+            actions.push('Restored Python packages for Sherpa')
           }
-        }
+          for (const { data } of speechMutations) {
+            const { dependency } = data
+            if (data.repair !== 'dependencies' || !dependency) continue
+            if (speechBootstrap && dependency === 'sherpa_onnx') continue
+            await patchDependency(dependency)
+            if (dependency === 'sherpa_onnx') await patchDependency('sherpa_onnx_core')
+          }
+          await repairFailingPythonImports(checkSherpaStartupImports, patchDependency)
+        }, onStatus)
       }
     } catch (error) {
       canRestartSelected = false
@@ -2670,6 +2777,7 @@ const startConfiguredServices = async (defaultConnection?: Connection): Promise<
   if (
     !isQuiting &&
     !startupRepairInProgress &&
+    !speechRepairInProgress &&
     CONFIG?.sherpa?.enabled &&
     !validateSherpaProcess()
   ) {
@@ -3107,10 +3215,14 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
       existingSpeechOperation(async () => {
         try {
           log.info('Starting Python installation...')
-          sendToRenderer('status:install', 'Downloading Python…')
-          const res = await installPython(undefined, (status: string) => {
-            sendToRenderer('status:install', status)
-          })
+          const onStatus = (status: string) => sendToRenderer('status:install', status)
+          let res = true
+          if (isPythonInstalled()) {
+            if (!isUvInstalled()) await repairStartupPythonPackage('uv', onStatus)
+          } else {
+            onStatus('Downloading Python…')
+            res = await installPython(undefined, onStatus)
+          }
           sendToRenderer('status:python', res)
           return res
         } catch (error: unknown) {
@@ -3133,9 +3245,13 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     ipcMain.handle(
       'install:package',
       existingSpeechOperation(async () => {
+        if (webUIInstallInProgress || serverStartPending || isSherpaStarting())
+          throw new Error('Another installation or startup is in progress.')
+        webUIInstallInProgress = true
         let restartSherpa = false
         try {
           log.info('Starting package installation...')
+          webUIInstallationEvidence = ''
           CONFIG = await getConfig()
           const owuiVersion = resolveOpenWebUITargetVersion(CONFIG?.localServer?.version)
           restartSherpa = validateSherpaProcess()
@@ -3151,7 +3267,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
             (status: string) => {
               sendToRenderer('status:install', status)
             },
-            { forceLatest: true, cleanupCaches: false }
+            { forceLatest: true, cleanupCaches: false, repairMetadata: true }
           )
           try {
             const packagedDataDir = getPackagedDataDir()
@@ -3175,9 +3291,14 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
           return true
         } catch (error: unknown) {
           log.error('Package installation IPC handler error:', error)
+          const message = getErrorMessage(error)
+          if (['metadata', 'installer'].includes(classifyStartupFailure(message).kind)) {
+            webUIInstallationEvidence = message
+            scheduleStartupDiagnostic()
+          }
           sendToRenderer('status:package', false)
           throw new Error(
-            getErrorMessage(error) ||
+            message ||
               'Package installation failed. Please check your internet connection and try again.'
           )
         } finally {
@@ -3193,6 +3314,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
               sendToRenderer('status:sherpa', 'failed')
             }
           }
+          webUIInstallInProgress = false
         }
       })
     )
@@ -3207,9 +3329,11 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
 
     // Server
     ipcMain.handle('server:start', () => startServerHandler())
-    ipcMain.handle('server:stop', () => (startupRepairInProgress ? false : stopServerHandler()))
+    ipcMain.handle('server:stop', () =>
+      startupRepairInProgress || speechRepairInProgress ? false : stopServerHandler()
+    )
     ipcMain.handle('server:restart', async () => {
-      if (startupRepairInProgress) return false
+      if (startupRepairInProgress || speechRepairInProgress) return false
       await stopServerHandler()
       return startServerHandler()
     })
@@ -3220,15 +3344,40 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
       webUIStartupEvidence = ''
       clearAllServerLogs()
     })
-    ipcMain.handle('security:installLocalCertificate', async () => {
-      const certificatePath = join(getUserDataPath(), 'certs', 'aurapro-lan.cert.pem')
+    ipcMain.handle('security:installLocalCertificate', async (event, guestId: number) => {
+      const host = mainWindow?.webContents
+      const guest = Number.isSafeInteger(guestId) ? webContents.fromId(guestId) : null
+      if (
+        !host ||
+        event.sender !== host ||
+        event.senderFrame !== host.mainFrame ||
+        !SERVER_REACHABLE ||
+        !guest ||
+        guest.isDestroyed() ||
+        guest.getType() !== 'webview' ||
+        guest.hostWebContents !== host ||
+        guest.session !== session.fromPartition('persist:connection-local') ||
+        !localSpeechOrigin(SERVER_URL, guest.getURL())
+      )
+        return {
+          success: false,
+          error: 'Open the local WebUI in AuraPro Desktop to install its certificate.'
+        }
+      const certificatePath = localCertificatePath(getUserDataPath())
       const result = await installLocalCertificate(certificatePath)
       if (result.success) {
         log.info('Installed local HTTPS certificate for the current user:', certificatePath)
+        if (result.warning)
+          log.warn('Failed to clean up previous local HTTPS certificates:', result.warning)
       } else {
         log.warn('Failed to install local HTTPS certificate:', result.error)
       }
       return result
+    })
+    ipcMain.handle('security:removeLocalCertificate', async (event) => {
+      if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame)
+        throw new Error('Local certificate removal is only available in AuraPro Desktop settings.')
+      return removeLocalCertificate(localCertificatePath(getUserDataPath()))
     })
 
     // PTY MessagePort channel
@@ -3236,7 +3385,8 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     ipcMain.handle('pty:connect', (_event, pid?: number) => connectPtyPort(pid))
     ipcMain.handle('server:info', getServerInfoSnapshot)
     ipcMain.handle('server:share-local', async () => {
-      if (startupRepairInProgress) throw new Error('A repair is already running.')
+      if (startupRepairInProgress || speechRepairInProgress)
+        throw new Error('A repair is already running.')
       const config = await getConfig()
       const port = config.localServer?.port ?? 8081
       const needsLanRestart = config.localServer?.serveOnLocalNetwork !== true
@@ -3380,7 +3530,9 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     })
 
     // Misc
-    ipcMain.handle('app:reset', () => (startupRepairInProgress ? false : resetAppHandler()))
+    ipcMain.handle('app:reset', () =>
+      startupRepairInProgress || speechRepairInProgress ? false : resetAppHandler()
+    )
 
     // Spotlight
     ipcMain.handle('spotlight:submit', async (_event, query: string, images?: string[]) => {
@@ -4070,11 +4222,9 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
         }
         onStatus('Checking repair results...')
         const report = await diagnoseLocalStartup()
-        if (
-          services.repairIssue &&
-          !report.issues.some(({ id }) => id === services.repairIssue?.id)
-        ) {
-          report.issues.unshift(services.repairIssue)
+        const { repairIssue } = services
+        if (repairIssue) {
+          report.issues = [repairIssue, ...report.issues.filter(({ id }) => id !== repairIssue.id)]
           report.healthy = false
         }
         const result = {

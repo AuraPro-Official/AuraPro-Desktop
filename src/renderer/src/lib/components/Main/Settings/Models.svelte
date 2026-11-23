@@ -99,20 +99,7 @@
       sizeBytes: 15 * 1024 * 1024 * 1024,
       ramInfo: 'RAM+VRAM 32G+4G / UMA 24G'
     },
-    indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.high),
-    {
-      name: 'high-code_IQ4.gguf',
-      sizeStr: '~14GB',
-      repo: 'AuraPro',
-      hfRepo: 'unsloth/Qwen3.8-27B-GGUF',
-      filename: 'Qwen3.8-27B-UD-IQ4_XS.gguf',
-      mmprojRepo: 'unsloth/Qwen3.8-27B-GGUF',
-      mmprojFilename: 'mmproj-F16.gguf',
-      mtpRepo: 'unsloth/Qwen3.8-27B-GGUF',
-      mtpFilename: 'MTP/mtp-Qwen3.8-27B-Q4_0.gguf',
-      sizeBytes: 14_252_845_984,
-      ramInfo: 'RAM+VRAM 32GB+6GB / UMA 24GB'
-    }
+    indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.high)
   ]
 
   const AUDIO_CAPABLE_MODELS = new Set(['low_E4.gguf', 'medium_Q4.gguf'])

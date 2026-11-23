@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import path, { join } from 'node:path'
 import test from 'node:test'
 import { createContext, runInContext } from 'node:vm'
 import ts from 'typescript'
@@ -9,6 +10,7 @@ import {
   dependencySpec,
   lastStartupEvidence,
   makeStartupIssue,
+  repairFailingPythonImports,
   startupPackage
 } from '../src/main/utils/startup-diagnostics.ts'
 
@@ -29,6 +31,116 @@ test('recognizes the Sherpa Tokenizer failure and allows only the known Python p
   assert.equal(
     makeStartupIssue('webui', classifyStartupFailure(untrusted), untrusted).repairable,
     false
+  )
+})
+
+test('diagnoses missing faster-whisper, database libraries, and broken Python standard libraries separately', () => {
+  for (const [name, expected] of [
+    ['faster_whisper', 'faster-whisper==1.2.1'],
+    ['sqlalchemy', 'sqlalchemy==2.0.50'],
+    ['onnxruntime', process.platform === 'darwin' ? 'onnxruntime==1.23.2' : 'onnxruntime==1.26.0']
+  ]) {
+    const issue = classifyStartupFailure(`ModuleNotFoundError: No module named '${name}'`)
+    assert.equal(dependencySpec(issue.dependency), expected)
+  }
+  assert.equal(classifyStartupFailure("No module named 'encodings'").kind, 'python')
+  assert.equal(classifyStartupFailure("No module named 'pip'").kind, 'installer')
+})
+
+test('recognizes Brotli decoder initialization and repairs only allowlisted packages', async () => {
+  const message =
+    "  DECODER_ERROR_CLASSES += (brotli.error,)\nAttributeError: module 'brotlicffi' has no attribute 'error'"
+  const failure = classifyStartupFailure(message)
+  assert.equal(failure.dependency, 'brotlicffi')
+  assert.equal(dependencySpec(failure.dependency), 'brotlicffi==1.2.1.0')
+  assert.equal(makeStartupIssue('sherpa', failure, message).repairable, true)
+  assert.equal(
+    classifyStartupFailure("ImportError: cannot import name 'error' from 'brotlicffi'").dependency,
+    'brotlicffi'
+  )
+  assert.equal(
+    classifyStartupFailure('ImportError: DLL load failed while importing _brotlicffi: broken')
+      .dependency,
+    'brotlicffi'
+  )
+  const events = []
+  let healthy = false
+  await repairFailingPythonImports(
+    async () => {
+      events.push('import')
+      if (!healthy) throw new Error(message)
+    },
+    async (dependency) => {
+      events.push(dependency)
+      healthy = true
+      return true
+    }
+  )
+  assert.deepEqual(events, ['import', 'brotlicffi', 'import'])
+  await assert.rejects(
+    repairFailingPythonImports(
+      async () => {
+        throw new Error("ModuleNotFoundError: No module named 'unknown_module'")
+      },
+      async () => {
+        assert.fail('Must not install an unknown module')
+      }
+    ),
+    /unknown_module/
+  )
+})
+
+const brotliWebUITrace = [
+  '\u250c Traceback (most recent call last) \u2510',
+  '\u2502    84 \u2502   if ssl_autogen_dir and (not ssl_keyfile or not ssl_certfile): \u2502',
+  '\u2502 >  477 \u2502   DECODER_ERROR_CLASSES += (brotli.error,) \u2502',
+  '\u2514\u2500\u2518',
+  "AttributeError: module 'brotlicffi' has no attribute 'error'"
+].join('\n')
+
+test('classifies the WebUI Rich traceback by its actual exception, not SSL source lines', () => {
+  const failure = classifyStartupFailure(brotliWebUITrace)
+  assert.deepEqual(failure, {
+    kind: 'dependency',
+    repair: 'dependencies',
+    dependency: 'brotlicffi'
+  })
+  const issue = makeStartupIssue('webui', failure, brotliWebUITrace)
+  assert.equal(issue.repairable, true)
+  assert.equal(issue.data.evidence, "AttributeError: module 'brotlicffi' has no attribute 'error'")
+  const tls = [
+    'Loading local HTTPS settings with --ssl-autogen-dir and SSL_CERTFILE',
+    '\u2502 ssl.SSLError: [SSL] PEM lib (_ssl.c:3900) \u2502'
+  ].join('\n')
+  assert.equal(classifyStartupFailure(tls).kind, 'certificate')
+  assert.equal(classifyStartupFailure(tls.split('\n')[0]).kind, 'unknown')
+})
+
+const lockedNativePackage = String.raw`error: failed to remove file 'C:\Users\Admin\AppData\Roaming\aurapro\python\Lib\site-packages\81d243bd2c585b0f4821__mypyc.cp312-win_amd64.pyd': 拒绝访问。 (os error 5)`
+
+test('only offers a scoped Sherpa retry for an unattributed Python package file', () => {
+  const failure = classifyStartupFailure(lockedNativePackage)
+  assert.deepEqual(failure, {
+    kind: 'locked',
+    repair: 'retry-sherpa-dependencies',
+    dependency: undefined
+  })
+  assert.equal(makeStartupIssue('sherpa', failure, lockedNativePackage).repairable, true)
+  assert.equal(makeStartupIssue('webui', failure, lockedNativePackage).repairable, false)
+  const outsidePackages = lockedNativePackage.replace('site-packages', 'data')
+  assert.equal(classifyStartupFailure(outsidePackages).repair, undefined)
+})
+
+const missingMetadata = String.raw`error: failed to open file C:\Admin\aurapro\python\Lib\site-packages\onnxruntime-1.26.0.dist-info\METADATA: 系统找不到指定的文件。 (os error 2)`
+
+test('missing WebUI package metadata recommends a scoped repair', () => {
+  const failure = classifyStartupFailure(missingMetadata)
+  assert.equal(failure.repair, 'metadata')
+  assert.equal(makeStartupIssue('webui', failure, missingMetadata).repairable, true)
+  assert.equal(makeStartupIssue('sherpa', failure, missingMetadata).repairable, true)
+  assert.equal(
+    classifyStartupFailure(`${missingMetadata}\naccess is denied (os error 5)`).kind,
+    'locked'
   )
 })
 
@@ -78,6 +190,72 @@ const load = (file, name, values) => {
   return context.run
 }
 
+test('Windows refuses to mutate shared Python while the scoped process check reports a user', async () => {
+  let platform = 'win32'
+  let pids = ''
+  let queryError
+  let calls = 0
+  const check = load('src/main/utils/index.ts', 'assertBundledWindowsPythonIdle', {
+    process: {
+      get platform() {
+        return platform
+      },
+      env: {}
+    },
+    path: path.win32,
+    fs: { existsSync: () => true },
+    getPythonInstallationDir: () => 'C:/AuraPro/python',
+    execFile: (exe, args, options, callback) => {
+      calls++
+      assert.equal(exe, 'powershell.exe')
+      assert.match(args.at(-1), /ExecutablePath\.StartsWith\(\$root/)
+      assert.equal(options.env.AURAPRO_PYTHON_CHECK_ROOT, 'C:\\AuraPro\\python\\')
+      callback(queryError, pids)
+    }
+  })
+  await check()
+  pids = '123\n456'
+  await assert.rejects(check(), /PID: 123, 456/)
+  queryError = new Error('CIM query failed')
+  await assert.rejects(check(), /Could not verify/)
+  platform = 'linux'
+  await check()
+  assert.equal(calls, 3)
+})
+
+test(
+  'bundled Python import probe detects a partial Brotli module but tolerates its absence',
+  {
+    skip: !process.env.AURAPRO_TEST_PYTHON
+  },
+  () => {
+    const imports = load('src/main/utils/index.ts', 'brotliStartupImports', {})
+    const result = spawnSync(
+      process.env.AURAPRO_TEST_PYTHON,
+      [
+        '-IBS',
+        '-c',
+        `
+import sys, tempfile
+from pathlib import Path
+with tempfile.TemporaryDirectory() as folder:
+    root = Path(folder)
+    (root / "urllib3.py").write_text("class PoolManager: pass")
+    sys.path.insert(0, folder)
+    exec(sys.argv[1])
+    (root / "brotlicffi").mkdir()
+    exec(sys.argv[1])
+`,
+        imports.join('\n')
+      ],
+      { encoding: 'utf8' }
+    )
+    assert.equal(result.status, 1, result.stderr)
+    assert.match(result.stderr, /cannot import name 'error' from 'brotlicffi'/)
+    assert.equal(classifyStartupFailure(result.stderr).dependency, 'brotlicffi')
+  }
+)
+
 test('reports failed local services without treating an unused WebUI or disabled Sherpa as broken', async () => {
   const diagnostic = (overrides = {}) =>
     load('src/main/index.ts', 'diagnoseLocalStartup', {
@@ -92,12 +270,15 @@ test('reports failed local services without treating an unused WebUI or disabled
       getSherpaServiceState: () => ({ status: null }),
       getInstallDir: () => '/bundled',
       getPythonPath: () => '/bundled/python',
+      existsSync: () => true,
+      hasEmptyBundledPythonDependencies: async () => false,
       join,
       SERVER_STATUS: null,
       SERVER_REACHABLE: false,
       SERVER_PID: null,
       WEBUI_STARTUP_STATE: { phase: 'idle' },
       webUIStartupEvidence: '',
+      webUIInstallationEvidence: '',
       isSherpaStarting: () => false,
       agentStartupError: '',
       makeStartupIssue,
@@ -105,6 +286,8 @@ test('reports failed local services without treating an unused WebUI or disabled
       ...overrides
     })
   assert.equal((await diagnostic()()).healthy, true)
+  const installReport = await diagnostic({ webUIInstallationEvidence: missingMetadata })()
+  assert.equal(installReport.issues[0].id, 'service-startup:webui:metadata')
   const report = await diagnostic({
     SERVER_STATUS: 'failed',
     WEBUI_STARTUP_STATE: { phase: 'failed', detail: 'Process exited' },
@@ -116,6 +299,14 @@ test('reports failed local services without treating an unused WebUI or disabled
   assert.deepEqual(
     Array.from(report.issues, ({ data }) => data.packageName),
     ['pydantic-core', 'tokenizers']
+  )
+  const emptied = await diagnostic({
+    getConfig: async () => ({ defaultConnectionId: 'local', sherpa: { enabled: true } }),
+    hasEmptyBundledPythonDependencies: async () => true
+  })()
+  assert.deepEqual(
+    Array.from(emptied.issues, ({ id }) => id),
+    ['service-startup:webui:environment', 'service-startup:sherpa:environment']
   )
 })
 
@@ -234,11 +425,14 @@ const repair = (events, overrides = {}) =>
     stopSherpa: async () => {
       events.push('stop-sherpa')
     },
+    assertBundledWindowsPythonIdle: async () => {},
     existsSync: () => true,
+    isPythonInstalled: () => true,
     getPythonPath: () => '/bundled/python',
     getInstallDir: () => '/bundled',
     join,
     isUvInstalled: () => true,
+    webUIInstallationEvidence: '',
     startupPackage,
     dependencySpec,
     getExactPackageVersions: async (names) =>
@@ -247,6 +441,9 @@ const repair = (events, overrides = {}) =>
       events.push(spec)
     },
     checkSherpaStartupImports: async () => {},
+    checkWebUIStartupImports: async () => {},
+    repairFailingPythonImports,
+    repairBundledPackageMetadata: async (install) => install(),
     classifyStartupFailure,
     makeStartupIssue,
     lastStartupEvidence,
@@ -268,6 +465,171 @@ const repair = (events, overrides = {}) =>
     toIpcSafeValue: (value) => value,
     ...overrides
   })
+test('metadata repair runs the configured WebUI installer before verifying the service', async () => {
+  const events = []
+  const issue = makeStartupIssue('webui', classifyStartupFailure(missingMetadata), missingMetadata)
+  const result = await repair(events, {
+    getConfig: async () => ({ localServer: { version: '3.10.13' } }),
+    resolveOpenWebUITargetVersion: (version) => version,
+    ensureOpenWebUIPackage: async (version, _onStatus, options) => {
+      assert.equal(options.repairMetadata, true)
+      events.push(`install-webui:${version}`)
+    }
+  })({ issues: [issue] }, [issue.id], () => {})
+  assert.deepEqual(events, [
+    'stop-webui',
+    'stop-sherpa',
+    'install-webui:3.10.13',
+    'start-webui',
+    'ready-webui'
+  ])
+  assert.equal(result.errors.length, 0)
+})
+
+test('empty dependency directory restores the installer, WebUI and Sherpa before restarting', async () => {
+  const events = []
+  const evidence = 'Bundled Python package directory is missing or empty.'
+  const issues = ['webui', 'sherpa'].map((service) =>
+    makeStartupIssue(service, classifyStartupFailure(evidence), evidence)
+  )
+  const result = await repair(events, {
+    isUvInstalled: () => false,
+    installPython: assert.fail,
+    ensureOpenWebUIPackage: async (_version, _status, options) => {
+      assert.equal(options.repairMetadata, true)
+      events.push('install-webui')
+    },
+    resolveOpenWebUITargetVersion: () => '3.10.14',
+    ensureSherpaStartupDependencies: async (_config, _status, options) => {
+      assert.equal(options.restore, true)
+      events.push('install-sherpa')
+    },
+    checkSherpaStartupImports: async () => events.push('probe-sherpa')
+  })(
+    { issues },
+    issues.map(({ id }) => id),
+    () => {}
+  )
+  assert.deepEqual(events, [
+    'stop-webui',
+    'stop-sherpa',
+    'uv',
+    'install-webui',
+    'install-sherpa',
+    'probe-sherpa',
+    'start-sherpa',
+    'start-webui',
+    'ready-webui'
+  ])
+  assert.deepEqual([...result.errors], [])
+})
+
+test('repairs missing faster-whisper and its broken AV dependency in the same repair', async () => {
+  const events = []
+  const evidence = "No module named 'faster_whisper'"
+  const issue = makeStartupIssue('sherpa', classifyStartupFailure(evidence), evidence)
+  let probed = false
+  const result = await repair(events, {
+    getExactPackageVersions: async () => ({}),
+    checkSherpaStartupImports: async () => {
+      if (!probed) {
+        probed = true
+        throw new Error("No module named 'av'")
+      }
+    }
+  })({ issues: [issue] }, [issue.id], () => {})
+  assert.deepEqual(events, [
+    'stop-webui',
+    'stop-sherpa',
+    'faster-whisper==1.2.1',
+    'av==17.1.0',
+    'start-sherpa',
+    'start-webui',
+    'ready-webui'
+  ])
+  assert.deepEqual([...result.errors], [])
+})
+
+test('repairs multiple WebUI imports before starting the WebUI', async () => {
+  const events = []
+  const evidence = "No module named 'sqlalchemy'"
+  const issue = makeStartupIssue('webui', classifyStartupFailure(evidence), evidence)
+  let probed = false
+  const result = await repair(events, {
+    getExactPackageVersions: async () => ({}),
+    checkWebUIStartupImports: async () => {
+      if (!probed) {
+        probed = true
+        throw new Error("No module named 'aiosqlite'")
+      }
+    }
+  })({ issues: [issue] }, [issue.id], () => {})
+  assert.deepEqual(events, [
+    'stop-webui',
+    'stop-sherpa',
+    'sqlalchemy==2.0.50',
+    'aiosqlite==0.22.1',
+    'start-webui',
+    'ready-webui'
+  ])
+  assert.deepEqual([...result.errors], [])
+})
+
+test('repairs the package named by the reported WebUI traceback before checking WebUI readiness', async () => {
+  const events = []
+  const issue = makeStartupIssue(
+    'webui',
+    classifyStartupFailure(brotliWebUITrace),
+    brotliWebUITrace
+  )
+  const result = await repair(events, {
+    getExactPackageVersions: async () => ({}),
+    checkWebUIStartupImports: async () => events.push('probe-webui')
+  })({ issues: [issue] }, [issue.id], () => {})
+  assert.deepEqual(events, [
+    'stop-webui',
+    'stop-sherpa',
+    'brotlicffi==1.2.1.0',
+    'probe-webui',
+    'start-webui',
+    'ready-webui'
+  ])
+  assert.deepEqual([...result.errors], [])
+})
+
+test('retries required Sherpa packages only after checking the shared Python runtime is idle', async () => {
+  const evidence = lockedNativePackage
+  const issue = makeStartupIssue('sherpa', classifyStartupFailure(evidence), evidence)
+  for (const persistLock of [false, true]) {
+    const events = []
+    const result = await repair(events, {
+      assertBundledWindowsPythonIdle: async () => events.push('python-idle'),
+      ensureSherpaStartupDependencies: async (_config, _status, options) => {
+        assert.equal(options.restore, true)
+        events.push('retry-sherpa-dependencies')
+        if (persistLock) throw new Error(lockedNativePackage)
+      },
+      repairStartupPythonPackage: assert.fail,
+      checkSherpaStartupImports: async () => events.push('probe-sherpa')
+    })({ issues: [issue] }, [issue.id], () => {})
+    assert.deepEqual(events, [
+      'stop-webui',
+      'stop-sherpa',
+      'python-idle',
+      'retry-sherpa-dependencies',
+      ...(persistLock ? [] : ['probe-sherpa', 'start-sherpa']),
+      'start-webui',
+      'ready-webui'
+    ])
+    if (persistLock) {
+      assert.match(result.errors[0], /os error 5/)
+      assert.equal(result.repairIssue.id, issue.id)
+      assert.equal(result.repairIssue.repairable, false)
+      assert.equal(result.actions.includes('Sherpa is responding'), false)
+    } else assert.deepEqual([...result.errors], [])
+  }
+})
+
 const runSpeechRepair = (run, selected = true) => {
   const issue = makeStartupIssue(
     'sherpa',
@@ -366,6 +728,36 @@ test('only an absent or empty Python installation can be rebuilt automatically',
   }
 })
 
+test('distinguishes an empty bundled site-packages from a populated or inaccessible directory', async () => {
+  const root = path.resolve('python')
+  const site = join(root, 'Lib', 'site-packages')
+  for (const [directories, entries, expected] of [
+    [[site], 'ENOENT', true],
+    [[site], [], true],
+    [[site], ['__pycache__'], true],
+    [[site], ['torch'], false],
+    [[site], 'EACCES', false],
+    [[path.resolve('other', 'site-packages')], [], false]
+  ]) {
+    const run = load('src/main/utils/index.ts', 'hasEmptyBundledPythonDependencies', {
+      path,
+      fs: {
+        promises: {
+          realpath: async (file) => file,
+          readdir: async () => {
+            if (typeof entries === 'string')
+              throw Object.assign(new Error(entries), { code: entries })
+            return entries
+          }
+        }
+      },
+      getPythonInstallationDir: () => root,
+      getManagedPythonSiteDirectories: async () => directories
+    })
+    assert.equal(await run(), expected)
+  }
+})
+
 test('does not enter Python setup or trigger another install after a repair failure', async () => {
   const events = []
   const result = await runSpeechRepair(
@@ -390,6 +782,7 @@ test('a missing local WebUI Python runtime restores the configured WebUI before 
     SERVER_STATUS: 'failed',
     SERVER_PID: null,
     existsSync: () => false,
+    isPythonInstalled: () => false,
     canRestoreMissingPython: async () => true,
     installPython: async (_path, _status, options) => {
       assert.equal(options.preserveExisting, true)
@@ -475,4 +868,34 @@ test('missing RECORD retries just that exact wheel; file locks do not trigger an
     )
     if (fallback) assert.ok(calls[1].includes('--ignore-installed'))
   }
+})
+
+test('restores missing pip from the bundled standard library before installing and checking uv', async () => {
+  const commands = []
+  const run = load('src/main/utils/index.ts', 'repairStartupPythonPackage', {
+    getPythonPath: () => '/bundled/python',
+    process,
+    pythonEnv: () => ({ PIP_INDEX_URL: 'https://example.invalid' }),
+    execFile: (_python, args, options, callback) => {
+      assert.equal(options.env.PIP_INDEX_URL, undefined)
+      commands.push(args)
+      queueMicrotask(() =>
+        commands.length === 1
+          ? callback(new Error('pip missing'), '', 'No module named pip')
+          : callback(null, '', '')
+      )
+      return {}
+    }
+  })
+  await run('uv')
+  assert.deepEqual(
+    commands.map((args) => Array.from(args).slice(1, 4)),
+    [
+      ['-m', 'pip', '--version'],
+      ['-m', 'ensurepip', '--upgrade'],
+      ['-m', 'pip', '--version'],
+      ['-m', 'pip', '--isolated'],
+      ['-m', 'uv', '--version']
+    ]
+  )
 })

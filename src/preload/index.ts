@@ -114,7 +114,10 @@ const api = {
   checkInstallPreflight: (targetPath?: string, requiredBytes?: number) =>
     ipcRenderer.invoke('system:installPreflight', targetPath, requiredBytes),
   detectBitdefender: () => ipcRenderer.invoke('system:detectBitdefender'),
-  installLocalCertificate: () => ipcRenderer.invoke('security:installLocalCertificate'),
+  installLocalCertificate: (guestId: number) =>
+    ipcRenderer.invoke('security:installLocalCertificate', guestId),
+  removeLocalCertificate: (): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('security:removeLocalCertificate'),
   getLaunchAtLogin: () => ipcRenderer.invoke('app:launchAtLogin:get'),
   setLaunchAtLogin: (enabled: boolean) => ipcRenderer.invoke('app:launchAtLogin:set', enabled),
   openInBrowser: (url: string) => ipcRenderer.invoke('open:browser', { url }),

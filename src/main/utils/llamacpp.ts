@@ -1537,8 +1537,8 @@ export const setupLlamaCpp = async (onStatus?: (status: string) => void): Promis
 
 export const setupIsolatedLlamaCpp = setupLlamaCppBinary
 
-export async function latestLlamaCppVersion(variant: string): Promise<string> {
-  return (await fetchLatestLlamaRelease(resolveVariant(variant), true)).tag_name
+export async function latestLlamaCppVersion(variant: string, force = true): Promise<string> {
+  return (await fetchLatestLlamaRelease(resolveVariant(variant), force)).tag_name
 }
 
 export const startLlamaCppWithFallback = async (onStatus?: (status: string) => void) => {

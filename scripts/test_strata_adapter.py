@@ -75,7 +75,8 @@ class WindowsSourcePathsTest(unittest.TestCase):
                     result = setup.get_llama_cpp()
                     self.assertEqual(result, root / 'third_party/llama.cpp')
                     self.assertEqual(setup.ROOT, root)
-                    self.assertEqual((result / 'ggml/CMakeLists.txt').read_text(), 'cmake')
+                    extended = Path('\\\\?\\' + str(result)) / 'ggml/CMakeLists.txt'
+                    self.assertEqual(extended.read_text(), 'cmake')
             finally:
                 shutil.rmtree('\\\\?\\' + str(root.resolve()))
 
@@ -91,14 +92,78 @@ class ControlAdapterTest(unittest.TestCase):
                 'assert os.environ["STRATA_INSTALL_DIR"] == str(__import__("pathlib").Path(__file__).parent)\n'
                 'assert "STRATA_NO_ACQUIRE" not in os.environ\n'
                 'WIN = False\n'
+                'download = lambda *args: None\n'
                 'def main():\n'
                 '    assert CONTROL is True\n'
+                '    assert SOURCES == ("huggingface",)\n'
+                '    assert __import__("sys").modules[__name__].CONTROL is True\n'
                 '    return 0\n'
             )
             with patch.dict(os.environ, {'STRATA_NO_ACQUIRE': '1'}), patch.object(
                 sys, 'argv', ['adapter', str(root), 'model', '--setup']
             ), patch.object(sys, 'path', list(sys.path)):
                 self.assertEqual(adapter.main(), 0)
+
+    def test_setup_downloads_only_use_pinned_official_models_and_llama_source(self):
+        download = unittest.mock.Mock()
+        pin = 'a' * 40
+        repo = 'unsloth/Qwen3.6-35B-A3B-MTP-GGUF'
+        pinned_url = f'https://huggingface.co/{repo}/resolve/{pin}/model.gguf'
+        source = 'https://github.com/ggml-org/llama.cpp/archive/commit.zip'
+        setup = types.SimpleNamespace(
+            download=download, LLAMA_CPP_ZIP=source, file_pin=lambda url: url == pinned_url
+        )
+        adapter.configure_managed_setup(setup)
+        for url in (source, pinned_url):
+            setup.download(url, Path('file'))
+        for url in (
+            pinned_url.replace('huggingface.co', 'example.invalid'),
+            pinned_url.replace(pin, 'main'),
+            pinned_url.replace('model.gguf', 'other.gguf'),
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'Unsupported download source'):
+                setup.download(url, Path('file'))
+        self.assertEqual(download.call_count, 2)
+        self.assertEqual(setup.model_source(), 'huggingface')
+        self.assertEqual(setup.other_installs({}), [])
+        with self.assertRaisesRegex(RuntimeError, 'Automatic compiler installation is disabled'):
+            setup.build_engine()
+
+    def test_server_dispatches_only_managed_endpoints_and_embedded_images(self):
+        class Handler:
+            def send_error(self, code):
+                return code
+
+            def do_GET(self):
+                return 200
+
+            def do_POST(self):
+                return 200
+
+        class Vision:
+            load = staticmethod(lambda source: source)
+
+        server = types.SimpleNamespace(make_handler=lambda service: Handler, Vision=Vision)
+        adapter.configure_managed_server(server)
+        handler = server.make_handler(None)()
+        for handler_method, allowed, disabled in (
+            (handler.do_GET, ('/health', '/v1/models', '/props', '/slots'), ('/', '/config', '/mcp')),
+            (handler.do_POST, ('/v1/chat/completions',), ('/settings', '/v1/images/generations')),
+        ):
+            for path in allowed:
+                handler.path = path + '?ignored=1'
+                self.assertEqual(handler_method(), 200)
+            for path in disabled:
+                handler.path = path
+                self.assertEqual(handler_method(), 404)
+        self.assertEqual(handler.do_OPTIONS(), 404)
+        content = 'data:image/png;base64,AA=='
+        self.assertEqual(Vision.load(content), content)
+        for source in ('https://example.invalid/image.png', 'picture.png', ''):
+            with self.assertRaisesRegex(ValueError, 'embedded images only'):
+                Vision.load(source)
+        with self.assertRaisesRegex(ValueError, 'embedded images only'):
+            Vision.download('https://example.invalid/image.png')
 
 
 if __name__ == '__main__':

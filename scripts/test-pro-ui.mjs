@@ -23,7 +23,7 @@ const playwrightPath =
 const { chromium } = require(playwrightPath)
 const fixture = {
   supported: true,
-  runtime: 'Strata',
+  runtime: 'AuraPro-Engine',
   platformLabel: 'Windows/Linux x64',
   status: 'stopped',
   error: '',
@@ -31,7 +31,7 @@ const fixture = {
   progress: null,
   legacyModels: [],
   upgradeRequired: false,
-  recommendedVersion: 'v0.2.15',
+  recommendedVersion: 'v0.0.1',
   installed: { version: 'test', source: 'test' },
   port: 18882,
   settings: DEFAULT_STRATA_SETTINGS,
@@ -86,7 +86,15 @@ server.middlewares.use('/__pro_test', async (_req, res) => {
       await new Promise(resolve=>setTimeout(resolve,2500));
       info.progress={stage:'complete',detail:''}; info.status='stopped';
     }, checkStrataUpdate: async () => ({ version:'test-next', available:true }),
-    startStrata: async () => { window.calls.push(['start',info.settings]); info.status='started'; }, stopStrata: async () => { info.status='stopped'; },
+    startStrata: async () => {
+      window.calls.push(['start',info.settings]);
+      if (new URLSearchParams(location.search).has('rollback')) {
+        info.status='starting'; info.progress={stage:'checking',detail:''};
+        await new Promise(resolve => window.finishUpdate = resolve);
+        info.progress={stage:'restored',detail:'New runtime did not start'};
+      }
+      info.status='started';
+    }, stopStrata: async () => { info.status='stopped'; },
     uninstallStrata: async () => { window.calls.push(['uninstall']); info.installed=null; info.status='stopped'; info.progress=null; },
     deleteStrataModel: async (id) => { window.calls.push(['delete',id]); info.models.find(model=>model.id===id).installed=false; info.status='stopped'; },
     cancelStrataOperation: async () => { window.calls.push(['cancel']); window.finishPrepare?.(); }
@@ -109,7 +117,7 @@ server.middlewares.use('/__get_started_test', async (_req, res) => {
     import '/src/renderer/src/app.css';
     const info = ${JSON.stringify(fixture)};
     const mac = navigator.userAgent.includes('Mac');
-    info.runtime = mac ? 'llama.cpp' : 'Strata';
+    info.runtime = mac ? 'llama.cpp' : 'AuraPro-Engine';
     info.platformLabel = mac ? 'macOS' : 'Windows/Linux x64';
     if (mac) info.models.forEach(model => model.ramInfo = 'UMA 96GB');
     window.selection = null;
@@ -314,7 +322,7 @@ try {
       assert.equal(await page.getByText(/^Pro_V1 · /).count(), STRATA_MODELS.length)
       await page.getByText(`Pro_V1 · ${defaultModel.name}`, { exact: true }).click()
       await page
-        .getByText(`${platform === 'mac' ? 'llama.cpp' : 'Strata'} · 18882`, { exact: true })
+        .getByText(`${platform === 'mac' ? 'llama.cpp' : 'AuraPro-Engine'} · 18882`, { exact: true })
         .waitFor()
       await page.screenshot({
         path: path.join(screenshots, `get-started-${platform}.png`),
@@ -468,7 +476,7 @@ try {
       )
       if (!theme) {
         await page.getByRole('button', { name: '安装 / 修复', exact: true }).click()
-        await page.getByText('正在下载 Pro 控制组件', { exact: true }).waitFor()
+        await page.getByText('正在下载 AuraPro Engine', { exact: true }).waitFor()
         await page.getByText('64.0 MB / 128.0 MB (50.0%)', { exact: true }).waitFor()
         await page.screenshot({
           path: path.join(screenshots, 'pro-install-progress.png'),
@@ -552,6 +560,16 @@ try {
     await page.waitForFunction(() => window.calls.some((call) => call[0] === 'cancel'))
     await page.getByRole('button', { name: '启动', exact: true }).waitFor()
     assert.equal(await page.evaluate(() => window.calls.some((call) => call[0] === 'start')), false)
+    await page.close()
+  }
+  {
+    const page = await browser.newPage({ viewport: { width: 640, height: 1000 } })
+    await page.goto(`http://127.0.0.1:${port}/__pro_test?lang=zh-CN&rollback=1`)
+    await page.getByRole('button', { name: '启动', exact: true }).click()
+    await page.getByText('正在检查 Pro 更新', { exact: true }).waitFor()
+    await page.evaluate(() => window.finishUpdate())
+    await page.getByText('更新未能启动，已恢复原运行时', { exact: true }).waitFor()
+    await page.getByRole('button', { name: '停止', exact: true }).waitFor()
     await page.close()
   }
   console.log('Pro UI smoke passed: four locales, narrow/desktop layouts, save and start controls.')

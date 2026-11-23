@@ -375,7 +375,12 @@
               }
 
               try {
-                const response = await window.electronAPI[requestData.type]?.(requestData)
+                const response =
+                  requestData.type === 'removeLocalCertificate'
+                    ? { success: false }
+                    : requestData.type === 'installLocalCertificate'
+                      ? await window.electronAPI.installLocalCertificate(wv.getWebContentsId())
+                      : await window.electronAPI[requestData.type]?.(requestData)
                 if (requestData._requestId) {
                   wv.send('desktop:response', {
                     _responseId: requestData._requestId,

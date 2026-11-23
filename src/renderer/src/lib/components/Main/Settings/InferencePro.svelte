@@ -115,7 +115,7 @@
             </span>
           </div>
           <div class="text-[11px] opacity-25 mt-0.5 font-mono">127.0.0.1:{info.port}</div>
-          {#if info.installed?.managed === 'control'}
+          {#if info.installed?.managed}
             <div class="text-[11px] opacity-40 mt-1 font-mono">
               Control {info.installed.controlVersion} · Engine {info.installed.version}
             </div>
@@ -149,7 +149,7 @@
           onclick={() => action(() => startSelected(true))}>{t('install')}</button
         >
       </div>
-      {#if !uninstalling && (working || (info.progress && info.status === 'failed'))}
+      {#if !uninstalling && (working || info.progress?.stage === 'restored' || (info.progress && info.status === 'failed'))}
         <ProProgress progress={info.progress ?? { stage: 'preparing', detail: '' }} />
       {/if}
       {#if error || info.error}<p role="alert" class="mt-3 break-words text-[11px] text-red-400/60">
@@ -173,7 +173,11 @@
           <button
             class={commandClass}
             disabled={working}
-            onclick={() => action(() => startSelected(true, true))}
+            onclick={() =>
+              action(async () => {
+                await startSelected(true, true)
+                latest = ''
+              })}
           >
             {t('update')}
             {latest || info.recommendedVersion}
@@ -284,9 +288,13 @@
         >
         <button
           class={commandClass}
-          disabled={!info.installed}
+          disabled={!info.installed || !info.models.some((model) => model.id === settings.model)}
           onclick={() =>
-            action(() => window.electronAPI.prepareStrataModel($state.snapshot(settings)))}
+            action(async () => {
+              const selected = $state.snapshot(settings)
+              if (info?.upgradeRequired) await window.electronAPI.installStrata(false, selected)
+              await window.electronAPI.prepareStrataModel(selected)
+            })}
           >{t('prepare')}</button
         >
       </div>

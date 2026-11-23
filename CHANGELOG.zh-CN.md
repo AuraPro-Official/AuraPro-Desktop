@@ -7,6 +7,24 @@ AuraPro Desktop 的重要变更均记录在此文件中。
 本文档遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，
 项目版本遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [3.10.15] - 2026-11-23
+
+### 新增
+
+- Pro 推理运行时新增 `lite_Q4` 和 `lite_Q6`。Windows 和 Linux x64 上的旧 Strata 安装会迁移至 AuraPro-Engine，保留现有模型和设置。Pro 启动时自动检查更新，新版启动失败会回退。
+
+### 优化
+
+- 精简 Pro 模型安装和运行流程。普通模型下载列表下架 `high-code` 系列，由 Pro 系列替代。
+- 扩大 WebUI 和 Sherpa 的「立即修复」覆盖范围，支持缺失、损坏的依赖及被清空的依赖目录。
+- 默认安装 WebUI `3.10.15`，为其他插件和软件接入启用受接口白名单约束的 API 密钥。
+- 卸载时清理 AuraPro 安装的本地安全证书。
+
+### 修复
+
+- 修复 Windows 上 WebUI 和 Sherpa 共用依赖时，语音修复可能因文件占用报「拒绝访问」的问题。
+- WebUI 的 `brotlicffi` 依赖损坏不再被误报为 HTTPS 证书问题。
+
 ## [3.10.14] - 2026-11-22
 
 ### 新增

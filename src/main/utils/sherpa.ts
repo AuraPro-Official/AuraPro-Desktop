@@ -12,7 +12,10 @@ import {
   installPackage,
   isPackageInstalled,
   getPackageVersion,
+  getExactPackageVersions,
   isPythonInstalled,
+  isUvInstalled,
+  repairStartupPythonPackage,
   installPython,
   portInUse,
   getInstallDir,
@@ -950,11 +953,12 @@ export const startSherpa = (
 
 export const ensureSherpaStartupDependencies = async (
   speechConfig: SherpaConfig,
-  onStatus?: (status: string) => void
+  onStatus?: (status: string) => void,
+  { restore = false } = {}
 ): Promise<void> => {
   const requiredPackages = [
     'sherpa-onnx',
-    'fast_langdetect',
+    'fast-langdetect',
     'soundfile',
     'fastapi',
     'uvicorn',
@@ -967,18 +971,32 @@ export const ensureSherpaStartupDependencies = async (
   )
     requiredPackages.push('kaldi-native-fbank', 'onnxruntime', 'scipy')
 
+  const installedVersions = restore ? await getExactPackageVersions(requiredPackages) : undefined
+  let installerChecked = restore
   for (const pkg of requiredPackages) {
     const pinnedVersion =
       pkg === 'sherpa-onnx'
         ? SHERPA_ONNX_VERSION
         : pkg === 'kaldi-native-fbank'
           ? '1.22.3'
-          : pkg === 'onnxruntime' && process.platform === 'darwin' && process.arch === 'x64'
-            ? '1.23.2'
-            : undefined
-    if (!isPackageInstalled(pkg) || (pinnedVersion && getPackageVersion(pkg) !== pinnedVersion)) {
+          : pkg === 'faster-whisper'
+            ? '1.2.1'
+            : pkg === 'onnxruntime' && process.platform === 'darwin'
+              ? '1.23.2'
+              : undefined
+    const installed = installedVersions ? Boolean(installedVersions[pkg]) : isPackageInstalled(pkg)
+    const version = installedVersions
+      ? installedVersions[pkg]
+      : pinnedVersion
+        ? getPackageVersion(pkg)
+        : undefined
+    if (!installed || (pinnedVersion && version !== pinnedVersion)) {
+      if (!installerChecked) {
+        if (!isUvInstalled()) await repairStartupPythonPackage('uv', onStatus)
+        installerChecked = true
+      }
       onStatus?.(`Installing ${pkg}...`)
-      await installPackage(pinnedVersion ? `${pkg}==${pinnedVersion}` : pkg, undefined, onStatus)
+      await installPackage(pkg, pinnedVersion, onStatus, { upgrade: !restore })
     }
   }
 }
@@ -1041,7 +1059,7 @@ const startSherpaInternal = async (
 
   const scriptPath = getServerScriptPath()
   const pythonPath = getPythonPath()
-  const commandArgs = [scriptPath, '--host', host, '--port', availablePort.toString()]
+  const commandArgs = ['-Iu', scriptPath, '--host', host, '--port', availablePort.toString()]
 
   log.info('Starting sherpa service...', pythonPath, commandArgs.join(' '))
 

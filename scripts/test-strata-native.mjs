@@ -8,11 +8,11 @@ import { EventEmitter } from 'node:events'
 import { createRequire } from 'node:module'
 import { createHash } from 'node:crypto'
 import ts from 'typescript'
+import * as llamaRelease from '../src/main/utils/llamacpp-release.ts'
 import * as catalog from '../src/main/utils/strata-models.ts'
 
 const models = {
   ...catalog,
-  DEFAULT_STRATA_SETTINGS: { ...catalog.DEFAULT_STRATA_SETTINGS, model: 'qwen-iq2_xs' },
   nativeProFiles: (id) => {
     const result = catalog.nativeProFiles(id)
     const metadata = { size: 8, sha256: createHash('sha256').update('GGUFtest').digest('hex') }
@@ -30,6 +30,9 @@ test('Mac Pro installs, downloads, starts, diagnoses and stops without global ll
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aurapro-native-pro-'))
   const calls = []
   let downloadMode = 'success'
+  let latestVersion = 'b12000'
+  let elapsed = 0
+  const model = 'qwen36-ud-q4_k_xl'
   let registered
   const exe = path.join(dir, 'strata', 'llama.cpp', 'b12000', 'llama-server')
   const coordinator = {
@@ -56,6 +59,11 @@ test('Mac Pro installs, downloads, starts, diagnoses and stops without global ll
     AbortController,
     AbortSignal,
     setTimeout,
+    Date: class extends Date {
+      static now() {
+        return Date.now() + elapsed
+      }
+    },
     process: {
       platform: 'darwin',
       arch: 'arm64',
@@ -68,15 +76,18 @@ test('Mac Pro installs, downloads, starts, diagnoses and stops without global ll
       if (name === './strata-models') return models
       if (name === './index') return { getInstallDir: () => dir, portInUse: async () => false }
       if (name === './inference-coordinator') return { inferenceCoordinator: coordinator }
+      if (name === './llamacpp-release') return llamaRelease
       if (name === './llamacpp')
         return {
           setupIsolatedLlamaCpp: async (_progress, options) => {
             calls.push(['install', options])
-            fs.mkdirSync(path.dirname(exe), { recursive: true })
-            fs.writeFileSync(exe, 'test')
-            return exe
+            const version = options.version === 'latest' ? latestVersion : options.version
+            const binary = path.join(options.cacheDir, version, 'llama-server')
+            fs.mkdirSync(path.dirname(binary), { recursive: true })
+            fs.writeFileSync(binary, 'test')
+            return binary
           },
-          latestLlamaCppVersion: async () => 'b12000'
+          latestLlamaCppVersion: async () => latestVersion
         }
       if (name.includes('strata_adapter.py')) return { default: 'unused.py' }
       if (name === 'node:child_process')
@@ -92,12 +103,6 @@ test('Mac Pro installs, downloads, starts, diagnoses and stops without global ll
     fetch: async (url) => {
       calls.push(['fetch', url])
       if (url.endsWith('/health')) return Response.json({ status: 'ok' })
-      if (url.includes('/api/models/'))
-        return Response.json({
-          siblings: models
-            .nativeProFiles('qwen-iq2_xs')
-            .files.map((rfilename) => ({ rfilename, lfs: { size: 8 } }))
-        })
       if (downloadMode === 'failed') return new Response('unavailable', { status: 503 })
       if (downloadMode === 'cancelled') {
         await exports.cancelStrataOperation()
@@ -128,13 +133,14 @@ test('Mac Pro installs, downloads, starts, diagnoses and stops without global ll
     assert.equal(options.variant, 'auto')
     await exports.prepareStrataModel({
       ...models.DEFAULT_STRATA_SETTINGS,
+      model,
       context: 20000,
       backend: 'metal'
     })
     const info = await exports.getStrataInfo()
     assert.equal(info.supported, true)
     assert.equal(info.runtime, 'llama.cpp')
-    assert.equal(info.legacyModels.find((model) => model.id === 'qwen-iq2_xs').installed, true)
+    assert.equal(info.models.find(({ id }) => id === model).installed, true)
     const reused = calls.length
     await exports.prepareStrataModel(info.settings)
     assert.equal(calls.length, reused, 'reusing prepared files must not contact the network')
@@ -155,6 +161,7 @@ test('Mac Pro installs, downloads, starts, diagnoses and stops without global ll
     assert.equal(launch[1], exe)
     assert.equal(launch[2][launch[2].indexOf('--ctx-size') + 1], '20000')
     assert.equal(launch[2][launch[2].indexOf('--port') + 1], '18882')
+    assert.equal(launch[2][launch[2].indexOf('--alias') + 1], 'aurapro-pro,lite_Q4')
     assert.equal((await exports.checkStrataHealth()).health, 'healthy')
     await exports.stopStrata()
     assert.equal((await exports.getStrataInfo()).status, 'stopped')
@@ -162,12 +169,12 @@ test('Mac Pro installs, downloads, starts, diagnoses and stops without global ll
       dir,
       'strata',
       'native-models',
-      'qwen-iq2_xs',
-      models.nativeProFiles('qwen-iq2_xs').files[1]
+      model,
+      models.nativeProFiles(model).files[0]
     )
     fs.writeFileSync(shard, 'bad')
     assert.equal(
-      (await exports.getStrataInfo()).legacyModels.some((model) => model.id === 'qwen-iq2_xs'),
+      (await exports.getStrataInfo()).models.find(({ id }) => id === model).installed,
       false
     )
     await assert.rejects(exports.startStrata(), /Prepare the selected Pro model/)
@@ -189,7 +196,7 @@ test('Mac Pro installs, downloads, starts, diagnoses and stops without global ll
     downloadMode = 'success'
     await exports.prepareStrataModel(info.settings)
     assert.equal(
-      (await exports.getStrataInfo()).legacyModels.some((model) => model.id === 'qwen-iq2_xs'),
+      (await exports.getStrataInfo()).models.find(({ id }) => id === model).installed,
       true
     )
     const sharedData = path.join(dir, 'strata', 'data', 'model.gguf')
@@ -199,25 +206,41 @@ test('Mac Pro installs, downloads, starts, diagnoses and stops without global ll
       fs.writeFileSync(file, 'preserved')
     }
     fs.mkdirSync(path.join(dir, 'strata', 'versions', 'old'), { recursive: true })
-    const deletedWeight = path.join(dir, 'strata', 'data', 'models', 'IQ2_XS', 'weight.gguf')
-    const keptWeight = path.join(dir, 'strata', 'data', 'models', 'Q2_0', 'weight.gguf')
-    const sharedMtp = path.join(dir, 'strata', 'data', 'mtp', 'rt', 'experts.bin')
-    const deletedPack = path.join(dir, 'strata', 'data', 'packs', 'iq2_xs', 'experts.bin')
-    const oldConfig = path.join(
+    const deletedWeight = path.join(
       dir,
       'strata',
-      'versions',
-      'old',
-      models.strataConfigName('qwen-iq2_xs')
+      'data',
+      'models',
+      'qwen36-UD-Q4_K_XL',
+      'weight.gguf'
     )
+    const keptWeight = path.join(dir, 'strata', 'data', 'models', 'Q2_0', 'weight.gguf')
+    const sharedMtp = path.join(dir, 'strata', 'data', 'mtp', 'rt', 'experts.bin')
+    const deletedPack = path.join(
+      dir,
+      'strata',
+      'data',
+      'packs',
+      'qwen36-ud-q4_k_xl',
+      'experts.bin'
+    )
+    const oldConfig = path.join(dir, 'strata', 'versions', 'old', models.strataConfigName(model))
     for (const file of [deletedWeight, keptWeight, sharedMtp, deletedPack, oldConfig]) {
       fs.mkdirSync(path.dirname(file), { recursive: true })
       fs.writeFileSync(file, 'test')
     }
+    latestVersion = 'b12001'
+    elapsed += 61_000
     child.exitCode = null
     await exports.startStrata()
+    const updated = await exports.getStrataInfo()
+    assert.equal(updated.installed.version, 'b12001')
+    assert.equal(updated.installed.rollback, undefined)
+    assert.equal(updated.settings.context, 20000)
+    assert.equal(updated.models.find(({ id }) => id === model).installed, true)
+    assert.equal(calls.filter(([type]) => type === 'spawn').at(-1)[1], updated.installed.exe)
     await assert.rejects(exports.deleteStrataModel('../outside'), /Unknown Pro model/)
-    await exports.deleteStrataModel('qwen-iq2_xs')
+    await exports.deleteStrataModel(model)
     assert.equal(child.exitCode, 0)
     assert.equal(fs.existsSync(shard), false)
     assert.equal(fs.existsSync(exe), true)
@@ -228,7 +251,7 @@ test('Mac Pro installs, downloads, starts, diagnoses and stops without global ll
     assert.equal(fs.existsSync(keptWeight), true)
     assert.equal(fs.existsSync(sharedMtp), true)
     assert.equal(
-      (await exports.getStrataInfo()).legacyModels.some((model) => model.id === 'qwen-iq2_xs'),
+      (await exports.getStrataInfo()).models.find(({ id }) => id === model).installed,
       false
     )
     await exports.uninstallStrata()

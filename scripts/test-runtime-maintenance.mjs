@@ -52,6 +52,7 @@ const { AURAPRO_UI_TARGET_VERSION: target, resolveOpenWebUITargetVersion: resolv
 const setup = ({
   versions = { 'aurapro-webui': target },
   latestVersion = '3.11.0',
+  installerPresent = true,
   torchChanged = false,
   epubChanged = false
 } = {}) => {
@@ -69,6 +70,12 @@ const setup = ({
     hasSharedPythonRuntimeImports: () => true,
     getOpenWebUIDataPath: () => '/preserved-data',
     log: { info: () => undefined, warn: () => undefined },
+    isUvInstalled: () => installerPresent,
+    repairStartupPythonPackage: async (name) => events.push(`bootstrap:${name}`),
+    repairBundledPackageMetadata: async (install) => {
+      events.push('metadata')
+      return install()
+    },
     prepareOpenWebUIPackageMutation: async () => events.push('prepare'),
     installPackage: async (name, version) => {
       events.push('install')
@@ -93,14 +100,14 @@ const setup = ({
 }
 
 test('the default WebUI package changes without raising the minimum or overriding version pins', () => {
-  assert.equal(resolveTarget(), '3.10.14')
-  assert.equal(resolveTarget('  '), '3.10.14')
+  assert.equal(resolveTarget(), '3.10.15')
+  assert.equal(resolveTarget('  '), '3.10.15')
   assert.equal(resolveTarget('3.10.11'), '3.10.11')
   assert.equal(resolveTarget('3.10.8'), '3.10.8')
   assert.equal(resolveTarget('3.6.0'), '3.6.0')
   assert.equal(resolveTarget('  v3.10.12  '), '3.10.12')
   assert.equal(resolveTarget('LATEST'), 'latest')
-  assert.equal(resolveTarget('v3.9.16'), '3.10.14')
+  assert.equal(resolveTarget('v3.9.16'), '3.10.15')
   assert.throws(() => resolveTarget('3.5.9'), /not supported/)
   assert.throws(() => resolveTarget('invalid'), /not supported/)
 })
@@ -118,8 +125,48 @@ test('fresh install, update and downgrade clean only after all runtime dependenc
     const { ensure, events, installed } = setup({ versions })
     await ensure()
     assert.equal(installed['aurapro-webui'], target)
-    assert.deepEqual(events, ['prepare', 'install', 'torch', 'epub', 'cleanup'])
+    assert.deepEqual(events, ['prepare', 'metadata', 'install', 'torch', 'epub', 'cleanup'])
   }
+})
+
+test('a missing WebUI and installer are restored in order', async () => {
+  const { ensure, events } = setup({ versions: {}, installerPresent: false })
+  await ensure()
+  assert.deepEqual(events, [
+    'prepare',
+    'metadata',
+    'bootstrap:uv',
+    'install',
+    'torch',
+    'epub',
+    'cleanup'
+  ])
+})
+
+test('WebUI with version metadata but missing package files is explicitly reinstalled', async () => {
+  const calls = []
+  const ensure = loadFunction('ensureOpenWebUIPackage', {
+    ...versionPolicy,
+    isLatestOpenWebUITarget: () => false,
+    getOpenWebUIPackageNameForVersion: () => 'aurapro-webui',
+    getExactPackageVersions: async () => ({ 'aurapro-webui': target }),
+    getExactPackageVersion: () => target,
+    hasOpenWebUICoreFiles: () => calls.length > 0,
+    log: { info: () => {}, warn: () => {} },
+    prepareOpenWebUIPackageMutation: async () => {},
+    isUvInstalled: () => true,
+    repairBundledPackageMetadata: async (install) => install(),
+    installPackage: async (_name, _version, optionsStatus, { reinstallPackages }) => {
+      assert.equal(optionsStatus, undefined)
+      calls.push(...reinstallPackages)
+    },
+    hasSharedPythonRuntimeImports: () => true,
+    installTorchPackage: async () => true,
+    ensureEpubConceptRuntimePackage: async () => {},
+    cleanupPythonPackageCaches: async () => {}
+  })
+  await ensure()
+  assert.deepEqual(calls, ['aurapro-webui'])
 })
 
 test('an existing installation is left alone for explicit old pins and latest on startup', async () => {
@@ -135,14 +182,24 @@ test('an existing installation is left alone for explicit old pins and latest on
 test('explicit latest update cleans, but setup can defer cleanup until all modules finish', async () => {
   for (const cleanupCaches of [true, false]) {
     const { ensure, events } = setup()
-    await ensure('latest', undefined, { forceLatest: true, cleanupCaches })
+    await ensure('latest', undefined, { forceLatest: true, repairMetadata: true, cleanupCaches })
     assert.deepEqual(events, [
       'prepare',
+      'metadata',
       'install',
       'torch',
       'epub',
       ...(cleanupCaches ? ['cleanup'] : [])
     ])
+  }
+})
+
+test('explicit metadata repair restores WebUI dependencies without changing the installed version', async () => {
+  for (const version of [target, 'latest']) {
+    const { ensure, events, installed } = setup()
+    await ensure(version, undefined, { repairMetadata: true })
+    assert.equal(installed['aurapro-webui'], target)
+    assert.deepEqual(events, ['prepare', 'metadata', 'install', 'torch', 'epub', 'cleanup'])
   }
 })
 
@@ -162,7 +219,15 @@ test('legacy migration preserves the new distribution and cleans after dependenc
   const { ensure, events, installed } = setup({ versions: { 'aurapro-ui': '3.9.3' } })
   await ensure()
   assert.deepEqual(installed, { 'aurapro-webui': target })
-  assert.deepEqual(events, ['prepare', 'install', 'remove:aurapro-ui', 'torch', 'epub', 'cleanup'])
+  assert.deepEqual(events, [
+    'prepare',
+    'metadata',
+    'install',
+    'remove:aurapro-ui',
+    'torch',
+    'epub',
+    'cleanup'
+  ])
 })
 
 const setupTorch = ({

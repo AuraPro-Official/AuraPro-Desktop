@@ -10,14 +10,16 @@ import adapterPath from '../../../resources/strata_adapter.py?asset&asarUnpack'
 import { getInstallDir, portInUse } from './index'
 import { inferenceCoordinator } from './inference-coordinator'
 import { setupIsolatedLlamaCpp, latestLlamaCppVersion } from './llamacpp'
+import { isNewerLlamaBuild } from './llamacpp-release'
 import {
   DEFAULT_STRATA_SETTINGS,
   STRATA_MODELS,
   ALL_STRATA_MODELS,
   STRATA_PORT,
-  STRATA_SOURCE,
-  STRATA_RELEASE,
+  AURAPRO_ENGINE_RELEASE,
+  AURAPRO_ENGINE_REPO,
   strataConfigName,
+  strataModelAliases,
   strataHardwareRecommendation,
   strataSetupArgs,
   nativeProFiles,
@@ -26,19 +28,27 @@ import {
   type StrataSettings
 } from './strata-models'
 
-type Installation = {
+type RuntimeInstallation = {
   source: string
   revision?: string
   version: string
   backend: string
   exe?: string
-  managed?: 'control'
+  managed?: 'control' | 'aurapro-engine'
   controlVersion?: string
   productVersion?: string
 }
+type Installation = RuntimeInstallation & {
+  rollback?: { runtime: RuntimeInstallation; settings: StrataSettings }
+}
+type Release = { version: string; control?: ControlRelease }
+const AUTO_CHECK_INTERVAL = 60_000
+const AUTO_RETRY_INTERVAL = 24 * 60 * 60_000
+let lastUpdateCheck = 0
 let server: ChildProcess | null = null
 let worker: ChildProcess | null = null
 let operation: AbortController | null = null
+let updateLookup: AbortController | null = null
 let startupAbort: AbortController | null = null
 let status = 'stopped'
 let error = ''
@@ -60,8 +70,78 @@ let progress: {
 } | null = null
 const stopping = new WeakMap<ChildProcess, Promise<void>>()
 
+const engineConfigKeys = [
+  'exe',
+  'cwd',
+  'tokenizer',
+  'model_name',
+  'arch',
+  'log',
+  'lib_dirs',
+  'backend',
+  'cuda',
+  'gpu',
+  'gpus_asked',
+  'gpus_by',
+  'layer_split',
+  'gpu_order',
+  'gpu_roles',
+  'parallel',
+  'draft_vocab',
+  'mtp',
+  'sampling',
+  'repeat_stop_tokens',
+  'reasoning_budget_tokens'
+]
+const visionConfigKeys = [
+  'exe',
+  'cpu_exe',
+  'mmproj',
+  'model',
+  'gpu',
+  'max_tokens',
+  'threads',
+  'elastic'
+]
+const engineEnvKeys = [
+  'STRATA_HIPBLASLT_TUNING',
+  'STRATA_ROCBLAS_TUNING',
+  'STRATA_RESIDENT_PIN',
+  'STRATA_NO_ARENA_THP',
+  'STRATA_MMQ_KQ',
+  'STRATA_HC_Q8',
+  'STRATA_ROUTE_TAIL_SKIP',
+  'STRATA_GDN_HEAD',
+  'STRATA_GDN_PP',
+  'STRATA_GDN_CONVL2',
+  'STRATA_GDN_NOY',
+  'STRATA_CVEC_FUSE',
+  'STRATA_PF_PAD',
+  'STRATA_Q8_PACKED',
+  'STRATA_Q6_PACKED',
+  'STRATA_MMVF_ROWS',
+  'STRATA_ATTN_LANECELL',
+  'STRATA_EXPERT_V2',
+  'STRATA_TSUM',
+  'STRATA_LFUSE',
+  'STRATA_GDN_SPLIT',
+  'STRATA_QFUSE',
+  'STRATA_PLE_BATCH',
+  'STRATA_SH_STREAM'
+]
+
+function pickConfig(config: unknown, keys: readonly string[]): Record<string, unknown> {
+  if (!config || typeof config !== 'object') return {}
+  const source = config as Record<string, unknown>
+  return Object.fromEntries(
+    keys.filter((key) => Object.hasOwn(source, key)).map((key) => [key, source[key]])
+  )
+}
+
 const root = () => path.join(getInstallDir(), 'strata')
 const sourceDir = (source: string) => path.join(root(), 'versions', source)
+const isAuraProEngine = (installed?: Installation | null) => installed?.managed === 'aurapro-engine'
+const managedEntry = (dir: string) => path.join(dir, 'desktop_runtime.py')
 const python = (source: string) => {
   const bundled = path.join(
     sourceDir(source),
@@ -94,7 +174,10 @@ function writeJson(file: string, value: unknown): void {
 const installation = () => readJson<Installation | null>(path.join(root(), 'installed.json'), null)
 
 function proHealthReady(body: { service?: string; loaded?: boolean; status?: string }): boolean {
-  return native() ? body.status === 'ok' : body.service === 'strata' && body.loaded === true
+  return native()
+    ? body.status === 'ok'
+    : body.service === (isAuraProEngine(installation()) ? 'aurapro-engine' : 'strata') &&
+        body.loaded === true
 }
 
 function nativeModelReady(model: string, vision = false): boolean {
@@ -243,14 +326,20 @@ async function terminateProcess(child: ChildProcess): Promise<void> {
 }
 
 function controlEnv(dir: string, offline = false): NodeJS.ProcessEnv {
+  const inherited = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([key]) =>
+        !/^(?:STRATA_|HF_|HUGGINGFACE_|HUGGING_FACE_|MODELSCOPE_|PYTHON|VIRTUAL_ENV$)/i.test(key)
+    )
+  )
   return {
-    ...process.env,
+    ...inherited,
     PYTHONUNBUFFERED: '1',
     PYTHONUTF8: '1',
     PYTHONNOUSERSITE: '1',
-    PYTHONHOME: undefined,
-    PYTHONPATH: undefined,
-    VIRTUAL_ENV: undefined,
+    HF_ENDPOINT: 'https://huggingface.co',
+    STRATA_SOURCE: 'huggingface',
+    STRATA_FEED_MODELS: '0',
     STRATA_COMPONENTS_DIR: path.join(root(), 'components'),
     STRATA_INSTALL_DIR: dir,
     STRATA_DATA_DIR: path.join(root(), 'data'),
@@ -311,20 +400,141 @@ type ControlRelease = {
   assets: { name: string; size: number; digest?: string; browser_download_url: string }[]
 }
 
-async function controlRelease(tag = 'latest', signal?: AbortSignal): Promise<ControlRelease> {
+async function controlRelease(
+  tag = 'latest',
+  signal?: AbortSignal,
+  timeout = 20_000
+): Promise<ControlRelease> {
   const endpoint = tag === 'latest' ? 'latest' : `tags/${encodeURIComponent(tag)}`
   const response = await fetch(
-    `https://api.github.com/repos/Niko1221/Strata/releases/${endpoint}`,
+    `https://api.github.com/repos/${AURAPRO_ENGINE_REPO}/releases/${endpoint}`,
     {
       headers: { Accept: 'application/vnd.github+json' },
-      signal: signal ?? AbortSignal.timeout(20000)
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(timeout)])
+        : AbortSignal.timeout(timeout)
     }
   )
-  if (!response.ok) throw new Error(`Strata release lookup failed: ${response.status}`)
+  if (!response.ok) throw new Error(`AuraPro Engine release lookup failed: ${response.status}`)
   const release = (await response.json()) as ControlRelease
-  if (release.draft || release.prerelease || !/^v\d+\.\d+\.\d+(?:\.\d+)?$/.test(release.tag_name))
-    throw new Error('Unexpected Strata release tag')
+  if (
+    release.draft ||
+    release.prerelease ||
+    !/^v\d+\.\d+\.\d+$/.test(release.tag_name) ||
+    (tag !== 'latest' && tag !== release.tag_name)
+  )
+    throw new Error('Unexpected AuraPro Engine release tag')
   return release
+}
+
+async function latestProRelease(signal?: AbortSignal, automatic = false): Promise<Release> {
+  if (native()) return { version: await latestLlamaCppVersion('auto', !automatic) }
+  const previous = installation()
+  const timeout = automatic ? 5000 : 20_000
+  const control = await controlRelease('latest', signal, timeout).catch((err: unknown) => {
+    signal?.throwIfAborted()
+    if (isAuraProEngine(previous)) throw err
+    return controlRelease(AURAPRO_ENGINE_RELEASE, signal, timeout)
+  })
+  return { version: control.tag_name, control }
+}
+
+function updateAvailable(installed: Installation | null, release: Release): boolean {
+  if (!installed) return true
+  if (!release.control) return isNewerLlamaBuild(installed.version, release.version)
+  if (!isAuraProEngine(installed) || !/^v\d+\.\d+\.\d+$/.test(installed.productVersion ?? ''))
+    return true
+  const parts = (version: string) => version.slice(1).split('.').map(Number)
+  const current = parts(installed.productVersion!)
+  const next = parts(release.version)
+  const changed = next.findIndex((part, i) => part !== current[i])
+  return changed !== -1 && next[changed] > current[changed]
+}
+
+function rollbackFor(
+  previous: Installation | null,
+  settings: StrataSettings
+): Installation['rollback'] {
+  if (!previous) return undefined
+  const { rollback, ...runtime } = previous
+  if (rollback) return rollback
+  try {
+    readPreparedConfig(previous, settings)
+    return { runtime, settings }
+  } catch {
+    return undefined
+  }
+}
+
+function recordFailedUpdate(version: string): void {
+  try {
+    writeJson(path.join(root(), 'failed-update.json'), { version, at: Date.now() })
+  } catch (err) {
+    append(`[Pro] Could not record the failed update: ${String(err)}\n`)
+  }
+}
+
+function recentlyFailedUpdate(version: string): boolean {
+  try {
+    const failed = readJson<{ version: string; at: number } | null>(
+      path.join(root(), 'failed-update.json'),
+      null
+    )
+    return !!failed && failed.version === version && Date.now() - failed.at < AUTO_RETRY_INTERVAL
+  } catch {
+    return false
+  }
+}
+
+async function downloadEngineAsset(
+  filename: string,
+  release: ControlRelease,
+  target: string,
+  signal: AbortSignal,
+  maxSize: number,
+  pin?: { sha256: string; size: number }
+): Promise<void> {
+  if (!/^[a-z0-9][a-z0-9_.-]+$/.test(filename)) throw new Error('Invalid engine asset filename')
+  const asset = release.assets.find((item) => item.name === filename)
+  if (
+    !asset ||
+    !/^sha256:[a-f0-9]{64}$/.test(asset.digest ?? '') ||
+    !Number.isSafeInteger(asset.size) ||
+    asset.size <= 0 ||
+    asset.size > maxSize ||
+    (pin && (asset.size !== pin.size || asset.digest !== `sha256:${pin.sha256}`))
+  )
+    throw new Error(`The AuraPro Engine release has no verified package: ${filename}`)
+  if (
+    asset.browser_download_url !==
+    `https://github.com/${AURAPRO_ENGINE_REPO}/releases/download/${release.tag_name}/${filename}`
+  )
+    throw new Error('Unexpected AuraPro Engine download source')
+  const response = await fetch(asset.browser_download_url, { signal })
+  if (!response.ok || !response.body)
+    throw new Error(`AuraPro Engine download failed: ${response.status}`)
+  fs.mkdirSync(path.dirname(target), { recursive: true })
+  const hash = createHash('sha256')
+  let bytes = 0
+  const current = progress!
+  current.totalBytes = asset.size
+  current.downloadedBytes = 0
+  await pipeline(
+    Readable.fromWeb(response.body as never),
+    new Transform({
+      transform(chunk, _encoding, callback) {
+        bytes += chunk.length
+        if (bytes > asset.size) return callback(new Error('Oversized AuraPro Engine download'))
+        hash.update(chunk)
+        current.downloadedBytes = bytes
+        callback(null, chunk)
+      }
+    }),
+    fs.createWriteStream(target),
+    { signal }
+  )
+  if (bytes !== asset.size || `sha256:${hash.digest('hex')}` !== asset.digest)
+    throw new Error('AuraPro Engine checksum verification failed')
 }
 
 async function installControl(
@@ -334,62 +544,26 @@ async function installControl(
 ): Promise<void> {
   const platform = process.platform === 'win32' ? 'windows-x86_64' : 'linux-x86_64'
   const extension = process.platform === 'win32' ? '.zip' : '.tar.gz'
-  const suffix = `-${platform}${extension}`
-  const asset = release.assets.find(
-    (item) =>
-      item.name.startsWith('strata-control-') &&
-      item.name.endsWith(suffix) &&
-      /^\d+(?:\.\d+)+$/.test(item.name.slice('strata-control-'.length, -suffix.length))
-  )
-  if (
-    !asset ||
-    !/^sha256:[a-f0-9]{64}$/.test(asset.digest ?? '') ||
-    asset.size <= 0 ||
-    asset.size > 512 * 1024 ** 2
-  )
-    throw new Error('The Strata release has no verified Control package for this platform')
-  if (
-    !asset.browser_download_url.startsWith(
-      `https://github.com/Niko1221/Strata/releases/download/${release.tag_name}/`
-    )
-  )
-    throw new Error('Unexpected Strata Control download source')
-  setProgress('source')
-  const response = await fetch(asset.browser_download_url, { signal })
-  if (!response.ok || !response.body)
-    throw new Error(`Strata Control download failed: ${response.status}`)
-  fs.mkdirSync(dir, { recursive: true })
   const archive = path.join(dir, `control${extension}`)
-  const hash = createHash('sha256')
-  let bytes = 0
-  const current = progress!
-  current.totalBytes = asset.size
-  await pipeline(
-    Readable.fromWeb(response.body as never),
-    new Transform({
-      transform(chunk, _encoding, callback) {
-        bytes += chunk.length
-        if (bytes > asset.size) return callback(new Error('Oversized Strata Control download'))
-        hash.update(chunk)
-        current.downloadedBytes = bytes
-        callback(null, chunk)
-      }
-    }),
-    fs.createWriteStream(archive),
-    { signal }
+  setProgress('source')
+  await downloadEngineAsset(
+    `aurapro-engine-control-${release.tag_name.slice(1)}-${platform}${extension}`,
+    release,
+    archive,
+    signal,
+    512 * 1024 ** 2
   )
-  if (bytes !== asset.size || `sha256:${hash.digest('hex')}` !== asset.digest)
-    throw new Error('Strata Control checksum verification failed')
   setProgress('extracting')
   // Only extract the archive after verifying its official release digest.
   if (process.platform === 'win32') {
-    await promisify(execFile)('tar', ['-xf', archive, '-C', dir], { windowsHide: true, signal })
+    const systemTar = path.win32.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+    await promisify(execFile)(systemTar, ['-xf', archive, '-C', dir], { windowsHide: true, signal })
   } else {
     await tar.x({ file: archive, cwd: dir })
   }
   fs.unlinkSync(archive)
-  if (!fs.existsSync(path.join(dir, 'setup.py')) || !fs.existsSync(path.join(dir, 'strata.py')))
-    throw new Error('Unexpected Strata Control archive layout')
+  if (!fs.existsSync(path.join(dir, 'terminal', 'setup.py')) || !fs.existsSync(managedEntry(dir)))
+    throw new Error('Unexpected AuraPro Engine control archive layout')
 }
 
 export async function getStrataInfo() {
@@ -398,15 +572,19 @@ export async function getStrataInfo() {
   const dir = installed ? sourceDir(installed.source) : ''
   return {
     supported: supported(),
-    runtime: native() ? 'llama.cpp' : 'Strata',
+    runtime: native()
+      ? 'llama.cpp'
+      : installed && !isAuraProEngine(installed)
+        ? 'Strata (legacy)'
+        : 'AuraPro-Engine',
     platformLabel: native() ? 'macOS' : 'Windows/Linux x64',
     status,
     error,
     logs: output,
     progress,
     installed,
-    upgradeRequired: !!installed && !native() && installed.managed !== 'control',
-    recommendedVersion: STRATA_RELEASE,
+    upgradeRequired: !!installed && !native() && !isAuraProEngine(installed),
+    recommendedVersion: AURAPRO_ENGINE_RELEASE,
     port: STRATA_PORT,
     settings,
     models: STRATA_MODELS.map((model) => ({
@@ -460,6 +638,7 @@ async function exclusiveOperation(action: (signal: AbortSignal) => Promise<void>
 
 export async function cancelStrataOperation(): Promise<void> {
   operation?.abort()
+  updateLookup?.abort()
   startupAbort?.abort()
   await terminate(worker)
 }
@@ -506,33 +685,30 @@ export async function checkStrataUpdate(): Promise<{
   source: string
   available: boolean
 }> {
-  if (native()) {
-    const version = await latestLlamaCppVersion('auto')
-    return { version, source: version, available: installation()?.version !== version }
+  const release = await latestProRelease()
+  return {
+    version: release.version,
+    source: release.version,
+    available: updateAvailable(installation(), release)
   }
-  const release = await controlRelease()
-  const installed = installation()
-  let available = installed?.productVersion !== release.tag_name
-  if (!available && installed?.managed === 'control') {
-    const dir = sourceDir(installed.source)
-    const { stdout } = await promisify(execFile)(
-      python(installed.source),
-      [adapterPath, dir, 'check', getStrataSettings().backend, release.tag_name],
-      { cwd: dir, env: controlEnv(dir), windowsHide: true, timeout: 30000, maxBuffer: 1024 * 1024 }
-    )
-    available = adapterResult<{ available: boolean }>(stdout).available
-  }
-  return { version: release.tag_name, source: release.tag_name, available }
 }
 
-export async function installStrata(update = false, requested?: StrataSettings): Promise<void> {
+export async function installStrata(
+  update = false,
+  requested?: StrataSettings,
+  resolved?: Release
+): Promise<void> {
+  const release = resolved ?? (update ? await latestProRelease() : undefined)
+  if (release && !updateAvailable(installation(), release)) return
   const settings = validateStrataSettings(requested ?? getStrataSettings())
   await exclusiveOperation(async (signal) => {
+    const previous = installation()
+    const rollback = rollbackFor(previous, getStrataSettings())
+    if (release && !updateAvailable(previous, release)) return
     if (native()) {
       nativeProArgs(settings, 'validation.gguf', settings.vision ? 'projector.gguf' : undefined)
       setProgress('runtime')
-      const previous = installation()
-      const version = update ? (await checkStrataUpdate()).version : previous?.version || 'latest'
+      const version = release?.version ?? (previous?.version || 'latest')
       const exe = await setupIsolatedLlamaCpp(
         (detail) => {
           if (progress) progress.detail = detail
@@ -540,63 +716,84 @@ export async function installStrata(update = false, requested?: StrataSettings):
         { version, variant: 'auto', cacheDir: path.join(root(), 'llama.cpp'), signal }
       )
       signal.throwIfAborted()
+      const installedVersion = path.relative(path.join(root(), 'llama.cpp'), exe).split(path.sep)[0]
+      if (release && installedVersion !== version)
+        throw new Error(`The requested llama.cpp build ${version} was not installed`)
       writeJson(path.join(root(), 'installed.json'), {
         source: 'native',
-        version: path.relative(path.join(root(), 'llama.cpp'), exe).split(path.sep)[0],
+        version: installedVersion,
         backend: 'metal',
-        exe
+        exe,
+        rollback
       })
       writeJson(path.join(root(), 'settings.json'), settings)
+      lastUpdateCheck = Date.now()
       return
     }
-    const previous = installation()
-    const release = await controlRelease(
-      update ? 'latest' : previous?.productVersion || STRATA_RELEASE,
-      signal
-    )
+    const control =
+      release?.control ??
+      (await controlRelease(
+        (isAuraProEngine(previous) && previous?.productVersion) || AURAPRO_ENGINE_RELEASE,
+        signal
+      ))
+    const tag = control.tag_name
     // Stage a whole private Control; keep the old environment and model files for recovery.
-    const source = `control-${release.tag_name.slice(1)}-${randomUUID()}`
+    const source = `engine-${tag.slice(1)}-${randomUUID().slice(0, 8)}`
     const dir = sourceDir(source)
     let activated = false
     try {
-      await installControl(dir, release, signal)
+      await installControl(dir, control, signal)
       signal.throwIfAborted()
       const bundle = readJson<{ version?: string }>(path.join(dir, 'BUNDLE.json'), {})
-      if (!bundle.version || !fs.existsSync(python(source)))
-        throw new Error('Strata Control has no valid bundled Python environment')
+      if (`v${bundle.version}` !== tag || !fs.existsSync(python(source)))
+        throw new Error('AuraPro Engine has no matching bundled Python environment')
       setProgress('runtime')
+      const executable = python(source)
+      const entry = managedEntry(dir)
+      const backend =
+        settings.backend === 'auto' && (previous?.backend === 'cuda' || previous?.backend === 'hip')
+          ? previous.backend
+          : settings.backend
+      const selected = adapterResult<{ name: string; sha256: string; size: number }>(
+        await run(executable, ['-B', '-E', '-s', entry, 'select', backend], dir, signal)
+      )
+      const archive = path.join(dir, 'native.tar.gz')
+      await downloadEngineAsset(selected.name, control, archive, signal, 2 * 1024 ** 3, selected)
       const result = await run(
-        python(source),
-        [adapterPath, dir, 'install', settings.backend, release.tag_name],
+        executable,
+        ['-B', '-E', '-s', entry, 'install', backend, archive],
         dir,
         signal
       )
-      const meta = adapterResult<{ version: string; backend: string; control: string }>(result)
-      if (!meta.version) throw new Error('Pro installation did not produce a valid runtime')
-      // Preserve model data across engine upgrades; only rewrite paths inside the old source tree.
+      fs.unlinkSync(archive)
+      const meta = adapterResult<{ version: string; backend: string }>(result)
+      if (!meta.version || !['cuda', 'hip'].includes(meta.backend))
+        throw new Error('Pro installation did not produce a valid runtime')
+      // Profiles may reference tokenizers and other files in an older install. Keep those
+      // paths; only bind executable components to the new engine.
       if (previous && previous.source !== source && previous.backend === (meta.backend || 'cuda')) {
         const oldDir = sourceDir(previous.source)
-        const relocate = (value: unknown): unknown => {
-          if (
-            typeof value === 'string' &&
-            (value === oldDir || value.startsWith(oldDir + path.sep))
-          ) {
-            return dir + value.slice(oldDir.length)
-          }
-          if (Array.isArray(value)) return value.map(relocate)
-          if (value && typeof value === 'object')
-            return Object.fromEntries(
-              Object.entries(value).map(([key, item]) => [key, relocate(item)])
-            )
-          return value
-        }
         for (const model of ALL_STRATA_MODELS) {
           const file = strataConfigName(model.id)
-          const config = readJson(path.join(oldDir, file), null)
+          const config = readJson<Record<string, unknown> | null>(path.join(oldDir, file), null)
           if (config) {
-            const migrated = relocate(config) as Record<string, unknown>
-            migrated.exe = 'component:strata-engine'
+            const migrated: Record<string, unknown> = {
+              ...config,
+              exe: 'component:strata-engine',
+              cwd: config.cwd || oldDir
+            }
             delete migrated.lib_dirs
+            if (migrated.vision) {
+              const vision = pickConfig(migrated.vision, visionConfigKeys)
+              for (const key of ['exe', 'cpu_exe']) {
+                if (typeof vision[key] === 'string') {
+                  const name = path.basename(vision[key] as string)
+                  if (/^strata-vision(?:-hip)?(?:\.exe)?$/.test(name)) vision[key] = `component:${name}`
+                  else delete vision[key]
+                }
+              }
+              migrated.vision = vision
+            }
             writeJson(path.join(dir, file), migrated)
           }
         }
@@ -604,15 +801,16 @@ export async function installStrata(update = false, requested?: StrataSettings):
       signal.throwIfAborted()
       writeJson(path.join(root(), 'installed.json'), {
         source,
-        revision: release.tag_name === STRATA_RELEASE ? STRATA_SOURCE : release.tag_name,
         version: meta.version,
         backend: meta.backend,
-        managed: 'control',
-        controlVersion: meta.control,
-        productVersion: release.tag_name
+        managed: 'aurapro-engine',
+        controlVersion: bundle.version,
+        productVersion: tag,
+        rollback
       })
       activated = true
       writeJson(path.join(root(), 'settings.json'), settings)
+      lastUpdateCheck = Date.now()
     } finally {
       if (!activated)
         await removeProPath(dir).catch((err) => append(`Pro staging cleanup: ${String(err)}\n`))
@@ -622,14 +820,12 @@ export async function installStrata(update = false, requested?: StrataSettings):
 
 export async function prepareStrataModel(settings: StrataSettings): Promise<void> {
   const valid = validateStrataSettings(settings)
+  if (!STRATA_MODELS.some((model) => model.id === valid.model))
+    throw new Error('This Pro model is retired and cannot be downloaded again')
   await exclusiveOperation(async (signal) => {
     const installed = installation()
     if (!installed) throw new Error('Install Pro before downloading a model')
-    if (
-      !native() &&
-      installed.managed !== 'control' &&
-      STRATA_MODELS.some((model) => model.id === valid.model)
-    )
+    if (!native() && !isAuraProEngine(installed))
       throw new Error('Update Pro in Desktop settings before preparing a new model')
     if (native()) {
       await prepareNativeModel(valid, signal)
@@ -638,9 +834,17 @@ export async function prepareStrataModel(settings: StrataSettings): Promise<void
     }
     const dir = sourceDir(installed.source)
     setProgress('model')
+    if (valid.backend !== 'auto' && valid.backend !== installed.backend)
+      throw new Error('Reinstall AuraPro Engine for the selected GPU backend first')
+    if (installed.backend !== 'cuda' && installed.backend !== 'hip')
+      throw new Error('AuraPro Engine has no installed CUDA or HIP component')
+    const setupArgs = strataSetupArgs(
+      { ...valid, backend: installed.backend },
+      path.join(root(), 'data')
+    )
     await run(
       python(installed.source),
-      [adapterPath, dir, 'model', ...strataSetupArgs(valid, path.join(root(), 'data'))],
+      ['-B', '-E', '-s', managedEntry(dir), 'model', ...setupArgs],
       dir,
       signal
     )
@@ -703,7 +907,10 @@ function readPreparedConfig(
   if (
     !config ||
     typeof config.exe !== 'string' ||
-    (!(installed.managed === 'control' && config.exe.startsWith('component:')) &&
+    (!(
+      (installed.managed === 'control' || isAuraProEngine(installed)) &&
+      config.exe.startsWith('component:')
+    ) &&
       !fs.existsSync(config.exe)) ||
     !Array.isArray(config.args) ||
     !config.args.every((value) => typeof value === 'string') ||
@@ -832,13 +1039,17 @@ async function startRaw(): Promise<void> {
   if (resident >= 0 && (settings.context < 65536 || settings.kv === 'k8v4'))
     args.splice(resident, 2)
   const runtimeConfig = path.join(dir, 'aurapro-active.json')
-  writeJson(runtimeConfig, {
-    ...config,
-    args,
-    aliases: ['aurapro-pro'],
-    host: '127.0.0.1',
-    port: STRATA_PORT
-  })
+  if (!native()) {
+    writeJson(runtimeConfig, {
+      ...pickConfig(config, engineConfigKeys),
+      ...(config.env ? { env: pickConfig(config.env, engineEnvKeys) } : {}),
+      ...(config.vision ? { vision: pickConfig(config.vision, visionConfigKeys) } : {}),
+      args,
+      aliases: strataModelAliases(settings.model),
+      host: '127.0.0.1',
+      port: STRATA_PORT
+    })
+  }
   error = ''
   status = 'starting'
   setProgress('starting')
@@ -849,7 +1060,9 @@ async function startRaw(): Promise<void> {
     native()
       ? args
       : [
-          path.join(dir, 'serve', 'server.py'),
+          ...(isAuraProEngine(installed)
+            ? ['-B', '-E', '-s', managedEntry(dir), 'serve']
+            : [adapterPath, dir, 'serve']),
           '--engine',
           'strata',
           '--config',
@@ -858,7 +1071,7 @@ async function startRaw(): Promise<void> {
           '127.0.0.1',
           '--port',
           String(STRATA_PORT),
-          ...(installed.managed === 'control' ? ['--offline'] : [])
+          ...(installed.managed === 'control' || isAuraProEngine(installed) ? ['--offline'] : [])
         ],
     {
       cwd: native() ? path.dirname(config.exe as string) : dir,
@@ -929,8 +1142,72 @@ async function startRaw(): Promise<void> {
   }
 }
 
+async function startWithUpdates(): Promise<void> {
+  if (server && status === 'started') return
+  const current = installation()
+  if (current && !current.rollback && Date.now() - lastUpdateCheck >= AUTO_CHECK_INTERVAL) {
+    lastUpdateCheck = Date.now()
+    let latest: Release | undefined
+    const lookup = new AbortController()
+    updateLookup = lookup
+    try {
+      status = 'starting'
+      setProgress('checking')
+      latest = await latestProRelease(lookup.signal, true)
+      lookup.signal.throwIfAborted()
+      if (updateAvailable(current, latest) && !recentlyFailedUpdate(latest.version)) {
+        await installStrata(true, undefined, latest)
+      }
+    } catch (err) {
+      if (latest && !lookup.signal.aborted) recordFailedUpdate(latest.version)
+      append(`[Pro] Automatic update skipped; starting the installed runtime: ${String(err)}\n`)
+    } finally {
+      if (updateLookup === lookup) updateLookup = null
+    }
+  }
+
+  const staged = installation()
+  try {
+    await startRaw()
+  } catch (err) {
+    if (!staged?.rollback) throw err
+    const { runtime, settings } = staged.rollback
+    if (server) await stopRaw()
+    const cancelled = (err as { name?: string } | null)?.name === 'AbortError'
+    if (!cancelled) recordFailedUpdate(staged.productVersion ?? staged.version)
+    append(`[Pro] Restoring the previous runtime: ${String(err)}\n`)
+    writeJson(path.join(root(), 'settings.json'), settings)
+    writeJson(path.join(root(), 'installed.json'), runtime)
+    if (staged.source !== runtime.source && /^engine-\d+\.\d+\.\d+-[a-f0-9]{8}$/.test(staged.source)) {
+      void removeProPath(sourceDir(staged.source)).catch((cleanupError) => {
+        append(`[Pro] Could not remove the failed update: ${String(cleanupError)}\n`)
+      })
+    }
+    if (cancelled) throw err
+    try {
+      await startRaw()
+    } catch (recoveryError) {
+      throw new Error(
+        `Pro update failed: ${String(err)}; previous runtime failed: ${String(recoveryError)}`
+      )
+    }
+    setProgress('restored')
+    if (progress) progress.detail = String(err)
+    return
+  }
+  if (staged?.rollback) {
+    const { rollback, ...confirmed } = staged
+    try {
+      writeJson(path.join(root(), 'installed.json'), confirmed)
+      fs.rmSync(path.join(root(), 'failed-update.json'), { force: true })
+    } catch (err) {
+      append(`[Pro] Could not finalize the runtime update: ${String(err)}\n`)
+    }
+  }
+}
+
 export async function startStrata(): Promise<void> {
-  await inferenceCoordinator.start('pro', startRaw)
+  await inferenceCoordinator.start('pro', startWithUpdates)
 }
 
 inferenceCoordinator.register('pro', {
@@ -939,9 +1216,14 @@ inferenceCoordinator.register('pro', {
     if (operation) throw new Error('Pro preparation is still running')
     const installed = installation()
     if (!installed) throw new Error('Install Pro in Desktop settings first')
-    readPreparedConfig(installed, getStrataSettings())
+    try {
+      readPreparedConfig(installed, getStrataSettings())
+    } catch (err) {
+      if (!installed.rollback) throw err
+      readPreparedConfig(installed.rollback.runtime, installed.rollback.settings)
+    }
     if (await portInUse(STRATA_PORT)) throw new Error('Pro port 18882 is occupied')
   },
-  start: startRaw,
+  start: startWithUpdates,
   stop: stopRaw
 })
