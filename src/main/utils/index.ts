@@ -145,7 +145,7 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.10.15'
+export const AURAPRO_UI_TARGET_VERSION = '3.10.16'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
 export const AURAPRO_UI_LAST_VERSION = '3.9.3'
@@ -441,10 +441,12 @@ const isIntegratedGpuName = (name: string): boolean => {
     !/(rx|pro|wx|firepro)/.test(value)
   )
     return true
+  if (/\bradeon (?:\d{3}m|80[56]0s)\b/.test(value)) return true
   return false
 }
 
-type WindowsGpuInfo = { gpuName: string; dedicatedVramGB: number }
+type GpuMemoryInfo = { dedicatedVramGB: number; proVramGB: number }
+type WindowsGpuInfo = GpuMemoryInfo & { gpuName: string }
 let windowsGpuInfoRequest: Promise<WindowsGpuInfo> | null = null
 let windowsGpuInfoCache: { value: WindowsGpuInfo; expiresAt: number } | null = null
 
@@ -483,16 +485,16 @@ const readDxdiagGpuInfo = async (): Promise<WindowsGpuInfo> => {
 
     if (current) devices.push(current)
 
-    const dedicatedGpuMemory = devices
-      .filter((device) => !isIntegratedGpuName(device.name))
-      .map((device) => device.dedicatedMb)
-      .filter((mb) => mb > 0)
-
-    const maxDedicatedMb = dedicatedGpuMemory.length > 0 ? Math.max(...dedicatedGpuMemory) : 0
+    const dedicated = devices.filter(({ name }) => !isIntegratedGpuName(name))
+    const maxVram = (list: typeof devices) =>
+      Math.round(Math.max(0, ...list.map(({ dedicatedMb }) => dedicatedMb)) / 1024)
     if (!devices.length) throw new Error('DxDiag report contains no display devices')
     return {
       gpuName: [...new Set(devices.map((device) => device.name))].join(', '),
-      dedicatedVramGB: Math.round(maxDedicatedMb / 1024)
+      dedicatedVramGB: maxVram(dedicated),
+      proVramGB: maxVram(
+        dedicated.filter(({ name }) => /nvidia|amd|radeon|geforce|quadro/i.test(name))
+      )
     }
   } finally {
     try {
@@ -521,28 +523,40 @@ const getWindowsGpuInfo = (): Promise<WindowsGpuInfo> => {
   return windowsGpuInfoRequest
 }
 
-const getLinuxDedicatedVramGB = (): number => {
-  if (process.platform !== 'linux') return 0
-
-  try {
-    const output = execFileSync(
+const getLinuxDedicatedVramGB = async (): Promise<number> => {
+  const nvidia = new Promise<number>((resolve) => {
+    execFile(
       'nvidia-smi',
       ['--query-gpu=memory.total', '--format=csv,noheader,nounits'],
-      {
-        encoding: 'utf-8',
-        timeout: 5000
+      { encoding: 'utf8', timeout: 5000 },
+      (error, output) => {
+        const values = error ? [] : output.split(/\r?\n/).map(Number).filter(Number.isFinite)
+        resolve(Math.max(0, ...values) / 1024)
       }
     )
-    const values = output
-      .split(/\r?\n/)
-      .map((line) => Number(line.trim()))
-      .filter((value) => Number.isFinite(value) && value > 0)
-    if (values.length > 0) return Math.round(Math.max(...values) / 1024)
-  } catch {
-    // Non-NVIDIA Linux systems can still run; model recommendation will stay conservative.
-  }
-
-  return 0
+  })
+  const amd = fs.promises
+    .readdir('/sys/class/drm')
+    .then((entries) =>
+      Promise.all(
+        entries
+          .filter((name) => /^card\d+$/.test(name))
+          .map(async (name) => {
+            const device = path.join('/sys/class/drm', name, 'device')
+            try {
+              const memory = Number(
+                await fs.promises.readFile(path.join(device, 'mem_info_vram_total'), 'utf8')
+              )
+              return Number.isFinite(memory) && memory > 0 ? memory / 1024 ** 3 : 0
+            } catch {
+              return 0
+            }
+          })
+      )
+    )
+    .then((values) => Math.max(0, ...values))
+    .catch(() => 0)
+  return Math.round(Math.max(...(await Promise.all([nvidia, amd]))))
 }
 
 export const getSystemInfo = async (options: { includeDedicatedVram?: boolean } = {}) => {
@@ -551,11 +565,13 @@ export const getSystemInfo = async (options: { includeDedicatedVram?: boolean } 
 
   let gpuName = ''
   let dedicatedVramGB = 0
+  let proVramGB = 0
   try {
     if (process.platform === 'win32') {
       const detected = await getWindowsGpuInfo()
       gpuName = detected.gpuName
       dedicatedVramGB = detected.dedicatedVramGB
+      proVramGB = detected.proVramGB
     } else if (process.platform === 'darwin') {
       const output = execSync("system_profiler SPDisplaysDataType | grep 'Chipset Model'", {
         encoding: 'utf-8'
@@ -566,7 +582,8 @@ export const getSystemInfo = async (options: { includeDedicatedVram?: boolean } 
         .filter((l) => l)
       gpuName = lines.join(', ')
     } else if (process.platform === 'linux') {
-      dedicatedVramGB = options.includeDedicatedVram ? getLinuxDedicatedVramGB() : 0
+      dedicatedVramGB = options.includeDedicatedVram ? await getLinuxDedicatedVramGB() : 0
+      proVramGB = dedicatedVramGB
     }
   } catch (e) {
     log.warn('Failed to get GPU info via CLI:', e)
@@ -577,7 +594,8 @@ export const getSystemInfo = async (options: { includeDedicatedVram?: boolean } 
     architecture: os.arch(),
     totalMemGB,
     gpuName,
-    dedicatedVramGB
+    dedicatedVramGB,
+    proVramGB
   }
 }
 

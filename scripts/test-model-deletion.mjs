@@ -20,18 +20,15 @@ for (const shared of [false, true]) {
   test(`model deletion ${shared ? 'preserves shared' : 'removes dedicated'} attachments`, () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aurapro-model-delete-'))
     const cache = path.join(dir, 'models')
-    const folder = path.join(cache, 'high_Q4')
-    const names = [
-      'high_Q4.gguf',
-      'mmproj-F16.gguf',
-      'mtp-model.gguf',
-      ...(shared ? ['other.gguf'] : [])
-    ]
+    const repo = 'medium_Q4'
+    const filename = `${repo}.gguf`
+    const folder = path.join(cache, repo)
+    const names = [filename, 'mmproj-F16.gguf', 'mtp-model.gguf', ...(shared ? ['other.gguf'] : [])]
     fs.mkdirSync(folder, { recursive: true })
-    for (const name of [...names, 'mmproj-F16.gguf.tmp', 'high_Q4.gguf.tmp'])
+    for (const name of [...names, 'mmproj-F16.gguf.tmp', `${filename}.tmp`])
       fs.writeFileSync(path.join(folder, name), 'test')
     const manifest = names.map((filename) => ({
-      repo: 'high_Q4',
+      repo,
       filename,
       filepath: path.relative(dir, path.join(folder, filename)),
       size: 4
@@ -49,12 +46,14 @@ for (const shared of [false, true]) {
           ? { getInstallDir: () => dir }
           : name === 'electron-log'
             ? { info: () => undefined, warn: () => undefined, error: () => undefined }
-            : require(name)
+            : name === './index-translate'
+              ? { getIndexTranslateModel: () => undefined }
+              : require(name)
     })
     try {
-      assert.equal(exports.deleteModel('high_Q4', 'high_Q4.gguf'), true)
-      assert.equal(fs.existsSync(path.join(folder, 'high_Q4.gguf')), false)
-      assert.equal(fs.existsSync(path.join(folder, 'high_Q4.gguf.tmp')), false)
+      assert.equal(exports.deleteModel(repo, filename), true)
+      assert.equal(fs.existsSync(path.join(folder, filename)), false)
+      assert.equal(fs.existsSync(path.join(folder, `${filename}.tmp`)), false)
       assert.equal(fs.existsSync(path.join(folder, 'mmproj-F16.gguf')), shared)
       assert.equal(fs.existsSync(path.join(folder, 'mtp-model.gguf')), shared)
       assert.equal(fs.existsSync(path.join(folder, 'mmproj-F16.gguf.tmp')), shared)

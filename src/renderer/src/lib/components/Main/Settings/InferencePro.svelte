@@ -3,11 +3,13 @@
   import i18n from '../../../i18n'
   import Switch from '../../common/Switch.svelte'
   import ProProgress from '../../common/ProProgress.svelte'
+  import ModelCapabilityBadges from '../../common/ModelCapabilityBadges.svelte'
 
   type Info = Awaited<ReturnType<typeof window.electronAPI.getStrataInfo>>
+  const defaultModel = 'unsloth-ud-q2_0'
   let info = $state<Info | null>(null)
   let settings = $state<Info['settings']>({
-    model: 'unsloth-ud-q2_0',
+    model: defaultModel,
     backend: 'auto',
     context: 32768,
     kv: 'int8',
@@ -18,8 +20,12 @@
   let error = $state('')
   let latest = $state('')
   const contextPresets = [32768, 65536, 131072, 262144]
+  const gigabytes = (bytes: number) => (bytes / 1e9).toFixed(3)
   let workflow: AbortController | null = null
   const t = (key: string) => $i18n.t(`settings.pro.${key}`)
+  const activeOrPreparedModel = (state: Info, id: string) =>
+    state.models.some((model) => model.id === id) ||
+    state.legacyModels.some((model) => model.id === id && model.installed)
   const refresh = async () => {
     info = await window.electronAPI.getStrataInfo()
   }
@@ -31,6 +37,7 @@
       await refresh()
     } catch (err) {
       error = String(err)
+      await refresh().catch(() => {})
     } finally {
       busy = false
     }
@@ -47,8 +54,7 @@
       const ready = await window.electronAPI.getStrataInfo()
       const prepared =
         ready.models.some((model) => model.id === selected.model && model.installed) ||
-        (ready.settings.model === selected.model &&
-          ready.legacyModels.some((model) => model.id === selected.model && model.installed))
+        ready.legacyModels.some((model) => model.id === selected.model && model.installed)
       if (
         !prepared ||
         ready.settings.backend !== selected.backend ||
@@ -81,7 +87,14 @@
         const next = await window.electronAPI.getStrataInfo()
         if (!alive) return
         info = next
-        if (initial) settings = { ...next.settings }
+        if (initial) {
+          settings = {
+            ...next.settings,
+            model: activeOrPreparedModel(next, next.settings.model)
+              ? next.settings.model
+              : defaultModel
+          }
+        }
       } catch (err) {
         if (alive) error = String(err)
       }
@@ -94,6 +107,11 @@
     }
   })
   const working = $derived(busy || info?.status === 'installing' || info?.status === 'starting')
+  const preparedLegacyModels = $derived(info?.legacyModels.filter((model) => model.installed) ?? [])
+  const modelRows = $derived([
+    ...(info?.models.map((model) => ({ ...model, retired: false })) ?? []),
+    ...(info?.legacyModels.map((model) => ({ ...model, retired: true })) ?? [])
+  ])
   const commandClass =
     'text-[12px] opacity-40 hover:opacity-70 px-3 py-1.5 bg-black/[0.04] dark:bg-white/[0.06] transition border-none text-[#1d1d1f] dark:text-[#fafafa] rounded-xl disabled:opacity-20 disabled:cursor-not-allowed'
   const controlClass =
@@ -152,7 +170,29 @@
       {#if !uninstalling && (working || info.progress?.stage === 'restored' || (info.progress && info.status === 'failed'))}
         <ProProgress progress={info.progress ?? { stage: 'preparing', detail: '' }} />
       {/if}
-      {#if error || info.error}<p role="alert" class="mt-3 break-words text-[11px] text-red-400/60">
+      {#if info.modelDiskSpace}
+        <div role="alert" class="mt-3 space-y-1 break-words text-[12px] text-red-500">
+          <p class="font-semibold">{t('diskSpace.title')}</p>
+          {#if info.modelDiskSpace.path}
+            <p class="break-all font-mono text-[11px]">{info.modelDiskSpace.path}</p>
+          {/if}
+          {#if info.modelDiskSpace.neededBytes !== undefined && info.modelDiskSpace.freeBytes !== undefined}
+            <p>
+              {$i18n.t('settings.pro.diskSpace.amounts', {
+                needed: gigabytes(info.modelDiskSpace.neededBytes),
+                free: gigabytes(info.modelDiskSpace.freeBytes),
+                short: Math.ceil(
+                  (info.modelDiskSpace.neededBytes - info.modelDiskSpace.freeBytes) / 1e6
+                )
+              })}
+            </p>
+          {/if}
+          <p>{t('diskSpace.retry')}</p>
+        </div>
+      {:else if error || info.error}<p
+          role="alert"
+          class="mt-3 break-words text-[11px] text-red-400/60"
+        >
           {error || info.error}
         </p>{/if}
     </div>
@@ -194,15 +234,16 @@
           class="{controlClass} w-[360px] min-w-0"
           bind:value={settings.model}
         >
-          {#if !info.models.some((model) => model.id === settings.model)}
-            <option value={settings.model}
-              >{info.legacyModels.find((model) => model.id === settings.model)?.name ??
-                settings.model}</option
-            >
+          {#each info.models as model (model.id)}<option value={model.id}>{model.name}</option>
+          {/each}
+          {#if preparedLegacyModels.length}
+            <optgroup label={t('retiredModels')}>
+              {#each preparedLegacyModels as model (model.id)}
+                <option value={model.id}>{model.name}</option>
+              {/each}
+            </optgroup>
           {/if}
-          {#each info.models as model (model.id)}<option value={model.id}>{model.name}</option
-            >{/each}</select
-        ></label
+        </select></label
       >
       <details>
         <summary class="cursor-pointer py-3 text-[12px] opacity-60"
@@ -300,13 +341,18 @@
     </fieldset>
     <div class="py-4">
       <h3 class="mb-3 text-[13px] opacity-70">{t('models')}</h3>
-      {#each info.models as model (model.id)}
+      {#each modelRows as model (model.id)}
         <div class="flex items-center justify-between gap-3 py-3">
           <div class="min-w-0">
             <div class="break-words text-[13px] opacity-70">{model.name}</div>
-            <div class="text-[11px] opacity-25 mt-0.5">
-              ~{model.gb} GB · {model.ramInfo}
+            <div class="mt-0.5 text-[11px] leading-snug text-gray-600 dark:text-gray-400">
+              ~{model.retired ? model.gb : model.sizeGiB}G · {model.ramInfo}
+              {#if model.retired}
+                · {t('retired')}{/if}
             </div>
+            {#if !model.retired}
+              <ModelCapabilityBadges name={model.name} mtp />
+            {/if}
           </div>
           <span class="shrink-0 text-[11px] opacity-30"
             >{t(model.installed ? 'ready' : 'notInstalled')}</span
@@ -316,8 +362,13 @@
               class={commandClass}
               disabled={working}
               onclick={() => {
-                if (confirm(t('deleteModelConfirm').replace('{{model}}', model.name)))
-                  void action(() => window.electronAPI.deleteStrataModel(model.id))
+                const key = model.retired ? 'deleteRetiredModelConfirm' : 'deleteModelConfirm'
+                if (confirm(t(key).replace('{{model}}', model.name))) {
+                  void action(async () => {
+                    await window.electronAPI.deleteStrataModel(model.id)
+                    if (model.retired && settings.model === model.id) settings.model = defaultModel
+                  })
+                }
               }}>{t('deleteModel')}</button
             >
           {/if}

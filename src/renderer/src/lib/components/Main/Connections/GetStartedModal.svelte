@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ModelCapabilityBadges from '../../common/ModelCapabilityBadges.svelte'
   import {
     INDEX_TRANSLATE_MODELS,
     indexTranslateCatalogEntry
@@ -7,8 +8,16 @@
   import { fade, scale } from 'svelte/transition'
   import i18n from '../../../i18n'
   import { detectWindowsLlamaVariant } from '../../../utils/llamacpp'
+  import {
+    proRequirementLabel,
+    recommendWizardModel,
+    standardGuide,
+    standardRequirementLabel,
+    type ModelPreference
+  } from '../../../utils/install-model-recommendation'
   import Switch from '../../common/Switch.svelte'
   import HardwareDetectionStatus from '../../Setup/HardwareDetectionStatus.svelte'
+  import ProModelSwitch from '../../Setup/ProModelSwitch.svelte'
   import UnsupportedInstallPathDialog from '../../Setup/UnsupportedInstallPathDialog.svelte'
   import {
     SPEECH_TTS_REPOS,
@@ -30,8 +39,6 @@
     onCancel: () => void
   }
 
-  type ModelCapability = 'image' | 'video' | 'audio'
-
   interface AuraModel {
     name: string
     sizeStr: string
@@ -43,9 +50,9 @@
     mtpRepo?: string
     mtpFilename?: string
     sizeBytes: number
-    ramInfo: string
     macOnly?: boolean
     proModelId?: string
+    proPreset?: string
   }
 
   interface SystemInfo {
@@ -61,7 +68,7 @@
     indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.lowest),
     {
       name: 'low_E4.gguf',
-      sizeStr: '~5GB',
+      sizeStr: '~5G',
       repo: 'AuraPro',
       hfRepo: 'unsloth/gemma-4-E4B-it-qat-GGUF',
       filename: 'gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf',
@@ -69,12 +76,11 @@
       mmprojFilename: 'mmproj-F16.gguf',
       mtpRepo: 'unsloth/gemma-4-E4B-it-qat-GGUF',
       mtpFilename: 'mtp-gemma-4-E4B-it.gguf',
-      sizeBytes: 5 * 1024 * 1024 * 1024,
-      ramInfo: 'RAM+VRAM 16G+0G / UMA 8G'
+      sizeBytes: 5 * 1024 * 1024 * 1024
     },
     {
       name: 'medium_IQ2.gguf',
-      sizeStr: '~11GB',
+      sizeStr: '~11G',
       repo: 'AuraPro',
       hfRepo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
       filename: 'gemma-4-26B-A4B-it-UD-Q2_K_XL.gguf',
@@ -82,26 +88,13 @@
       mmprojFilename: 'mmproj-F16.gguf',
       mtpRepo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
       mtpFilename: 'mtp-gemma-4-26B-A4B-it.gguf',
-      sizeBytes: 11 * 1024 * 1024 * 1024,
-      ramInfo: 'RAM+VRAM 24G+4G / UMA 18G'
+      sizeBytes: 11 * 1024 * 1024 * 1024
     },
+    indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.mediumQ3),
     indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.medium),
     {
-      name: 'medium_Q4.gguf',
-      sizeStr: '~7GB',
-      repo: 'AuraPro',
-      hfRepo: 'unsloth/gemma-4-12B-it-qat-GGUF',
-      filename: 'gemma-4-12B-it-qat-UD-Q4_K_XL.gguf',
-      mmprojRepo: 'unsloth/gemma-4-12B-it-qat-GGUF',
-      mmprojFilename: 'mmproj-F16.gguf',
-      mtpRepo: 'unsloth/gemma-4-12B-it-qat-GGUF',
-      mtpFilename: 'mtp-gemma-4-12B-it.gguf',
-      sizeBytes: 7 * 1024 * 1024 * 1024,
-      ramInfo: 'RAM+VRAM 16G+8G / UMA 10G'
-    },
-    {
       name: 'high_Q4.gguf',
-      sizeStr: '~15GB',
+      sizeStr: '~15G',
       repo: 'AuraPro',
       hfRepo: 'unsloth/gemma-4-26B-A4B-it-qat-GGUF',
       filename: 'gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf',
@@ -109,18 +102,10 @@
       mmprojFilename: 'mmproj-F16.gguf',
       mtpRepo: 'unsloth/gemma-4-26B-A4B-it-qat-GGUF',
       mtpFilename: 'mtp-gemma-4-26B-A4B-it.gguf',
-      sizeBytes: 15 * 1024 * 1024 * 1024,
-      ramInfo: 'RAM+VRAM 32G+4G / UMA 24G'
+      sizeBytes: 15 * 1024 * 1024 * 1024
     },
     indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.high)
   ]
-
-  const AUDIO_CAPABLE_MODELS = new Set(['low_E4.gguf', 'medium_Q4.gguf'])
-  const modelCapabilities = (modelName: string): ModelCapability[] => {
-    const capabilities: ModelCapability[] = ['image', 'video']
-    if (AUDIO_CAPABLE_MODELS.has(modelName)) capabilities.push('audio')
-    return capabilities
-  }
 
   let installOpenCode = $state(false)
   let installSherpa = $state(true)
@@ -138,16 +123,19 @@
   let installDir = $state('')
   let defaultInstallDir = $state('')
   let advancedOpen = $state(false)
-  let selectedModel = $state<AuraModel>(AURA_MODELS[0])
+  let proMode = $state(false)
+  let loadingProModels = $state(true)
+  let manualModel = $state<string | null>(null)
   let proModels = $state<AuraModel[]>([])
   let llamaCppVariant = $state('cpu')
   let ragHardwareAcceleration = $state(false)
   let systemMemGB = $state<number | null>(null)
   let systemArchitecture = $state('')
   let dedicatedVramGB = $state(0)
+  let proVramGB = $state(0)
   let detectingHardware = $state(true)
   let hardwareDetectionFailed = $state(false)
-  let modelPreference = $state<'quality' | 'speed'>('quality')
+  let modelPreference = $state<ModelPreference>('quality')
   let showUnsupportedInstallPath = $state(false)
   let diskFreeBytes = $state<number | null>(null)
   let checkingDiskSpace = $state(false)
@@ -161,73 +149,35 @@
     })()
   )
 
-  const modelByName = (name: string) =>
-    AURA_MODELS.find((model) => model.name === name) ??
-    AURA_MODELS.find((model) => model.name === 'low_E4.gguf') ??
-    AURA_MODELS[0]
-  const isHighOrAboveModel = (model: AuraModel) =>
-    model.name.startsWith('high_') || model.name.startsWith('high-')
-  const visibleModels = () =>
-    [...AURA_MODELS, ...proModels].filter((model) => {
-      if (platform !== 'darwin' && model.macOnly) return false
-      if (platform !== 'darwin' && (systemMemGB ?? 0) < 24 && isHighOrAboveModel(model)) {
-        const speedOverride =
-          modelPreference === 'speed' &&
-          ((model.name === 'high_Q4.gguf' && dedicatedVramGB >= 12) ||
-            (model.name === 'medium_Q4_V2.gguf' && dedicatedVramGB >= 8))
-        if (!speedOverride) return false
-      }
-      return true
-    })
-  const isAppleSiliconMac = () => platform === 'darwin' && systemArchitecture === 'arm64'
+  const visibleModels = $derived(
+    proMode ? proModels : AURA_MODELS.filter((model) => platform === 'darwin' || !model.macOnly)
+  )
+  const recommendation = $derived(
+    recommendWizardModel(
+      {
+        platform,
+        architecture: systemArchitecture,
+        memoryGiB: systemMemGB ?? 8,
+        vramGiB: proMode ? proVramGB : dedicatedVramGB,
+        preference: modelPreference
+      },
+      AURA_MODELS,
+      proModels,
+      proMode
+    )
+  )
+  const selectedModel = $derived(
+    visibleModels.find((model) => model.filename === manualModel) ?? recommendation
+  )
 
-  const qualityRecommendation = () => {
-    const mem = systemMemGB ?? 8
-    if (platform === 'darwin') {
-      if (!isAppleSiliconMac())
-        return mem >= 16 ? modelByName('low_E4.gguf') : modelByName('lowest_V2.gguf')
-      if (mem >= 20) return modelByName('high_Q4.gguf')
-      if (mem >= 10) return modelByName('medium_Q4_V2.gguf')
-      return modelByName('low_E4.gguf')
-    }
-
-    if (mem < 15) return modelByName('lowest_V2.gguf')
-    if (mem > 48) return modelByName('high_Q4.gguf')
-    if (mem > 31 && dedicatedVramGB >= 4) return modelByName('high_Q4.gguf')
-    if (mem >= 24 && dedicatedVramGB >= 4) return modelByName('medium_IQ2.gguf')
-    return modelByName('low_E4.gguf')
+  const setPreference = (preference: ModelPreference) => {
+    modelPreference = preference
+    manualModel = null
   }
 
-  const recommendedModel = () => {
-    const mem = systemMemGB ?? 8
-    if (platform === 'darwin') {
-      if (!isAppleSiliconMac()) {
-        if (modelPreference === 'speed')
-          return mem >= 24 ? modelByName('low_E4.gguf') : modelByName('lowest_V2.gguf')
-        return qualityRecommendation()
-      }
-      if (modelPreference === 'speed') {
-        if (mem >= 20) return modelByName('high_Q4.gguf')
-        if (mem >= 18) return modelByName('medium_IQ2.gguf')
-        return modelByName('low_E4.gguf')
-      }
-      return qualityRecommendation()
-    }
-
-    if (modelPreference === 'speed') {
-      if (dedicatedVramGB >= 12) return modelByName('high_Q4.gguf')
-      if (mem > 31 && dedicatedVramGB >= 4) return modelByName('high_Q4.gguf')
-      if (dedicatedVramGB >= 8) return modelByName('medium_Q4_V2.gguf')
-      if (mem < 15) return modelByName('lowest_V2.gguf')
-      if (mem >= 24 && dedicatedVramGB >= 4) return modelByName('medium_IQ2.gguf')
-      return modelByName('low_E4.gguf')
-    }
-
-    return qualityRecommendation()
-  }
-
-  const applyRecommendedModel = () => {
-    selectedModel = recommendedModel()
+  const setProMode = (value: boolean) => {
+    proMode = value
+    manualModel = null
   }
 
   const validateInstallPath = async (): Promise<boolean> => {
@@ -254,13 +204,13 @@
       systemMemGB = sysInfo?.totalMemGB || quickSysInfo?.totalMemGB || 8
       systemArchitecture = sysInfo?.architecture || quickSysInfo?.architecture || ''
       dedicatedVramGB = sysInfo?.dedicatedVramGB || 0
-      applyRecommendedModel()
+      proVramGB = sysInfo?.proVramGB ?? dedicatedVramGB
     } catch {
       hardwareDetectionFailed = true
       systemMemGB = 8
       systemArchitecture = ''
       dedicatedVramGB = 0
-      applyRecommendedModel()
+      proVramGB = 0
     } finally {
       detectingHardware = false
     }
@@ -298,7 +248,7 @@
   const RAG_CUDA_INSTALL_BYTES = 3 * GIB
   const requiredInstallBytes = () =>
     CORE_INSTALL_BYTES +
-    selectedModel.sizeBytes +
+    (selectedModel?.sizeBytes ?? 0) +
     (installSherpa ? SHERPA_INSTALL_BYTES : 0) +
     (installOpenCode ? OPEN_CODE_INSTALL_BYTES : 0) +
     (llamaCppVariant.startsWith('cuda-') && ragHardwareAcceleration ? RAG_CUDA_INSTALL_BYTES : 0)
@@ -336,7 +286,7 @@
       systemMemGB = 8
       systemArchitecture = ''
       dedicatedVramGB = 0
-      applyRecommendedModel()
+      proVramGB = 0
       detectingHardware = false
     }
     try {
@@ -344,19 +294,21 @@
       if (pro.supported) {
         proModels = pro.models.map((model) => ({
           name: `Pro_V1 · ${model.name}`,
-          sizeStr: `~${model.gb} GB`,
+          sizeStr: `~${model.sizeGiB}G`,
           repo: '',
           hfRepo: '',
           filename: model.id,
           mmprojRepo: '',
           mmprojFilename: '',
-          sizeBytes: (model.gb + 12) * GIB,
-          ramInfo: model.ramInfo,
-          proModelId: model.id
+          sizeBytes: model.sizeBytes + 12 * GIB,
+          proModelId: model.id,
+          proPreset: model.name
         }))
       }
     } catch (error) {
       console.warn('Unable to read Pro setup options:', error)
+    } finally {
+      loadingProModels = false
     }
   })
 
@@ -369,15 +321,17 @@
   }
 
   const continueInstall = async (): Promise<void> => {
-    if (detectingHardware) return
+    const model = selectedModel
+    if (!model || detectingHardware) return
     if (!(await validateInstallPath())) return
+    if (selectedModel !== model) return
     onContinue({
       installOpenCode,
-      installLlamaCpp: !selectedModel.proModelId,
+      installLlamaCpp: !model.proModelId,
       installSherpa,
       speechLanguages: $state.snapshot(selectedSpeech),
       installDir,
-      selectedModel: $state.snapshot(selectedModel),
+      selectedModel: $state.snapshot(model),
       llamaCppVariant,
       ragHardwareAcceleration: llamaCppVariant.startsWith('cuda-') && ragHardwareAcceleration
     })
@@ -446,15 +400,13 @@
           <div
             class="text-[13px] font-medium text-gray-700 dark:text-gray-300 flex items-center gap-1.5"
           >
-            {selectedModel.proModelId
-              ? $i18n.t('settings.pro.title')
-              : $i18n.t('main.getStarted.llamaCpp')}
+            {proMode ? $i18n.t('settings.pro.title') : $i18n.t('main.getStarted.llamaCpp')}
           </div>
           <div class="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
             {$i18n.t('main.getStarted.llamaCppHardwareDesc')}
           </div>
         </div>
-        {#if selectedModel.proModelId}
+        {#if proMode}
           <span class="text-[12px] text-gray-400 dark:text-gray-500"
             >{platform === 'darwin' ? 'llama.cpp' : 'AuraPro-Engine'} · 18882</span
           >
@@ -544,79 +496,85 @@
             'quality'
               ? 'border-emerald-500 bg-emerald-500/5 dark:bg-emerald-500/10'
               : 'border-gray-100 dark:border-gray-800 hover:border-gray-200 dark:hover:border-gray-700'}"
-            onclick={() => {
-              modelPreference = 'quality'
-              applyRecommendedModel()
-            }}
+            aria-pressed={modelPreference === 'quality'}
+            onclick={() => setPreference('quality')}
           >
             <div
               class="text-[11px] font-medium {modelPreference === 'quality'
                 ? 'text-emerald-600 dark:text-emerald-400'
                 : 'text-gray-700 dark:text-gray-300'}"
             >
-              注重质量
+              {$i18n.t('main.getStarted.modelPreferenceQuality')}
             </div>
           </button>
           <button
             type="button"
             class="rounded-xl border border-solid px-3 py-1 text-center transition {modelPreference ===
-            'speed'
+            'balanced'
               ? 'border-emerald-500 bg-emerald-500/5 dark:bg-emerald-500/10'
               : 'border-gray-100 dark:border-gray-800 hover:border-gray-200 dark:hover:border-gray-700'}"
-            onclick={() => {
-              modelPreference = 'speed'
-              applyRecommendedModel()
-            }}
+            aria-pressed={modelPreference === 'balanced'}
+            onclick={() => setPreference('balanced')}
           >
             <div
-              class="text-[11px] font-medium {modelPreference === 'speed'
+              class="text-[11px] font-medium {modelPreference === 'balanced'
                 ? 'text-emerald-600 dark:text-emerald-400'
                 : 'text-gray-700 dark:text-gray-300'}"
             >
-              注重速度
+              {$i18n.t('main.getStarted.modelPreferenceBalanced')}
             </div>
           </button>
         </div>
-        <details>
+        <ProModelSwitch
+          checked={proMode}
+          label={$i18n.t('main.getStarted.useProModels')}
+          onchange={setProMode}
+        />
+        {#if proMode}
+          <div class="py-1 text-[12px] text-gray-600 dark:text-gray-400" role="status">
+            {$i18n.t('main.getStarted.autoInstallModel')}: {detectingHardware || loadingProModels
+              ? $i18n.t('common.loading')
+              : (recommendation?.name ?? $i18n.t('main.getStarted.noAutoModel'))}
+          </div>
+        {/if}
+        <details class="@container">
           <summary class="cursor-pointer py-2 text-[12px] text-gray-700 dark:text-gray-300">
             {$i18n.t('main.getStarted.selectedDownloadModel')}:
             <span class="font-medium break-all text-emerald-600 dark:text-emerald-400"
-              >{selectedModel.name}</span
+              >{selectedModel?.name ?? $i18n.t('main.getStarted.noAutoModel')}</span
             >
             <span class="ml-2 text-[11px] text-gray-500"
               >{$i18n.t('main.getStarted.changeModel')}</span
             >
           </summary>
-          <div class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {#each visibleModels() as model (model.filename)}
+          <div class="mt-2 grid grid-cols-1 gap-2 @min-[520px]:grid-cols-2">
+            {#each visibleModels as model (model.filename)}
               <!-- svelte-ignore a11y_click_events_have_key_events -->
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div
-                class="flex flex-col px-3 py-2 rounded-xl border border-solid cursor-pointer transition-all {selectedModel.name ===
+                class="flex min-w-0 flex-col px-3 py-2 rounded-xl border border-solid cursor-pointer transition-all {selectedModel?.name ===
                 model.name
                   ? 'border-emerald-500 bg-emerald-500/5 dark:bg-emerald-500/10'
                   : 'border-gray-100 dark:border-gray-800 hover:border-gray-200 dark:hover:border-gray-700'}"
-                onclick={() => (selectedModel = model)}
+                onclick={() => (manualModel = model.filename)}
               >
                 <div
-                  class="text-[11px] font-medium break-words {selectedModel.name === model.name
+                  class="text-[11px] font-medium break-words {selectedModel?.name === model.name
                     ? 'text-emerald-600 dark:text-emerald-400'
                     : 'text-gray-700 dark:text-gray-300'}"
                 >
                   {model.name}
                 </div>
-                <div class="text-[9px] text-gray-400 dark:text-gray-500">
-                  {model.sizeStr} · {model.ramInfo}{model.macOnly ? ' · Mac only' : ''}
+                <div class="text-[11px] leading-snug text-gray-600 dark:text-gray-400">
+                  {model.proPreset ? model.sizeStr : `~${standardGuide(model.name).sizeGiB}G`} ·
+                  {model.proPreset
+                    ? proRequirementLabel(model.proPreset)
+                    : standardRequirementLabel(model.name)}
                 </div>
-                <div class="mt-1 flex flex-wrap gap-1">
-                  {#each model.proModelId ? [] : modelCapabilities(model.name) as capability (capability)}
-                    <span
-                      class="rounded border border-gray-200/70 px-1.5 py-px text-[9px] text-gray-400 dark:border-gray-700/70 dark:text-gray-500"
-                    >
-                      {$i18n.t('settings.models.capability.' + capability)}
-                    </span>
-                  {/each}
-                </div>
+                <ModelCapabilityBadges
+                  name={model.name}
+                  mtp={!!(model.proModelId || model.mtpFilename)}
+                />
               </div>
             {/each}
           </div>
@@ -700,22 +658,26 @@
               ? '检测中...'
               : diskFreeBytes < 0
                 ? '无法检测'
-                : `${formatInstallGb(diskFreeBytes)} GB`}
+                : `${formatInstallGb(diskFreeBytes)}G`}
           </span>
         </div>
         <div class="mt-1 text-[10px] leading-relaxed text-gray-400 dark:text-gray-500">
-          核心组件 6 GB · 模型 {selectedModel.sizeStr}
-          {installSherpa ? ' · Sherpa 约 2 GB' : ''}
+          核心组件 6G · 模型 {selectedModel
+            ? selectedModel.proPreset
+              ? selectedModel.sizeStr
+              : `~${standardGuide(selectedModel.name).sizeGiB}G`
+            : $i18n.t('main.getStarted.noAutoModel')}
+          {installSherpa ? ' · Sherpa 约 2G' : ''}
           {installOpenCode ? ' · Agent 预留 0.5 GB（扩展另计）' : ''}
           {llamaCppVariant.startsWith('cuda-') && ragHardwareAcceleration
-            ? ' · RAG CUDA 约 3 GB'
+            ? ' · RAG CUDA 约 3G'
             : ''}
         </div>
       </div>
       <button
-        class="w-full rounded-xl bg-gray-900 dark:bg-white px-4 py-2.5 text-sm font-medium text-white dark:text-gray-900 transition-all duration-200 hover:bg-gray-800 dark:hover:bg-gray-100 active:scale-[0.98] border-none cursor-pointer"
+        class="w-full rounded-xl bg-gray-900 dark:bg-white px-4 py-2.5 text-sm font-medium text-white dark:text-gray-900 transition-all duration-200 hover:bg-gray-800 dark:hover:bg-gray-100 active:scale-[0.98] border-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
         onclick={continueInstall}
-        disabled={detectingHardware}
+        disabled={detectingHardware || !selectedModel || checkingDiskSpace}
       >
         {$i18n.t('main.getStarted.continue')}
       </button>

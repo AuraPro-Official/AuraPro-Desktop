@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ModelCapabilityBadges from '../../common/ModelCapabilityBadges.svelte'
   import {
     INDEX_TRANSLATE_MODELS,
     indexTranslateCatalogEntry
@@ -6,6 +7,10 @@
   import { onMount } from 'svelte'
   import { SvelteMap } from 'svelte/reactivity'
   import i18n from '../../../i18n'
+  import {
+    standardGuide,
+    standardRequirementLabel
+  } from '../../../utils/install-model-recommendation'
 
   interface HfModel {
     repo: string
@@ -27,8 +32,6 @@
     }
   }
 
-  type ModelCapability = 'image' | 'video' | 'audio'
-
   interface AuraModel {
     name: string
     sizeStr: string
@@ -40,7 +43,6 @@
     mtpRepo?: string
     mtpFilename?: string
     sizeBytes: number
-    ramInfo: string
     macOnly?: boolean
   }
 
@@ -56,8 +58,7 @@
       mmprojFilename: 'mmproj-F16.gguf',
       mtpRepo: 'unsloth/gemma-4-E4B-it-qat-GGUF',
       mtpFilename: 'mtp-gemma-4-E4B-it.gguf',
-      sizeBytes: 5 * 1024 * 1024 * 1024,
-      ramInfo: 'RAM+VRAM 16G+0G / UMA 8G'
+      sizeBytes: 5 * 1024 * 1024 * 1024
     },
     {
       name: 'medium_IQ2.gguf',
@@ -69,23 +70,10 @@
       mmprojFilename: 'mmproj-F16.gguf',
       mtpRepo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
       mtpFilename: 'mtp-gemma-4-26B-A4B-it.gguf',
-      sizeBytes: 11 * 1024 * 1024 * 1024,
-      ramInfo: 'RAM+VRAM 24G+4G / UMA 18G'
+      sizeBytes: 11 * 1024 * 1024 * 1024
     },
+    indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.mediumQ3),
     indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.medium),
-    {
-      name: 'medium_Q4.gguf',
-      sizeStr: '~7GB',
-      repo: 'AuraPro',
-      hfRepo: 'unsloth/gemma-4-12B-it-qat-GGUF',
-      filename: 'gemma-4-12B-it-qat-UD-Q4_K_XL.gguf',
-      mmprojRepo: 'unsloth/gemma-4-12B-it-qat-GGUF',
-      mmprojFilename: 'mmproj-F16.gguf',
-      mtpRepo: 'unsloth/gemma-4-12B-it-qat-GGUF',
-      mtpFilename: 'mtp-gemma-4-12B-it.gguf',
-      sizeBytes: 7 * 1024 * 1024 * 1024,
-      ramInfo: 'RAM+VRAM 16G+8G / UMA 10G'
-    },
     {
       name: 'high_Q4.gguf',
       sizeStr: '~15GB',
@@ -96,23 +84,14 @@
       mmprojFilename: 'mmproj-F16.gguf',
       mtpRepo: 'unsloth/gemma-4-26B-A4B-it-qat-GGUF',
       mtpFilename: 'mtp-gemma-4-26B-A4B-it.gguf',
-      sizeBytes: 15 * 1024 * 1024 * 1024,
-      ramInfo: 'RAM+VRAM 32G+4G / UMA 24G'
+      sizeBytes: 15 * 1024 * 1024 * 1024
     },
     indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.high)
   ]
 
-  const AUDIO_CAPABLE_MODELS = new Set(['low_E4.gguf', 'medium_Q4.gguf'])
-  const modelCapabilities = (modelName: string): ModelCapability[] => {
-    const capabilities: ModelCapability[] = ['image', 'video']
-    if (AUDIO_CAPABLE_MODELS.has(modelName)) capabilities.push('audio')
-    return capabilities
-  }
-
   const SOURCE_MIGRATED_MODELS = new Set([
     ...Object.values(INDEX_TRANSLATE_MODELS).map((model) => model.name),
     'low_E4.gguf',
-    'medium_Q4.gguf',
     'high_Q4.gguf'
   ])
 
@@ -499,18 +478,10 @@
               <div class="text-[12px] opacity-50 truncate font-mono">
                 {model.name.replace('.gguf', '')}
               </div>
-              <div class="text-[10px] opacity-20 mt-0.5">
-                {model.sizeStr} · {model.ramInfo}{model.macOnly ? ' · Mac only' : ''}
+              <div class="mt-0.5 text-[11px] leading-snug text-gray-600 dark:text-gray-400">
+                ~{standardGuide(model.name).sizeGiB}G · {standardRequirementLabel(model.name)}
               </div>
-              <div class="mt-1 flex flex-wrap gap-1">
-                {#each modelCapabilities(model.name) as capability (capability)}
-                  <span
-                    class="rounded border border-black/[0.06] px-1.5 py-px text-[9px] opacity-30 dark:border-white/[0.08]"
-                  >
-                    {$i18n.t('settings.models.capability.' + capability)}
-                  </span>
-                {/each}
-              </div>
+              <ModelCapabilityBadges name={model.name} mtp={!!model.mtpFilename} />
               {#if dlActive}
                 <div
                   class="mt-1.5 w-full h-[3px] bg-black/[0.06] dark:bg-white/[0.06] rounded-full overflow-hidden"

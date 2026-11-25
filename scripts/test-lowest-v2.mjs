@@ -9,6 +9,16 @@ import {
   INDEX_TRANSLATE_MODELS,
   indexTranslateCatalogEntry
 } from '../src/shared/index-translate-models.ts'
+import { recommendInstallModel } from '../src/renderer/src/lib/utils/install-model-recommendation.ts'
+import {
+  PRO_MODEL_GUIDE,
+  proHardwareLabel,
+  proRequirementLabel,
+  recommendProInstallModel,
+  STANDARD_MODEL_GUIDE,
+  standardRequirementLabel
+} from '../src/shared/model-hardware.ts'
+import * as desktopGuide from '../src/renderer/src/lib/pro-model-tutorial.ts'
 
 const loadBindings = (filename, names, context) => {
   const source = ts.createSourceFile(
@@ -45,6 +55,7 @@ const modelScreens = [
 test('all model selection screens use the shared Omni download catalog', () => {
   const expected = {
     lowest: ['2B', 'Q6_K', 1_973_568_256, 361_518_144],
+    mediumQ3: ['9B', 'Q3_K_M', 4_623_524_512, 620_690_272],
     medium: ['9B', 'Q4_K_S', 5_351_629_472, 620_690_272],
     high: ['35B', 'Q4_K_M', 21_166_757_824, 610_655_072]
   }
@@ -68,6 +79,8 @@ test('all model selection screens use the shared Omni download catalog', () => {
     assert.equal(repair.filename, model.current.filename)
     assert.equal(repair.expectedSize, model.current.expectedSize)
   }
+  loadBindings('llamacpp.ts', ['AURA_MODEL_FILENAMES'], context)
+  assert.ok(context.AURA_MODEL_FILENAMES.includes(INDEX_TRANSLATE_MODELS.mediumQ3.name))
   for (const file of modelScreens) {
     const source = fs.readFileSync(file, 'utf8')
     for (const key of Object.keys(expected)) {
@@ -99,49 +112,214 @@ test('runtime never attaches a draft to any of the Index Translate models', () =
   }
 })
 
-test('medium V2 replaces automatic recommendations while keeping the old model downloadable', () => {
+test('medium Q4 is retired and both wizards use the shared recommendation', () => {
   for (const file of modelScreens) {
     const source = fs.readFileSync(file, 'utf8')
-    assert.match(source, /name: 'medium_Q4.gguf'/)
+    assert.doesNotMatch(source, /'medium_Q4\.gguf'/, file)
+    assert.ok(source.includes('indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.medium)'), file)
     if (file.endsWith('/Models.svelte')) continue
-    assert.doesNotMatch(source, /modelByName\('medium_Q4.gguf'\)/)
-    const script = source.split('<script lang="ts">')[1].split('</script>')[0]
-    const ast = ts.createSourceFile(file, script, ts.ScriptTarget.Latest, true)
-    const context = vm.createContext({
-      platform: 'win32',
-      systemMemGB: 16,
-      dedicatedVramGB: 8,
-      modelPreference: 'speed',
-      modelByName: (name) => name
-    })
-    for (const name of ['isAppleSiliconMac', 'qualityRecommendation', 'recommendedModel']) {
-      const statement = ast.statements.find(
-        (node) =>
-          ts.isVariableStatement(node) &&
-          node.declarationList.declarations.some((decl) => decl.name.getText(ast) === name)
-      )
-      assert.ok(statement, name)
-      vm.runInContext(
-        ts.transpileModule(`${statement.getText(ast)}; globalThis.${name}=${name}`, {
-          compilerOptions: { target: ts.ScriptTarget.ES2022 }
-        }).outputText,
-        context
-      )
-    }
-    assert.equal(context.recommendedModel(), 'medium_Q4_V2.gguf')
-    context.systemMemGB = 32
-    assert.equal(context.recommendedModel(), 'high_Q4.gguf')
-    Object.assign(context, {
-      platform: 'darwin',
-      systemArchitecture: 'arm64',
-      systemMemGB: 16,
-      modelPreference: 'quality'
-    })
-    assert.equal(context.recommendedModel(), 'medium_Q4_V2.gguf')
+    assert.match(source, /recommendWizardModel\(/)
   }
 })
 
-test('all migrated models pair with only the correctly sized projectors for their revisions', () => {
+test('Windows and Linux match GPU tiers before falling back on low system RAM', () => {
+  const cases = [
+    [8, 0, 'lowest_V2', 'lowest_V2'],
+    [12, 4, 'lowest_V2', 'lowest_V2'],
+    [12, 6, 'medium_Q3_V2', 'low_E4'],
+    [12, 8, 'medium_Q4_V2', 'medium_Q4_V2'],
+    [12, 12, 'medium_Q4_V2', 'high_Q4'],
+    [16, 0, 'low_E4', 'low_E4'],
+    [16, 4, 'low_E4', 'low_E4'],
+    [16, 7, 'medium_Q3_V2', 'low_E4'],
+    [24, 4, 'medium_IQ2', 'medium_IQ2'],
+    [24, 6, 'medium_Q3_V2', 'medium_IQ2'],
+    [32, 4, 'high_Q4', 'high_Q4'],
+    [32, 8, 'medium_Q4_V2', 'medium_Q4_V2'],
+    [32, 12, 'medium_Q4_V2', 'high_Q4'],
+    [48, 0, 'high_Q4', 'low_E4'],
+    [48, 4, 'high_Q4_2', 'high_Q4_2'],
+    [64, 0, 'high_Q4_2', 'high_Q4_2']
+  ]
+  for (const platform of ['win32', 'linux']) {
+    for (const [memoryGiB, vramGiB, quality, balanced] of cases) {
+      for (const [preference, expected] of Object.entries({ quality, balanced })) {
+        assert.equal(
+          recommendInstallModel({ platform, architecture: 'x64', memoryGiB, vramGiB, preference }),
+          `${expected}.gguf`,
+          `${platform} ${memoryGiB} GiB RAM + ${vramGiB} GiB VRAM (${preference})`
+        )
+      }
+    }
+  }
+})
+
+test('Mac recommendations use distinct Intel and Apple Silicon tiers', () => {
+  const cases = [
+    ['x64', 12, 'lowest_V2', 'lowest_V2'],
+    ['x64', 16, 'medium_Q3_V2', 'low_E4'],
+    ['x64', 32, 'medium_Q3_V2', 'low_E4'],
+    ['arm64', 7, 'lowest_V2', 'lowest_V2'],
+    ['arm64', 8, 'medium_Q3_V2', 'low_E4'],
+    ['arm64', 12, 'medium_Q3_V2', 'low_E4'],
+    ['arm64', 16, 'medium_Q4_V2', 'medium_Q4_V2'],
+    ['arm64', 18, 'medium_Q4_V2', 'medium_Q4_V2'],
+    ['arm64', 20, 'medium_Q4_V2', 'medium_Q4_V2'],
+    ['arm64', 24, 'high_Q4', 'high_Q4'],
+    ['arm64', 28, 'high_Q4', 'high_Q4'],
+    ['arm64', 32, 'high_Q4_2', 'high_Q4_2']
+  ]
+  for (const [architecture, memoryGiB, quality, balanced] of cases) {
+    for (const [preference, expected] of Object.entries({ quality, balanced })) {
+      assert.equal(
+        recommendInstallModel({
+          platform: 'darwin',
+          architecture,
+          memoryGiB,
+          vramGiB: 0,
+          preference
+        }),
+        `${expected}.gguf`
+      )
+    }
+  }
+})
+
+test('Pro quality and balanced use the matching platform column only', () => {
+  const all = Object.keys(PRO_MODEL_GUIDE)
+  const pick = (platform, architecture, memoryGiB, vramGiB, preference) =>
+    recommendProInstallModel({ platform, architecture, memoryGiB, vramGiB, preference }, all)
+
+  for (const platform of ['win32', 'linux']) {
+    for (const [ram, vram, quality, balanced] of [
+      [12, 8, null, null],
+      [47, 12, null, null],
+      [48, 11, null, null],
+      [48, 12, 'Q2_0', 'Q2_0'],
+      [63, 8, null, null],
+      [64, 8, 'IQ2_XS', 'Q2_0'],
+      [64, 12, 'Q2_K_XL', 'IQ2_XS'],
+      [64, 16, 'IQ3_XXS', 'Q2_K_XL'],
+      [96, 12, 'Q3_K_XL', 'Q2_K_XL'],
+      [96, 16, 'IQ4_XS', 'IQ3_XXS'],
+      [192, 24, 'IQ4_XS', 'IQ3_XXS']
+    ]) {
+      assert.equal(pick(platform, 'x64', ram, vram, 'quality'), quality)
+      assert.equal(pick(platform, 'x64', ram, vram, 'balanced'), balanced)
+    }
+    assert.equal(pick(platform, 'arm64', 192, 24, 'quality'), null)
+  }
+  for (const [ram, quality, balanced] of [
+    [95, null, null],
+    [96, 'IQ4_XS', 'Q3_K_XL'],
+    [127, 'IQ4_XS', 'Q3_K_XL'],
+    [128, 'Q4_K_XL', 'IQ4_XS']
+  ]) {
+    assert.equal(pick('darwin', 'arm64', ram, 0, 'quality'), quality)
+    assert.equal(pick('darwin', 'arm64', ram, 0, 'balanced'), balanced)
+  }
+  assert.equal(pick('darwin', 'x64', 128, 24, 'quality'), null)
+  const hardware = {
+    platform: 'darwin',
+    architecture: 'arm64',
+    memoryGiB: 128,
+    vramGiB: 0,
+    preference: 'quality'
+  }
+  assert.equal(recommendProInstallModel(hardware, []), null)
+  assert.equal(recommendProInstallModel(hardware, ['IQ4_XS']), 'IQ4_XS')
+  assert.equal(recommendProInstallModel({ ...hardware, memoryGiB: 80 }, ['Q2_0']), null)
+  assert.equal(
+    recommendProInstallModel({ ...hardware, platform: 'win32', architecture: 'x64', vramGiB: 16 }, [
+      'Q4_K_XL'
+    ]),
+    null
+  )
+})
+
+test('Help tables use the same model sizes and Pro thresholds', async () => {
+  const webuiGuide = new URL('../../AuraPro-UI/src/lib/pro-model-tutorial.ts', import.meta.url)
+  if (fs.existsSync(webuiGuide))
+    assert.deepEqual({ ...desktopGuide }, { ...(await import(webuiGuide.href)) })
+  for (const row of desktopGuide.standardModelTutorial.table.rows) {
+    const name = row[0]['en-US']
+    assert.equal(row[1]['en-US'], `~${STANDARD_MODEL_GUIDE[name].sizeGiB}G`)
+  }
+  for (const row of desktopGuide.proModelTutorial.table.rows) {
+    const name = row[0]['en-US']
+    const guide = PRO_MODEL_GUIDE[name]
+    assert.equal(row[1]['en-US'], `~${guide.sizeGiB}G`)
+    for (const [index, preference] of ['quality', 'balanced'].entries()) {
+      assert.equal(
+        row[2 + index]['en-US'],
+        proHardwareLabel(name, 'darwin', preference).replace('UMA ', 'M-series ')
+      )
+      assert.equal(
+        row[4 + index]['en-US'],
+        guide.pc[preference]?.map(([ram, vram]) => `≥${ram}G RAM + ≥${vram}G VRAM`).join(' or ') ??
+          '—'
+      )
+    }
+  }
+  const rows = desktopGuide.modelHardwareTutorial.table.rows.map((row) =>
+    row.map((cell) => cell['en-US'])
+  )
+  assert.deepEqual(
+    rows.map(([name]) => name).sort(),
+    [...Object.keys(STANDARD_MODEL_GUIDE), ...Object.keys(PRO_MODEL_GUIDE)].sort()
+  )
+  for (const [name, size, pc, mac] of rows) {
+    const pro = PRO_MODEL_GUIDE[name]
+    assert.equal(size, `~${(pro ?? STANDARD_MODEL_GUIDE[name]).sizeGiB}G`)
+    assert.doesNotMatch(`${pc} ${mac}`, /Intel|GiB|GB|≥/)
+    assert.equal(
+      `${pc} / ${mac}`,
+      pro ? proRequirementLabel(name) : standardRequirementLabel(`${name}.gguf`)
+    )
+  }
+})
+
+test('Linux uses the largest reported GPU VRAM without adding cards', async () => {
+  const context = vm.createContext({
+    path: path.posix,
+    execFile: (_exe, _args, _options, callback) => callback(null, '8192\n4096\n'),
+    fs: {
+      promises: {
+        readdir: async () => ['card0', 'card1', 'card2', 'card1-DP-1'],
+        readFile: async (file) => {
+          if (file.includes('/card0/')) return String(12 * 1024 ** 3)
+          if (file.includes('/card1/')) return String(8 * 1024 ** 3)
+          throw new Error('No driver VRAM metric')
+        }
+      }
+    }
+  })
+  loadBindings('index.ts', ['getLinuxDedicatedVramGB'], context)
+  assert.equal(await context.getLinuxDedicatedVramGB(), 12)
+})
+
+test('an installed medium Q4 still has its original runtime and repair sources', () => {
+  const context = vm.createContext({ path, INDEX_TRANSLATE_MODELS, GB: 1024 ** 3 })
+  loadBindings(
+    'llamacpp.ts',
+    [
+      'AURA_MODEL_FILENAMES',
+      'getMmprojPrefixForModel',
+      'getMmprojRepoForPrefix',
+      'getMtpFilenameForPrefix'
+    ],
+    context
+  )
+  loadBindings('llamacpp-diagnostics.ts', ['OFFICIAL_MODEL_SOURCES'], context)
+  const filename = 'medium_Q4.gguf'
+  assert.ok(context.AURA_MODEL_FILENAMES.includes(filename))
+  const prefix = context.getMmprojPrefixForModel(filename)
+  assert.equal(context.getMmprojRepoForPrefix(prefix), 'unsloth/gemma-4-12B-it-qat-GGUF')
+  assert.equal(context.getMtpFilenameForPrefix(prefix), 'mtp-gemma-4-12B-it.gguf')
+  assert.equal(context.OFFICIAL_MODEL_SOURCES[filename].saveAs, filename)
+})
+
+test('Omni models pair with only the correct projectors for their revisions', () => {
   const files = new Map()
   const context = vm.createContext({
     path,
@@ -165,9 +343,10 @@ test('all migrated models pair with only the correctly sized projectors for thei
   for (const model of Object.values(INDEX_TRANSLATE_MODELS)) {
     files.clear()
     const filepath = path.join('models', model.name)
-    const previousPath = path.join(path.dirname(filepath), model.previous.projector.filename)
     const omniPath = path.join(path.dirname(filepath), model.projector.filename)
-    files.set(previousPath, model.previous.projector.expectedSize)
+    const previousPath =
+      model.previous && path.join(path.dirname(filepath), model.previous.projector.filename)
+    if (previousPath) files.set(previousPath, model.previous.projector.expectedSize)
     files.set(filepath, model.current.expectedSize)
     assert.equal(context.getMmprojSource(model.name, filepath), model.projector)
     assert.equal(context.findModelMmproj(filepath), null)
@@ -175,18 +354,24 @@ test('all migrated models pair with only the correctly sized projectors for thei
     assert.equal(context.findModelMmproj(filepath), null)
     files.set(omniPath, model.projector.expectedSize)
     assert.equal(context.findModelMmproj(filepath), omniPath)
-    files.set(filepath, model.previous.expectedSize)
-    assert.equal(context.getMmprojSource(model.name, filepath), model.previous.projector)
-    assert.equal(context.findModelMmproj(filepath), previousPath)
-    files.delete(previousPath)
-    assert.equal(context.findModelMmproj(filepath), null)
+    if (previousPath) {
+      files.set(filepath, model.previous.expectedSize)
+      assert.equal(context.getMmprojSource(model.name, filepath), model.previous.projector)
+      assert.equal(context.findModelMmproj(filepath), previousPath)
+      files.delete(previousPath)
+      assert.equal(context.findModelMmproj(filepath), null)
+    } else {
+      files.set(filepath, INDEX_TRANSLATE_MODELS.medium.current.expectedSize)
+      assert.equal(context.getMmprojSource(model.name, filepath), undefined)
+      assert.equal(context.findModelMmproj(filepath), null)
+    }
     files.set(filepath, 10)
     assert.equal(context.findModelMmproj(filepath), null)
   }
 })
 
 for (const [key, model] of Object.entries(INDEX_TRANSLATE_MODELS)) {
-  test(`${model.name} uses its own Omni resume file and preserves the previous model on failure`, async () => {
+  test(`${model.name} uses its own Omni resume file and preserves an existing file on failure`, async () => {
     const modelKey = path.basename(model.name, '.gguf')
     const filepath = path.join('models', modelKey, model.name)
     const previousPartial = `${filepath}.tmp`
@@ -262,6 +447,13 @@ for (const [key, model] of Object.entries(INDEX_TRANSLATE_MODELS)) {
       context
     )
     assert.equal(context.indexTranslatePartialDestination(omniPartial), filepath)
+    if (key === 'mediumQ3')
+      assert.equal(
+        context.indexTranslatePartialDestination(
+          `${filepath}${INDEX_TRANSLATE_MODELS.medium.partialSuffix}`
+        ),
+        undefined
+      )
     assert.equal(context.indexTranslatePartialDestination(previousPartial), undefined)
     assert.equal(context.indexTranslatePartialDestination(`${filepath}.omni-123b.tmp`), undefined)
     loadBindings(
@@ -324,6 +516,7 @@ test('no official model enables the DRY sampler (it corrupts copied IDs and numb
   }
   for (const model of [
     'lowest_V2.gguf',
+    'medium_Q3_V2.gguf',
     'medium_Q4_V2.gguf',
     'high_Q4_2.gguf',
     'medium_Q4.gguf',

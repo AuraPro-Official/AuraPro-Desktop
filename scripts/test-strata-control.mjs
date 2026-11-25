@@ -10,6 +10,7 @@ import { createRequire } from 'node:module'
 import { promisify } from 'node:util'
 import ts from 'typescript'
 import * as models from '../src/main/utils/strata-models.ts'
+import * as hardware from '../src/shared/model-hardware.ts'
 import { InferenceCoordinator } from '../src/main/utils/inference-coordinator.ts'
 import * as llamaRelease from '../src/main/utils/llamacpp-release.ts'
 
@@ -34,6 +35,8 @@ function fixture({
     installFail: false,
     cancel: false,
     startFail: false,
+    diskFailure: null,
+    engineModels: [],
     offline: false,
     missingLatest: false
   }
@@ -118,6 +121,7 @@ function fixture({
     },
     require: (name) => {
       if (name === './strata-models') return models
+      if (name === '../../shared/model-hardware.ts') return hardware
       if (name === './index') return { getInstallDir: () => dir, portInUse: async () => false }
       if (name === './inference-coordinator') return { inferenceCoordinator: coordinator }
       if (name === './llamacpp') return {}
@@ -135,7 +139,20 @@ function fixture({
               stdout: new EventEmitter(),
               stderr: new EventEmitter()
             })
-            if (args.includes('install') || args.includes('select')) {
+            if (args.at(-1) === 'models') {
+              setImmediate(() => {
+                child.stdout.emit('data', Buffer.from(JSON.stringify(state.engineModels)))
+                child.exitCode = 0
+                child.emit('close', 0)
+              })
+            } else if (args.includes('--setup') && state.diskFailure) {
+              setImmediate(() => {
+                child.stdout.emit('data', Buffer.from(state.diskFailure.events))
+                child.stderr.emit('data', Buffer.from(state.diskFailure.logs))
+                child.exitCode = 1
+                child.emit('close', 1)
+              })
+            } else if (args.includes('install') || args.includes('select')) {
               setImmediate(() => {
                 child.stdout.emit(
                   'data',
@@ -308,7 +325,7 @@ test('ordinary Pro start migrates an installed Strata Control despite its larger
     assert.equal(info.upgradeRequired, false)
     assert.equal(info.settings.model, f.oldModel)
     assert.equal(fs.readFileSync(f.weights, 'utf8'), 'preserve model data')
-    assert.ok(f.calls.some(([, url]) => url.endsWith('/tags/v0.0.1')))
+    assert.ok(f.calls.some(([, url]) => url.endsWith(`/tags/${models.AURAPRO_ENGINE_RELEASE}`)))
     const afterFirstStart = f.calls.length
     await f.exports.startStrata()
     assert.equal(f.calls.length, afterFirstStart)
@@ -348,6 +365,62 @@ test('automatic update failure restores old runtime when the new model process e
       models.AURAPRO_ENGINE_RELEASE
     )
     await f.exports.stopStrata()
+  } finally {
+    f.cleanup()
+  }
+})
+
+test('Pro model setup surfaces exact disk deficits and recognizes older engine messages', async () => {
+  const f = fixture({ installedEngine: 'v0.0.1' })
+  const path = 'C:\\AuraPro\\strata\\data\\models'
+  const free = 22_710_263_808
+  const needed = 22_853_663_008
+  const settings = models.DEFAULT_STRATA_SETTINGS
+  try {
+    f.state.diskFailure = {
+      events: JSON.stringify({
+        schema_version: 1,
+        event: 'error',
+        kind: 'no_space',
+        path,
+        free_bytes: free,
+        needed_bytes: needed
+      }),
+      logs: 'Not enough free disk space'
+    }
+    await assert.rejects(f.exports.prepareStrataModel(settings), /Not enough disk space/)
+    assert.deepEqual(JSON.parse(JSON.stringify((await f.exports.getStrataInfo()).modelDiskSpace)), {
+      path,
+      freeBytes: free,
+      neededBytes: needed
+    })
+    f.state.diskFailure = {
+      events: '',
+      logs: `not enough free disk space in ${path}: need ~23 GB, 23 GB free`
+    }
+    await assert.rejects(f.exports.prepareStrataModel(settings), /Not enough disk space/)
+    assert.deepEqual(JSON.parse(JSON.stringify((await f.exports.getStrataInfo()).modelDiskSpace)), {
+      path
+    })
+  } finally {
+    f.cleanup()
+  }
+})
+
+test('Q4 v3.1 requires catalog support before preparing its separate preset', async () => {
+  const f = fixture({ installedEngine: 'v0.0.1' })
+  const settings = { ...models.DEFAULT_STRATA_SETTINGS, model: models.STRATA_Q4_V31_MODEL }
+  try {
+    await assert.rejects(f.exports.prepareStrataModel(settings), /Update AuraPro Engine/)
+    assert.equal(
+      f.calls.some(([kind, , args]) => kind === 'spawn' && args.includes('--setup')),
+      false
+    )
+    f.state.engineModels = [{ id: 'Q4_K_XL', quant: 'UD-Q4_K_XL-v31' }]
+    f.state.diskFailure = { events: '', logs: 'mock setup stopped before transfer' }
+    await assert.rejects(f.exports.prepareStrataModel(settings), /mock setup stopped/)
+    const args = f.calls.find(([kind, , args]) => kind === 'spawn' && args.includes('--setup'))[2]
+    assert.equal(args[args.indexOf('--model') + 1], 'UD-Q4_K_XL-v31')
   } finally {
     f.cleanup()
   }
@@ -451,7 +524,7 @@ test('Cancelling a Control download preserves the old runtime and removes stagin
   }
 })
 
-test('Qwen3.6 starts through Control without unsupported Flash-Next KV flags', async () => {
+test('prepared Lite starts through Control without unsupported KV flags and can be deleted', async () => {
   const f = fixture()
   try {
     const settings = { ...models.DEFAULT_STRATA_SETTINGS, model: 'qwen36-ud-q4_k_xl' }
@@ -478,30 +551,46 @@ test('Qwen3.6 starts through Control without unsupported Flash-Next KV flags', a
     assert.equal(config.args[config.args.indexOf('--mtp') + 1], '2')
     const info = await f.exports.getStrataInfo()
     assert.deepEqual(config.aliases, ['aurapro-pro', 'lite_Q4'])
-    assert.equal(info.models.length, 9)
-    assert.deepEqual(
-      Array.from(
-        info.models.filter((model) => model.family === 'qwen36'),
-        (model) => model.name
-      ),
-      ['lite_Q4', 'lite_Q6']
-    )
+    assert.equal(info.models.length, models.STRATA_MODELS.length)
     assert.equal(
-      info.legacyModels.some((model) => model.id === settings.model),
+      info.models.some((model) => model.family === 'qwen36'),
       false
     )
+    assert.equal(info.legacyModels.find((model) => model.id === settings.model).installed, true)
     await f.exports.stopStrata()
+    await f.exports.deleteStrataModel(settings.model)
+    const removed = await f.exports.getStrataInfo()
+    assert.equal(
+      removed.legacyModels.some((model) => model.id === settings.model),
+      false
+    )
+    assert.equal(removed.settings.model, models.DEFAULT_STRATA_SETTINGS.model)
   } finally {
     f.cleanup()
   }
 })
 
-test('Q8 is never downloaded, even if an old configuration still selects it', async () => {
+test('retired models cannot be prepared, but partial downloads can be removed', async () => {
   const f = fixture()
   try {
-    const settings = { ...models.DEFAULT_STRATA_SETTINGS, model: 'qwen36-q8_0' }
-    await assert.rejects(f.exports.prepareStrataModel(settings), /retired/)
+    const ids = ['qwen36-ud-q4_k_xl', 'qwen36-ud-q6_k_xl', 'qwen36-q8_0', 'unsloth-ud-iq1_m']
+    for (const model of ids)
+      await assert.rejects(
+        f.exports.prepareStrataModel({ ...models.DEFAULT_STRATA_SETTINGS, model }),
+        /retired/
+      )
     assert.deepEqual(f.calls, [])
+    const dir = path.join(f.root, 'data', 'models', 'unsloth-UD-IQ1_M')
+    fs.mkdirSync(dir, { recursive: true })
+    const file = path.join(dir, 'model.gguf.part')
+    fs.writeFileSync(file, 'partial')
+    const info = await f.exports.getStrataInfo()
+    assert.ok(info.models.every(({ id }) => !ids.includes(id)))
+    const partial = info.legacyModels.find(({ id }) => id === 'unsloth-ud-iq1_m')
+    assert.equal(partial.removable, true)
+    assert.equal(partial.installed, false)
+    await f.exports.deleteStrataModel(partial.id)
+    assert.equal(fs.existsSync(file), false)
   } finally {
     f.cleanup()
   }

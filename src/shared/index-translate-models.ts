@@ -4,14 +4,13 @@ interface ModelFile {
   expectedSize: number
 }
 
-interface IndexTranslateModel {
+export interface IndexTranslateModel {
   name: string
   sizeStr: string
-  ramInfo: string
   partialSuffix: string
   current: ModelFile
   projector: ModelFile
-  previous: { expectedSize: number; projector: ModelFile }
+  previous?: { expectedSize: number; projector: ModelFile }
 }
 
 const file = (family: string, variant: string, expectedSize: number): ModelFile => ({
@@ -20,11 +19,12 @@ const file = (family: string, variant: string, expectedSize: number): ModelFile 
   expectedSize
 })
 
+const omni9bProjector = file('Index-Translate-omni-9B', '.mmproj-Q8_0', 620_690_272)
+
 export const INDEX_TRANSLATE_MODELS = {
   lowest: {
     name: 'lowest_V2.gguf',
     sizeStr: '~1.97GB',
-    ramInfo: 'RAM 8G+',
     partialSuffix: '.omni-2b.tmp',
     current: file('Index-Translate-omni-2B', '.Q6_K', 1_973_568_256),
     projector: file('Index-Translate-omni-2B', '.mmproj-Q8_0', 361_518_144),
@@ -33,13 +33,19 @@ export const INDEX_TRANSLATE_MODELS = {
       projector: file('Index-Translate-2B', '.mmproj-Q8_0', 361_518_144)
     }
   },
+  mediumQ3: {
+    name: 'medium_Q3_V2.gguf',
+    sizeStr: '~4.62GB',
+    partialSuffix: '.omni-9b-q3.tmp',
+    current: file('Index-Translate-omni-9B', '.Q3_K_M', 4_623_524_512),
+    projector: omni9bProjector
+  },
   medium: {
     name: 'medium_Q4_V2.gguf',
     sizeStr: '~5.35GB',
-    ramInfo: 'RAM+VRAM 16G+8G / UMA 10G',
     partialSuffix: '.omni-9b.tmp',
     current: file('Index-Translate-omni-9B', '.Q4_K_S', 5_351_629_472),
-    projector: file('Index-Translate-omni-9B', '.mmproj-Q8_0', 620_690_272),
+    projector: omni9bProjector,
     previous: {
       expectedSize: 5_780_090_304,
       projector: file('Index-Translate-9B', '.mmproj-Q8_0', 620_690_272)
@@ -48,7 +54,6 @@ export const INDEX_TRANSLATE_MODELS = {
   high: {
     name: 'high_Q4_2.gguf',
     sizeStr: '~21.17GB',
-    ramInfo: 'RAM+VRAM 32G+6G / UMA 32G',
     partialSuffix: '.omni-35b.tmp',
     current: file('Index-Translate-omni-35B', '.Q4_K_M', 21_166_757_824),
     projector: file('Index-Translate-omni-35B', '.mmproj-Q8_0', 610_655_072),
@@ -63,7 +68,6 @@ export const indexTranslateCatalogEntry = (model: IndexTranslateModel) => ({
   name: model.name,
   repo: 'AuraPro',
   sizeStr: model.sizeStr,
-  ramInfo: model.ramInfo,
   hfRepo: model.current.repo,
   filename: model.current.filename,
   sizeBytes: model.current.expectedSize,

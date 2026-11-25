@@ -793,7 +793,7 @@ const getMmprojPrefixForModel = (modelName: string): string => {
   if (base.startsWith('lowest_v2')) return 'lowest-v2'
   if (base.startsWith('lowest')) return 'lowest'
   if (base.startsWith('low')) return 'low'
-  if (base.startsWith('medium_q4_v2')) return 'medium-v2'
+  if (base === 'medium_q3_v2' || base.startsWith('medium_q4_v2')) return 'medium-v2'
   if (base === 'high_q4_2') return 'high-2'
   if (base.startsWith('medium_q4')) return 'medium-12b'
   if (base.startsWith('medium_iq2')) return 'medium-26b'
@@ -836,6 +836,7 @@ const AURA_MODEL_FILENAMES = [
   'low_E4.gguf',
   'medium_IQ2.gguf',
   'medium_Q4.gguf',
+  'medium_Q3_V2.gguf',
   'medium_Q4_V2.gguf',
   'high_Q4.gguf',
   'high_Q4_2.gguf',

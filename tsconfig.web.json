@@ -8,6 +8,8 @@
     "src/shared/**/*"
   ],
   "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "useDefineForClassFields": true,
     "strict": false,

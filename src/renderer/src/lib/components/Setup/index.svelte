@@ -154,7 +154,7 @@
           </div>
         </div>
       {:else if view === 'install'}
-        <div class="max-w-sm">
+        <div class="max-h-full w-full max-w-[680px] overflow-y-auto py-4">
           <LocalInstall onBack={() => (view = 'main')} onComplete={() => appState.set('ready')} />
         </div>
       {/if}

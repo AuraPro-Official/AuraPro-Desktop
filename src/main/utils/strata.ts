@@ -11,13 +11,16 @@ import { getInstallDir, portInUse } from './index'
 import { inferenceCoordinator } from './inference-coordinator'
 import { setupIsolatedLlamaCpp, latestLlamaCppVersion } from './llamacpp'
 import { isNewerLlamaBuild } from './llamacpp-release'
+import { proGuide } from '../../shared/model-hardware.ts'
 import {
   DEFAULT_STRATA_SETTINGS,
   STRATA_MODELS,
   ALL_STRATA_MODELS,
   STRATA_PORT,
+  STRATA_Q4_V31_MODEL,
   AURAPRO_ENGINE_RELEASE,
   AURAPRO_ENGINE_REPO,
+  getStrataModel,
   strataConfigName,
   strataModelAliases,
   strataHardwareRecommendation,
@@ -42,6 +45,7 @@ type Installation = RuntimeInstallation & {
   rollback?: { runtime: RuntimeInstallation; settings: StrataSettings }
 }
 type Release = { version: string; control?: ControlRelease }
+type ModelDiskSpace = { path?: string; freeBytes?: number; neededBytes?: number }
 const AUTO_CHECK_INTERVAL = 60_000
 const AUTO_RETRY_INTERVAL = 24 * 60 * 60_000
 let lastUpdateCheck = 0
@@ -53,6 +57,7 @@ let startupAbort: AbortController | null = null
 let status = 'stopped'
 let error = ''
 let output = ''
+let modelDiskSpace: ModelDiskSpace | null = null
 const logListeners = new Set<(data: string) => void>()
 
 export function subscribeStrataLogs(callback: (data: string) => void): () => void {
@@ -379,12 +384,45 @@ function run(exe: string, args: string[], cwd: string, signal: AbortSignal): Pro
       signal.removeEventListener('abort', abort)
       if (worker === child) worker = null
       if (signal.aborted) reject(new Error('Pro operation cancelled'))
-      else if (code !== 0)
-        reject(new Error(`Pro command exited with code ${code}. ${output.slice(-1600)}`))
-      else resolve(captured)
+      else if (code !== 0) {
+        if (args.includes('--setup')) modelDiskSpace = readModelDiskSpace(captured, output)
+        reject(
+          new Error(
+            modelDiskSpace
+              ? 'Not enough disk space for the Pro model'
+              : `Pro command exited with code ${code}. ${output.slice(-1600)}`
+          )
+        )
+      } else resolve(captured)
     })
     if (signal.aborted) abort()
   })
+}
+
+function readModelDiskSpace(events: string, logs: string): ModelDiskSpace | null {
+  for (const line of events.split(/\r?\n/).reverse()) {
+    if (!line.startsWith('{')) continue
+    try {
+      const result = JSON.parse(line)
+      if (
+        result?.schema_version === 1 &&
+        result.event === 'error' &&
+        result.kind === 'no_space' &&
+        typeof result.path === 'string' &&
+        Number.isSafeInteger(result.free_bytes) &&
+        Number.isSafeInteger(result.needed_bytes) &&
+        result.free_bytes >= 0 &&
+        result.needed_bytes > result.free_bytes
+      ) {
+        return { path: result.path, freeBytes: result.free_bytes, neededBytes: result.needed_bytes }
+      }
+    } catch {
+      // A truncated line cannot provide a reliable size.
+    }
+  }
+  const legacy = logs.match(/not enough free disk space in ([^\r\n]+?): need/i)
+  if (legacy) return { path: legacy[1] }
+  return /not enough free disk space|\bENOSPC\b|no space left on device/i.test(logs) ? {} : null
 }
 
 function adapterResult<T>(text: string): T {
@@ -574,6 +612,22 @@ export async function getStrataInfo() {
   const installed = installation()
   const settings = getStrataSettings()
   const dir = installed ? sourceDir(installed.source) : ''
+  const describeModel = (model: (typeof ALL_STRATA_MODELS)[number]) => ({
+    ...model,
+    sizeGiB: proGuide(model.name)?.sizeGiB,
+    sizeBytes: Object.values(nativeProFiles(model.id).fileMetadata).reduce(
+      (sum, file) => sum + file.size,
+      0
+    ),
+    ramInfo: strataHardwareRecommendation(model),
+    removable:
+      fs.existsSync(path.join(root(), 'native-models', model.id)) ||
+      fs.existsSync(path.join(root(), 'data', 'models', modelTag(model.id))) ||
+      fs.existsSync(path.join(root(), 'data', 'packs', modelTag(model.id).toLowerCase())),
+    installed: native()
+      ? nativeModelReady(model.id, model.id === settings.model && settings.vision)
+      : !!dir && fs.existsSync(path.join(dir, strataConfigName(model.id)))
+  })
   return {
     supported: supported(),
     runtime: native()
@@ -585,6 +639,7 @@ export async function getStrataInfo() {
     status,
     error,
     logs: output,
+    modelDiskSpace,
     progress,
     installed,
     upgradeRequired: !!installed && !native() && !isAuraProEngine(installed),
@@ -592,25 +647,14 @@ export async function getStrataInfo() {
     port: STRATA_PORT,
     settings,
     models: STRATA_MODELS.map((model) => ({
-      ...model,
-      ramInfo: strataHardwareRecommendation(model),
-      experimental: false,
-      removable:
-        fs.existsSync(path.join(root(), 'native-models', model.id)) ||
-        fs.existsSync(path.join(root(), 'data', 'models', modelTag(model.id))),
-      installed: native()
-        ? nativeModelReady(model.id, model.id === settings.model && settings.vision)
-        : !!dir && fs.existsSync(path.join(dir, strataConfigName(model.id)))
+      ...describeModel(model),
+      experimental: false
     })),
     legacyModels: ALL_STRATA_MODELS.filter(
       (model) => !STRATA_MODELS.some((current) => current.id === model.id)
     )
-      .filter((model) =>
-        native()
-          ? nativeModelReady(model.id)
-          : !!dir && fs.existsSync(path.join(dir, strataConfigName(model.id)))
-      )
-      .map((model) => ({ ...model, installed: true }))
+      .map(describeModel)
+      .filter((model) => model.installed || model.removable)
   }
 }
 
@@ -621,6 +665,7 @@ async function exclusiveOperation(action: (signal: AbortSignal) => Promise<void>
   operation = controller
   error = ''
   output = ''
+  modelDiskSpace = null
   setProgress('preparing')
   try {
     await stopStrata()
@@ -656,7 +701,8 @@ export async function checkStrataHealth() {
     installed: null,
     port: STRATA_PORT,
     settings: DEFAULT_STRATA_SETTINGS,
-    models: [] as Awaited<ReturnType<typeof getStrataInfo>>['models']
+    models: [] as Awaited<ReturnType<typeof getStrataInfo>>['models'],
+    legacyModels: [] as Awaited<ReturnType<typeof getStrataInfo>>['legacyModels']
   }))
   let detail = info.error
   let health: 'healthy' | 'starting' | 'stopped' | 'unresponsive' =
@@ -736,10 +782,12 @@ export async function installStrata(
     }
     const control =
       release?.control ??
-      (await controlRelease(
-        (isAuraProEngine(previous) && previous?.productVersion) || AURAPRO_ENGINE_RELEASE,
-        signal
-      ))
+      (settings.model === STRATA_Q4_V31_MODEL
+        ? await controlRelease('latest', signal)
+        : await controlRelease(
+            (isAuraProEngine(previous) && previous?.productVersion) || AURAPRO_ENGINE_RELEASE,
+            signal
+          ))
     const tag = control.tag_name
     // Stage a whole private Control; keep the old environment and model files for recovery.
     const source = `engine-${tag.slice(1)}-${randomUUID().slice(0, 8)}`
@@ -843,13 +891,20 @@ export async function prepareStrataModel(settings: StrataSettings): Promise<void
       throw new Error('Reinstall AuraPro Engine for the selected GPU backend first')
     if (installed.backend !== 'cuda' && installed.backend !== 'hip')
       throw new Error('AuraPro Engine has no installed CUDA or HIP component')
+    const executable = python(installed.source)
+    if (valid.model === STRATA_Q4_V31_MODEL) {
+      const args = ['-B', '-E', '-s', path.join(dir, 'aurapro_engine.py'), 'models']
+      const catalog = JSON.parse(await run(executable, args, dir, signal)) as { quant: string }[]
+      if (!catalog.some(({ quant }) => quant === getStrataModel(valid.model)?.quant))
+        throw new Error('Update AuraPro Engine in Pro runtime settings before downloading Q4_K_XL')
+    }
     const setupArgs = strataSetupArgs(
       { ...valid, backend: installed.backend },
       path.join(root(), 'data')
     )
     await run(
-      python(installed.source),
-      ['-B', '-E', '-s', managedEntry(dir), 'model', ...setupArgs],
+      executable,
+      ['-B', '-E', '-s', managedEntry(dir), 'model', ...setupArgs, '--output', 'jsonl'],
       dir,
       signal
     )
@@ -1010,6 +1065,12 @@ export async function deleteStrataModel(modelId: string): Promise<void> {
     const projector = nativeProFiles(modelId).projector
     if (projector && !remaining.some((model) => nativeProFiles(model.id).projector === projector))
       await removeProPath(path.join(modelsDir, projector))
+    const settings = getStrataSettings()
+    if (settings.model === modelId && !STRATA_MODELS.some((model) => model.id === modelId))
+      writeJson(path.join(root(), 'settings.json'), {
+        ...settings,
+        model: DEFAULT_STRATA_SETTINGS.model
+      })
   })
   progress = null
 }
@@ -1149,6 +1210,7 @@ async function startRaw(): Promise<void> {
 
 async function startWithUpdates(): Promise<void> {
   if (server && status === 'started') return
+  modelDiskSpace = null
   const current = installation()
   if (current && !current.rollback && Date.now() - lastUpdateCheck >= AUTO_CHECK_INTERVAL) {
     lastUpdateCheck = Date.now()

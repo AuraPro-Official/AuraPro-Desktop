@@ -10,6 +10,7 @@ import {
   STRATA_MODELS,
   STRATA_MODEL_ID,
   STRATA_PORT,
+  STRATA_Q4_V31_MODEL,
   STRATA_RELEASE,
   STRATA_SOURCE,
   getStrataModel,
@@ -23,13 +24,13 @@ import {
 } from '../src/main/utils/strata-models.ts'
 
 const unslothQuants = [
-  'UD-IQ1_M',
   'UD-Q2_0',
   'UD-IQ2_XS',
   'UD-Q2_K_XL',
   'UD-IQ3_XXS',
   'UD-Q3_K_XL',
-  'UD-IQ4_XS-v31'
+  'UD-IQ4_XS-v31',
+  'UD-Q4_K_XL-v31'
 ]
 const qwen36Quants = ['UD-Q4_K_XL', 'UD-Q6_K_XL', 'Q8_0']
 const legacyIds = [
@@ -40,7 +41,10 @@ const legacyIds = [
   'swift-iq2_xs',
   'swift-iq3_xxs',
   'coder-iq1_m',
+  'unsloth-ud-iq1_m',
   'unsloth-ud-q4_k_xl',
+  'qwen36-ud-q4_k_xl',
+  'qwen36-ud-q6_k_xl',
   'qwen36-q8_0'
 ]
 const option = (args, flag) => {
@@ -55,29 +59,24 @@ test('release and service exports are stable', () => {
   assert.equal(STRATA_MODEL_ID, 'aurapro-pro')
 })
 
-test('seven Flash-Next presets and only the Q4/Q6 35B presets are selectable', () => {
+test('only the seven current Flash-Next presets are available to install', () => {
   assert.deepEqual(
     STRATA_MODELS.map(({ id, family, quant }) => [id, family, quant]),
-    [
-      ...unslothQuants.map((q) => [`unsloth-${q.toLowerCase()}`, 'unsloth', q]),
-      ['qwen36-ud-q4_k_xl', 'qwen36', 'UD-Q4_K_XL'],
-      ['qwen36-ud-q6_k_xl', 'qwen36', 'UD-Q6_K_XL']
-    ]
+    unslothQuants.map((q) => [`unsloth-${q.toLowerCase()}`, 'unsloth', q])
   )
-  assert.equal(new Set(STRATA_MODELS.map(({ name }) => name)).size, 9)
   assert.deepEqual(
     STRATA_MODELS.map((model) => model.name),
-    ['IQ1_M', 'Q2_0', 'IQ2_XS', 'Q2_K_XL', 'IQ3_XXS', 'Q3_K_XL', 'IQ4_XS', 'lite_Q4', 'lite_Q6']
+    ['Q2_0', 'IQ2_XS', 'Q2_K_XL', 'IQ3_XXS', 'Q3_K_XL', 'IQ4_XS', 'Q4_K_XL']
   )
 })
 
-test('retired Flash-Next variants and 35B Q8 remain compatible but not selectable', () => {
+test('retired Flash-Next and Qwen3.6 variants remain compatible but not selectable', () => {
   assert.deepEqual(
     LEGACY_STRATA_MODELS.map(({ id }) => id),
     legacyIds
   )
-  assert.equal(ALL_STRATA_MODELS.length, 18)
-  assert.equal(new Set(ALL_STRATA_MODELS.map(({ id }) => id)).size, 18)
+  assert.equal(ALL_STRATA_MODELS.length, 19)
+  assert.equal(new Set(ALL_STRATA_MODELS.map(({ id }) => id)).size, 19)
   assert.deepEqual(
     ALL_STRATA_MODELS.filter(({ id }) => !STRATA_MODELS.some((m) => m.id === id)).map(
       ({ id }) => id
@@ -111,7 +110,7 @@ test('fresh settings use Q2_0 without changing any saved model selection', () =>
 })
 
 test('config lookups preserve old names and use the upstream Qwen3.6 and v3.1 names', () => {
-  assert.equal(new Set(ALL_STRATA_MODELS.map(({ id }) => strataConfigName(id))).size, 18)
+  assert.equal(new Set(ALL_STRATA_MODELS.map(({ id }) => strataConfigName(id))).size, 19)
   assert.deepEqual(
     LEGACY_STRATA_MODELS.map(({ id }) => strataConfigName(id)),
     [
@@ -122,7 +121,10 @@ test('config lookups preserve old names and use the upstream Qwen3.6 and v3.1 na
       'strata-swift-iq2_xs.json',
       'strata-swift-iq3_xxs.json',
       'strata-coder-iq1_m.json',
+      'strata-unsloth-ud-iq1_m.json',
       'strata-unsloth-ud-q4_k_xl.json',
+      'strata-qwen36-ud-q4_k_xl.json',
+      'strata-qwen36-ud-q6_k_xl.json',
       'strata-qwen36-q8_0.json'
     ]
   )
@@ -204,7 +206,7 @@ test('validation rejects unsafe values, accepts boundaries and removes obsolete 
   }
 })
 
-test('native manifests pin exact shard counts, paths, sizes and hashes for all 18 presets', () => {
+test('native manifests pin exact shard counts, paths, sizes and hashes for all presets', () => {
   for (const model of ALL_STRATA_MODELS) {
     const m = nativeProFiles(model.id)
     const count =
@@ -250,7 +252,7 @@ test('v3.1 IQ4 paths use UD-IQ4_XS, while setup and config retain the catalog al
     m.files,
     [1, 2, 3, 4].map((i) => `UD-IQ4_XS/Qwen3.8-Flash-Next-UD-IQ4_XS-0000${i}-of-00004.gguf`)
   )
-  for (const q of unslothQuants)
+  for (const q of ['UD-IQ1_M', ...unslothQuants])
     assert.equal(nativeProFiles(`unsloth-${q.toLowerCase()}`).revision, m.revision)
 })
 
@@ -264,7 +266,7 @@ test('legacy native layouts and original Q4 revision remain addressable', () => 
         : model.family === 'unsloth'
           ? 'Qwen3.8-Flash-Next'
           : 'Qwen3.8-Flash-Next-GSQ-RCO'
-    const count = model.family === 'unsloth' ? 4 : 2
+    const count = model.quant === 'UD-IQ1_M' ? 3 : model.family === 'unsloth' ? 4 : 2
     assert.deepEqual(
       m.files,
       Array.from(
@@ -280,6 +282,19 @@ test('legacy native layouts and original Q4 revision remain addressable', () => 
   assert.equal(
     q4.fileMetadata[q4.files[0]].sha256,
     '4448186216b3af4cc558bbce2c3213f01608f8f8b2e5267a9767971dd3ec8082'
+  )
+})
+
+test('the newly selectable Q4 has a distinct profile and uses the revised four-shard layout', () => {
+  const q4 = nativeProFiles(STRATA_Q4_V31_MODEL)
+  const legacy = nativeProFiles('unsloth-ud-q4_k_xl')
+  assert.deepEqual(q4.files, legacy.files)
+  assert.notDeepEqual(q4.fileMetadata, legacy.fileMetadata)
+  assert.equal(q4.revision, nativeProFiles('unsloth-ud-iq4_xs-v31').revision)
+  assert.equal(strataConfigName(STRATA_Q4_V31_MODEL), 'strata-unsloth-ud-q4_k_xl-v31.json')
+  assert.equal(
+    strataHardwareRecommendation(getStrataModel(STRATA_Q4_V31_MODEL), 'darwin'),
+    'UMA 128G'
   )
 })
 
@@ -319,34 +334,42 @@ test('mutating a returned native manifest cannot corrupt the pinned catalog', ()
   assert.deepEqual(nativeProFiles(DEFAULT_STRATA_SETTINGS.model), before)
 })
 
-test('PC requirements preserve each approved RAM/VRAM combination rather than summing model bytes', () => {
+test('PC requirements show the quality tier and inherit the next lower tier for Q4', () => {
   const requirements = [
-    'RAM+VRAM 48GB+8GB',
-    'RAM+VRAM 48GB+12GB / RAM+VRAM 64GB+8GB',
-    'RAM+VRAM 48GB+12GB / RAM+VRAM 64GB+8GB',
-    'RAM+VRAM 48GB+16GB / RAM+VRAM 64GB+12GB',
-    'RAM+VRAM 48GB+16GB / RAM+VRAM 64GB+12GB',
-    'RAM+VRAM 64GB+16GB / RAM+VRAM 96GB+12GB',
-    'RAM+VRAM 96GB+12GB',
-    'RAM+VRAM 48GB+12GB',
-    'RAM+VRAM 48GB+12GB'
+    'RAM+VRAM 48G+12G',
+    'RAM+VRAM 64G+8G',
+    'RAM+VRAM 64G+12G',
+    'RAM+VRAM 64G+16G',
+    'RAM+VRAM 96G+12G',
+    'RAM+VRAM 96G+16G',
+    'RAM+VRAM 96G+16G'
   ]
   for (const platform of ['win32', 'linux']) {
     assert.deepEqual(
       STRATA_MODELS.map((model) => strataHardwareRecommendation(model, platform)),
       requirements
     )
+    assert.equal(
+      strataHardwareRecommendation(getStrataModel('unsloth-ud-iq1_m'), platform),
+      'RAM+VRAM 48G+8G'
+    )
   }
 })
 
-test('Mac recommendations remain separate from PC disk-streaming requirements', () => {
+test('Mac requirements distinguish quality minimum guidance from estimates', () => {
+  assert.deepEqual(
+    STRATA_MODELS.map((model) => strataHardwareRecommendation(model, 'darwin')),
+    ['UMA ~80G', 'UMA ~96G', 'UMA ~96G', 'UMA ~96G', 'UMA 96G', 'UMA 96G', 'UMA 128G']
+  )
+  assert.equal(
+    strataHardwareRecommendation(getStrataModel(STRATA_Q4_V31_MODEL)),
+    'RAM+VRAM 96G+16G / UMA 128G'
+  )
   for (const platform of ['darwin']) {
     let previous = 0
-    for (const model of [...ALL_STRATA_MODELS].sort((a, b) => a.gb - b.gb)) {
+    for (const model of [...LEGACY_STRATA_MODELS].sort((a, b) => a.gb - b.gb)) {
       const label = strataHardwareRecommendation(model, platform)
-      const match = label.match(
-        platform === 'darwin' ? /^UMA (\d+)GB$/ : /^RAM\+VRAM (\d+)GB\+12GB$/
-      )
+      const match = label.match(platform === 'darwin' ? /^UMA (\d+)G$/ : /^RAM\+VRAM (\d+)G\+12G$/)
       assert.ok(match, label)
       const memory = Number(match[1])
       const weightsGiB = (model.gb * 1e9) / 1024 ** 3
@@ -357,12 +380,12 @@ test('Mac recommendations remain separate from PC disk-streaming requirements', 
   }
   assert.equal(
     strataHardwareRecommendation(getStrataModel('qwen36-ud-q4_k_xl'), 'darwin'),
-    'UMA 48GB'
+    'UMA 48G'
   )
-  assert.equal(strataHardwareRecommendation(getStrataModel('qwen36-q8_0'), 'darwin'), 'UMA 64GB')
+  assert.equal(strataHardwareRecommendation(getStrataModel('qwen36-q8_0'), 'darwin'), 'UMA 64G')
   assert.equal(
     strataHardwareRecommendation(getStrataModel('unsloth-ud-q4_k_xl'), 'darwin'),
-    'UMA 128GB'
+    'UMA 128G'
   )
 })
 
@@ -443,7 +466,9 @@ test(
     assert.ok(controlAvailable, `Missing Control bundle/interpreter: ${controlDir}`)
     assert.equal(readFileSync(path.join(controlDir, 'VERSION'), 'utf8').trim(), '0.1.61')
     assert.equal(readFileSync(path.join(controlDir, 'COMMIT'), 'utf8').trim(), STRATA_SOURCE)
-    const selected = ALL_STRATA_MODELS.map((m) => ({
+    // Upstream Control recognizes the old Q4 name only; the fork adds the new setup alias.
+    const upstreamModels = ALL_STRATA_MODELS.filter(({ id }) => id !== STRATA_Q4_V31_MODEL)
+    const selected = upstreamModels.map((m) => ({
       ...m,
       selectable: STRATA_MODELS.some(({ id }) => id === m.id),
       // This fixture deliberately verifies the old Control parser and saved model layouts.
@@ -525,6 +550,7 @@ for item in json.loads(sys.argv[2]):
     info = fam['models'][quant] if own else s.MODELS[quant]
     out[item['id']] = {'manifest': manifest, 'config': 'strata-' + (fam['tag'] + quant).lower() + '.json', 'ram': info['ram_gb']}
 assert checked_urls
+out['q4_v31_pins'] = s.UNSLOTH_Q4_V31_SHARDS
 print(json.dumps(out))
 `,
         controlDir,
@@ -545,11 +571,21 @@ print(json.dumps(out))
     assert.equal(result.error, undefined)
     assert.equal(result.status, 0, result.stderr || result.stdout)
     const upstream = JSON.parse(result.stdout)
-    for (const model of ALL_STRATA_MODELS) {
+    for (const model of upstreamModels) {
       assert.deepEqual(nativeProFiles(model.id), upstream[model.id].manifest, model.id)
       assert.equal(strataConfigName(model.id), upstream[model.id].config, model.id)
       if (LEGACY_STRATA_MODELS.some((legacy) => legacy.id === model.id))
         assert.equal(model.ram, upstream[model.id].ram, model.id)
     }
+    const q4 = nativeProFiles(STRATA_Q4_V31_MODEL)
+    assert.deepEqual(
+      Object.fromEntries(
+        Object.entries(q4.fileMetadata).map(([file, { size, sha256 }]) => [
+          path.posix.basename(file),
+          [size, sha256]
+        ])
+      ),
+      upstream.q4_v31_pins
+    )
   }
 )

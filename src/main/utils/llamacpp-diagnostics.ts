@@ -857,7 +857,7 @@ export const diagnoseLlamaCpp = async (
         offloadedLayers: null
       },
       models: {
-        total: state.models.filter((model) => model.installed).length,
+        total: [...state.models, ...state.legacyModels].filter((model) => model.installed).length,
         invalid: 0,
         partial: 0,
         mtpEnabled: process.platform !== 'darwin',

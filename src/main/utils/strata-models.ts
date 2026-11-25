@@ -1,11 +1,13 @@
 import nativeCatalog from './strata-model-catalog.json' with { type: 'json' }
+import { proRequirementLabel } from '../../shared/model-hardware.ts'
 
 export const STRATA_PORT = 18882
 export const STRATA_MODEL_ID = 'aurapro-pro'
 export const STRATA_SOURCE = 'c77572806996349b49995e4f98d41b5294d36a21'
 export const STRATA_RELEASE = 'v0.2.15'
-export const AURAPRO_ENGINE_RELEASE = 'v0.0.1'
+export const AURAPRO_ENGINE_RELEASE = 'v0.0.2'
 export const AURAPRO_ENGINE_REPO = 'AuraPro-Official/AuraPro-Engine'
+export const STRATA_Q4_V31_MODEL = 'unsloth-ud-q4_k_xl-v31'
 
 // Compatibility only: never replace a saved model ID with the new default.
 export const LEGACY_STRATA_MODELS = [
@@ -66,25 +68,6 @@ export const LEGACY_STRATA_MODELS = [
     ram: 32
   },
   {
-    id: 'unsloth-ud-q4_k_xl',
-    family: 'unsloth',
-    quant: 'UD-Q4_K_XL',
-    name: 'Q4_K_XL',
-    gb: 111.3,
-    ram: 48
-  },
-  {
-    id: 'qwen36-q8_0',
-    family: 'qwen36',
-    quant: 'Q8_0',
-    name: 'Q8_0',
-    gb: 37.8,
-    ram: 52
-  }
-] as const
-
-export const STRATA_MODELS = [
-  {
     id: 'unsloth-ud-iq1_m',
     family: 'unsloth',
     quant: 'UD-IQ1_M',
@@ -94,73 +77,12 @@ export const STRATA_MODELS = [
     requirements: [[48, 8]]
   },
   {
-    id: 'unsloth-ud-q2_0',
+    id: 'unsloth-ud-q4_k_xl',
     family: 'unsloth',
-    quant: 'UD-Q2_0',
-    name: 'Q2_0',
-    gb: 70.5,
-    ram: 48,
-    requirements: [
-      [48, 12],
-      [64, 8]
-    ]
-  },
-  {
-    id: 'unsloth-ud-iq2_xs',
-    family: 'unsloth',
-    quant: 'UD-IQ2_XS',
-    name: 'IQ2_XS',
-    gb: 75.8,
-    ram: 48,
-    requirements: [
-      [48, 12],
-      [64, 8]
-    ]
-  },
-  {
-    id: 'unsloth-ud-q2_k_xl',
-    family: 'unsloth',
-    quant: 'UD-Q2_K_XL',
-    name: 'Q2_K_XL',
-    gb: 79.6,
-    ram: 48,
-    requirements: [
-      [48, 16],
-      [64, 12]
-    ]
-  },
-  {
-    id: 'unsloth-ud-iq3_xxs',
-    family: 'unsloth',
-    quant: 'UD-IQ3_XXS',
-    name: 'IQ3_XXS',
-    gb: 83.6,
-    ram: 48,
-    requirements: [
-      [48, 16],
-      [64, 12]
-    ]
-  },
-  {
-    id: 'unsloth-ud-q3_k_xl',
-    family: 'unsloth',
-    quant: 'UD-Q3_K_XL',
-    name: 'Q3_K_XL',
-    gb: 89.5,
-    ram: 64,
-    requirements: [
-      [64, 16],
-      [96, 12]
-    ]
-  },
-  {
-    id: 'unsloth-ud-iq4_xs-v31',
-    family: 'unsloth',
-    quant: 'UD-IQ4_XS-v31',
-    name: 'IQ4_XS',
-    gb: 93.7,
-    ram: 96,
-    requirements: [[96, 12]]
+    quant: 'UD-Q4_K_XL',
+    name: 'Q4_K_XL',
+    gb: 111.3,
+    ram: 48
   },
   {
     id: 'qwen36-ud-q4_k_xl',
@@ -177,6 +99,73 @@ export const STRATA_MODELS = [
     name: 'lite_Q6',
     gb: 32.61,
     ram: 44
+  },
+  {
+    id: 'qwen36-q8_0',
+    family: 'qwen36',
+    quant: 'Q8_0',
+    name: 'Q8_0',
+    gb: 37.8,
+    ram: 52
+  }
+] as const
+
+export const STRATA_MODELS = [
+  {
+    id: 'unsloth-ud-q2_0',
+    family: 'unsloth',
+    quant: 'UD-Q2_0',
+    name: 'Q2_0',
+    gb: 70.5,
+    ram: 48
+  },
+  {
+    id: 'unsloth-ud-iq2_xs',
+    family: 'unsloth',
+    quant: 'UD-IQ2_XS',
+    name: 'IQ2_XS',
+    gb: 75.8,
+    ram: 48
+  },
+  {
+    id: 'unsloth-ud-q2_k_xl',
+    family: 'unsloth',
+    quant: 'UD-Q2_K_XL',
+    name: 'Q2_K_XL',
+    gb: 79.6,
+    ram: 48
+  },
+  {
+    id: 'unsloth-ud-iq3_xxs',
+    family: 'unsloth',
+    quant: 'UD-IQ3_XXS',
+    name: 'IQ3_XXS',
+    gb: 83.6,
+    ram: 48
+  },
+  {
+    id: 'unsloth-ud-q3_k_xl',
+    family: 'unsloth',
+    quant: 'UD-Q3_K_XL',
+    name: 'Q3_K_XL',
+    gb: 89.5,
+    ram: 64
+  },
+  {
+    id: 'unsloth-ud-iq4_xs-v31',
+    family: 'unsloth',
+    quant: 'UD-IQ4_XS-v31',
+    name: 'IQ4_XS',
+    gb: 93.7,
+    ram: 96
+  },
+  {
+    id: STRATA_Q4_V31_MODEL,
+    family: 'unsloth',
+    quant: 'UD-Q4_K_XL-v31',
+    name: 'Q4_K_XL',
+    gb: 111.3,
+    ram: 48
   }
 ] as const
 
@@ -202,13 +191,15 @@ export type StrataSettings = {
   vision: boolean
 }
 
-export function strataHardwareRecommendation(
-  model: StrataModel,
-  platform = process.platform
-): string {
-  if (platform !== 'darwin' && 'requirements' in model) {
+export function strataHardwareRecommendation(model: StrataModel, platform?: string): string {
+  if (STRATA_MODELS.some(({ id }) => id === model.id)) {
+    const label = proRequirementLabel(model.name, platform)
+    if (label) return label
+  }
+  const currentPlatform = platform ?? process.platform
+  if (currentPlatform !== 'darwin' && 'requirements' in model) {
     const requirements: readonly (readonly [number, number])[] = model.requirements
-    return requirements.map(([ram, vram]) => `RAM+VRAM ${ram}GB+${vram}GB`).join(' / ')
+    return requirements.map(([ram, vram]) => `RAM+VRAM ${ram}G+${vram}G`).join(' / ')
   }
   // The Mac llama.cpp path loads resident weights; do not apply Strata's PC streaming requirements.
   const weightsGiB = (model.gb * 1e9) / 1024 ** 3
@@ -216,8 +207,8 @@ export function strataHardwareRecommendation(
   const ram =
     [32, 48, 64, 80, 96, 128, 192, 256].find((size) => size >= required) ??
     Math.ceil(required / 64) * 64
-  if (platform === 'darwin') return `UMA ${ram}GB`
-  return `RAM+VRAM ${ram}GB+12GB`
+  if (currentPlatform === 'darwin') return `UMA ${ram}G`
+  return `RAM+VRAM ${ram}G+12G`
 }
 
 export function useProDiagnostics(

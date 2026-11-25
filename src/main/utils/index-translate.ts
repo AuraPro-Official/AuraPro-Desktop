@@ -1,8 +1,11 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { INDEX_TRANSLATE_MODELS } from '../../shared/index-translate-models'
+import {
+  INDEX_TRANSLATE_MODELS,
+  type IndexTranslateModel
+} from '../../shared/index-translate-models'
 
-export const getIndexTranslateModel = (filepath: string) => {
+export const getIndexTranslateModel = (filepath: string): IndexTranslateModel | undefined => {
   const name = path.basename(filepath).toLowerCase()
   return Object.values(INDEX_TRANSLATE_MODELS).find((model) => model.name.toLowerCase() === name)
 }
@@ -13,7 +16,7 @@ export const getIndexTranslateProjector = (filepath: string) => {
   try {
     const size = fs.statSync(filepath).size
     if (size === model.current.expectedSize) return model.projector
-    if (size === model.previous.expectedSize) return model.previous.projector
+    if (size === model.previous?.expectedSize) return model.previous.projector
   } catch {
     // No complete main model to pair with yet.
   }

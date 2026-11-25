@@ -908,7 +908,7 @@
           </div>
         {/if}
       {:else if view === 'install'}
-        <div class="w-full max-w-[260px]">
+        <div class="max-h-full w-full max-w-[680px] overflow-y-auto py-6">
           {#if LocalInstallComponent}
             <LocalInstallComponent
               autoStart={autoInstall}

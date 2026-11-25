@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto'
 import ts from 'typescript'
 import * as llamaRelease from '../src/main/utils/llamacpp-release.ts'
 import * as catalog from '../src/main/utils/strata-models.ts'
+import * as hardware from '../src/shared/model-hardware.ts'
 
 const models = {
   ...catalog,
@@ -32,7 +33,7 @@ test('Mac Pro installs, downloads, starts, diagnoses and stops without global ll
   let downloadMode = 'success'
   let latestVersion = 'b12000'
   let elapsed = 0
-  const model = 'qwen36-ud-q4_k_xl'
+  const model = models.DEFAULT_STRATA_SETTINGS.model
   let registered
   const exe = path.join(dir, 'strata', 'llama.cpp', 'b12000', 'llama-server')
   const coordinator = {
@@ -74,6 +75,7 @@ test('Mac Pro installs, downloads, starts, diagnoses and stops without global ll
     },
     require: (name) => {
       if (name === './strata-models') return models
+      if (name === '../../shared/model-hardware.ts') return hardware
       if (name === './index') return { getInstallDir: () => dir, portInUse: async () => false }
       if (name === './inference-coordinator') return { inferenceCoordinator: coordinator }
       if (name === './llamacpp-release') return llamaRelease
@@ -161,7 +163,7 @@ test('Mac Pro installs, downloads, starts, diagnoses and stops without global ll
     assert.equal(launch[1], exe)
     assert.equal(launch[2][launch[2].indexOf('--ctx-size') + 1], '20000')
     assert.equal(launch[2][launch[2].indexOf('--port') + 1], '18882')
-    assert.equal(launch[2][launch[2].indexOf('--alias') + 1], 'aurapro-pro,lite_Q4')
+    assert.equal(launch[2][launch[2].indexOf('--alias') + 1], 'aurapro-pro')
     assert.equal((await exports.checkStrataHealth()).health, 'healthy')
     await exports.stopStrata()
     assert.equal((await exports.getStrataInfo()).status, 'stopped')
@@ -211,19 +213,12 @@ test('Mac Pro installs, downloads, starts, diagnoses and stops without global ll
       'strata',
       'data',
       'models',
-      'qwen36-UD-Q4_K_XL',
+      'unsloth-UD-Q2_0',
       'weight.gguf'
     )
-    const keptWeight = path.join(dir, 'strata', 'data', 'models', 'Q2_0', 'weight.gguf')
+    const keptWeight = path.join(dir, 'strata', 'data', 'models', 'unsloth-UD-IQ1_M', 'weight.gguf')
     const sharedMtp = path.join(dir, 'strata', 'data', 'mtp', 'rt', 'experts.bin')
-    const deletedPack = path.join(
-      dir,
-      'strata',
-      'data',
-      'packs',
-      'qwen36-ud-q4_k_xl',
-      'experts.bin'
-    )
+    const deletedPack = path.join(dir, 'strata', 'data', 'packs', 'unsloth-ud-q2_0', 'experts.bin')
     const oldConfig = path.join(dir, 'strata', 'versions', 'old', models.strataConfigName(model))
     for (const file of [deletedWeight, keptWeight, sharedMtp, deletedPack, oldConfig]) {
       fs.mkdirSync(path.dirname(file), { recursive: true })
