@@ -42,6 +42,7 @@ import {
 import {
   SPEECH_TTS_REPOS,
   SPEECH_ASR_LANGUAGES,
+  SPEECH_LANGUAGE_ALIASES,
   speechLanguageCode,
   selectedSpeechLanguages,
   speechAsrGroup,
@@ -1162,6 +1163,7 @@ const startSherpaInternal = async (
         SHERPA_LANG_DETECT_MODEL: sherpaConfig.asrLanguageDetectorModel || 'small', // 'large-v3-turbo'
         SHERPA_LANG_DETECT_DEVICE: sherpaConfig.asrLanguageDetectorDevice || 'cpu',
         SHERPA_LANG_DETECT_COMPUTE_TYPE: sherpaConfig.asrLanguageDetectorComputeType || 'int8',
+        SHERPA_LANGUAGE_ALIASES: JSON.stringify(SPEECH_LANGUAGE_ALIASES),
         SHERPA_ASR_PROFILES: JSON.stringify(asrProfiles),
         SHERPA_TTS_PROFILES: JSON.stringify(ttsProfiles),
         ...(sherpaConfig.language ? { SHERPA_LANGUAGE: sherpaConfig.language } : {}),

@@ -910,6 +910,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import unicodedata
 import av
 
 from functools import lru_cache, wraps
@@ -1162,10 +1163,28 @@ LANGUAGE_ALIASES = {
     "\u4ed6\u52a0\u7984\u8bed": "tl",
     "\u83f2\u5f8b\u5bbe\u8bed": "tl",
     "tagalog": "tl",
+    "filipino": "tl",
+    "fil": "tl",
+    "\u83f2\u5f8b\u8cd3\u8a9e": "tl",
+    "\u83f2\u5f8b\u8cd3\u6587": "tl",
+    "\u5854\u52a0\u6d1b\u8bed": "tl",
     "tl": "tl",
     "\u5370\u5730\u8bed": "hi",
     "hindi": "hi",
+    "\u5370\u5730\u8a9e": "hi",
+    "\u5370\u5730\u6587": "hi",
     "hi": "hi",
+    "\u5c3c\u6cca\u5c14\u8bed": "ne",
+    "\u5c3c\u6cca\u723e\u8a9e": "ne",
+    "\u5c3c\u6cca\u723e\u6587": "ne",
+    "nepali": "ne",
+    "nepal\u00ed": "ne",
+    "\u5b5f\u52a0\u62c9\u8bed": "bn",
+    "\u5b5f\u52a0\u62c9\u8a9e": "bn",
+    "\u5b5f\u52a0\u62c9\u6587": "bn",
+    "bengali": "bn",
+    "bangla": "bn",
+    "bengal\u00ed": "bn",
     "\u8461\u8404\u7259\u8bed": "pt",
     "portuguese": "pt",
     "pt": "pt",
@@ -1244,19 +1263,35 @@ LANGUAGE_ALIASES = {
 }
 
 
+@lru_cache(maxsize=1)
+def _asr_language_aliases():
+    try:
+        aliases = json.loads(os.getenv("SHERPA_LANGUAGE_ALIASES", "{}"))
+        if isinstance(aliases, dict):
+            return {**LANGUAGE_ALIASES, **aliases}
+    except ValueError:
+        pass
+    return LANGUAGE_ALIASES
+
+
 def _normalize_language_code(language):
-    value = str(language or "").strip().lower()
-    if not value or value in {"auto", "automatic", "自动", "自动检测"}:
+    if not isinstance(language, str):
         return ""
-    value = value.replace("_", "-")
+    value = " ".join(unicodedata.normalize("NFKC", language).lower().replace("_", "-").split())
+    if not value or value in {"auto", "automatic", "und", "自动", "自动检测", "自動", "自動偵測"}:
+        return ""
     if value in {"cantonese", "zh-yue", "\u7ca4\u8bed", "\u5ee3\u6771\u8a71", "\u5e7f\u4e1c\u8bdd"}:
         return "yue"
     if value in {"min-nan", "min nan", "zh-min-nan", "\u95fd\u5357\u8bed", "\u95a9\u5357\u8a9e"}:
         return "nan"
-    if value in LANGUAGE_ALIASES:
-        return LANGUAGE_ALIASES[value]
+    aliases = _asr_language_aliases()
+    alias = aliases.get(value)
+    if alias:
+        return alias.split("-", 1)[0].lower()
+    if not re.fullmatch(r"[a-z]{2,3}(?:-[a-z0-9]{2,8})*", value):
+        return ""
     base = value.split("-", 1)[0]
-    return LANGUAGE_ALIASES.get(base, base)
+    return aliases.get(base, base)
 
 
 def _parse_language_candidates(value):
@@ -1269,11 +1304,13 @@ def _parse_language_candidates(value):
         if raw.startswith("["):
             try:
                 parsed = json.loads(raw)
-                raw_items = parsed if isinstance(parsed, list) else [raw]
-            except Exception:
-                raw_items = re.split(r"[,;\s]+", raw)
+                raw_items = parsed if isinstance(parsed, list) else []
+            except ValueError:
+                raw_items = []
         else:
-            raw_items = re.split(r"[,;\s]+", raw)
+            raw_items = re.split(r"[,;，；]+", raw)
+            if len(raw_items) == 1 and re.fullmatch(r"[a-zA-Z]{2,3}(?:\s+[a-zA-Z]{2,3})+", raw):
+                raw_items = raw.split()
 
     candidates = []
     for item in raw_items:
@@ -1335,12 +1372,16 @@ def _resolve_asr_profile_for_request(
     # on the complete audio (most accurate).
     stream_key = _get_asr_stream_key(request, stream_id) if stream_id else ""
     explicit_language = _normalize_language_code(language)
+    candidates = tuple(_parse_language_candidates(language_candidates))
 
     if stream_key:
         if reset_stream:
             ASR_STREAM_STATE.pop(stream_key, None)
         state = ASR_STREAM_STATE.get(stream_key)
-        if state and state.get("profile_key") and (not explicit_language or state.get("language") == explicit_language):
+        if state and state.get("profile_key") and (
+            state.get("language") == explicit_language if explicit_language else
+            state.get("candidates") == candidates
+        ):
             # Reuse the language detected on the first chunk for every later
             # chunk of the same utterance. This prevents per-chunk language
             # flipping on short segments (which produced mixed-language garbage).
@@ -1351,7 +1392,6 @@ def _resolve_asr_profile_for_request(
     if explicit_language:
         detected_language = explicit_language
     elif _truthy(os.getenv("SHERPA_ASR_AUTO_DETECT", "true")):
-        candidates = _parse_language_candidates(language_candidates)
         detected_language = detect_language_task(samples, candidates)
         print(f"Auto-detected language: {detected_language}")
     else:
@@ -1362,6 +1402,7 @@ def _resolve_asr_profile_for_request(
         ASR_STREAM_STATE[stream_key] = {
             "language": detected_language,
             "profile_key": profile_key,
+            "candidates": None if explicit_language else candidates,
             "updated_at": now,
         }
     print(f"detected_language: {detected_language}, profile_key: {profile_key}")
@@ -1380,6 +1421,8 @@ def get_whisper_small_model():
 @lru_cache(maxsize=1)
 def get_whisper_large_model():
     model_name = os.getenv("SHERPA_LANG_DETECT_MODEL", "large-v3-turbo")
+    if model_name == "small":
+        return get_whisper_small_model()
     print("model_name", model_name)
     device = os.getenv("SHERPA_LANG_DETECT_DEVICE", "cpu")
     compute_type = os.getenv("SHERPA_LANG_DETECT_COMPUTE_TYPE", "int8")
@@ -1480,12 +1523,12 @@ def _normalize_probability_items(all_probs):
 
 
 def _best_candidate_from_probs(candidate_set, prob_items):
-    """Pick the highest-probability language that is in candidate_set."""
-    best_code, best_prob = "", -1.0
+    """Compare candidates only when the detector scored every language."""
+    scores = {}
     for code, prob in prob_items:
-        if code in candidate_set and prob > best_prob:
-            best_code, best_prob = code, prob
-    return best_code
+        if code in candidate_set and 0 <= prob <= 1:
+            scores[code] = max(scores.get(code, 0.0), prob)
+    return max(scores, key=scores.get) if len(scores) == len(candidate_set) else ""
 
 @_timed("lid/detect_language_task")
 def detect_language_task(samples, candidates=None):
@@ -1509,24 +1552,24 @@ def detect_language_task(samples, candidates=None):
         print(f"[LID] small model unavailable ({exc})")
         detected, probability, prob_items = "", 0.0, []
 
-    # Candidate-constrained (translation/interpretation): use the accurate large
-    # model and pick the most probable language *among the candidates* from the
-    # full probability distribution. This is the key fix: previously a small-model
-    # guess of "zh" was locked in immediately whenever zh was a candidate, so any
-    # short non-Chinese clip (Spanish, etc.) was mis-recognized as Chinese.
+    # A partial LID result cannot be used to compare the configured languages.
     if candidate_set:
         picked = _best_candidate_from_probs(candidate_set, prob_items)
+        if not picked and os.getenv("SHERPA_LANG_DETECT_MODEL", "large-v3-turbo") != "small":
+            try:
+                detected, probability, prob_items = run(get_whisper_large_model)
+                picked = _best_candidate_from_probs(candidate_set, prob_items)
+            except Exception as exc:
+                print(f"[LID] fallback model unavailable ({exc})")
         if picked:
             print(f"[LID] candidates={candidates} top={detected}({probability:.2f}) -> picked {picked}")
             return picked
-        if detected in candidate_set:
-            return detected
-        raise HTTPException(status_code=422, detail="Unable to detect a language among the selected candidates")
+        raise HTTPException(status_code=422, detail=f"Unable to compare ASR language candidates: {', '.join(candidates)}")
 
     # Free detection: try the fast small model first; escalate to the large model
     # when it is not confident, instead of trusting a low-confidence guess that
     # routes short audio to the wrong (e.g. Asian multilingual) model.
-    if detected and probability >= 0.7:
+    if detected and (probability >= 0.7 or os.getenv("SHERPA_LANG_DETECT_MODEL", "large-v3-turbo") == "small"):
         print(f"[LID] free detect (small) -> {detected} ({probability:.2f})")
         return detected
 

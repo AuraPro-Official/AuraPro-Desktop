@@ -1,16 +1,61 @@
 import assert from 'node:assert/strict'
+import { existsSync } from 'node:fs'
 import test from 'node:test'
 import { execFileSync } from 'node:child_process'
 import vm from 'node:vm'
 import ts from 'typescript'
 import {
   SPEECH_TTS_REPOS,
+  SPEECH_ASR_LANGUAGES,
+  SPEECH_LANGUAGE_ALIASES,
   speechLanguageCode,
   selectedSpeechLanguages,
   speechAsrGroup,
   glossarySpeechLanguages
 } from '../src/main/utils/speech-language-presets.ts'
 import { DEFAULT_ASR_PRESETS, RECOMMENDED_ASR_PRESETS } from '../src/main/utils/sherp_config.ts'
+
+const webuiLanguages = new URL('../../AuraPro-UI/src/lib/utils/glossaryLanguages.ts', import.meta.url)
+test('WebUI sends the correct speech code for every desktop ASR language and alias', {
+  skip: !existsSync(webuiLanguages) && 'WebUI checkout is not present'
+}, async () => {
+  const { glossarySpeechLanguageCode } = await import(webuiLanguages.href)
+  const supported = new Set(SPEECH_ASR_LANGUAGES)
+  for (const code of supported) assert.equal(glossarySpeechLanguageCode(code), code)
+  for (const [label, code] of Object.entries(SPEECH_LANGUAGE_ALIASES)) {
+    if (supported.has(code)) assert.equal(glossarySpeechLanguageCode(label), code, label)
+  }
+})
+
+test('localized speech labels normalize consistently for download and the Sherpa server', () => {
+  for (const [name, code] of [
+    ['尼泊尔语', 'ne'],
+    ['尼泊爾語', 'ne'],
+    ['Nepalí', 'ne'],
+    ['印地語', 'hi'],
+    ['Bengali', 'bn'],
+    ['孟加拉語', 'bn'],
+    ['Filipino', 'tl'],
+    ['Tagalog', 'tl'],
+    ['菲律賓語', 'tl']
+  ]) {
+    assert.equal(speechLanguageCode(name), code)
+    assert.equal(SPEECH_LANGUAGE_ALIASES[name.toLowerCase()], code)
+  }
+  assert.equal(speechLanguageCode('ne-NP'), 'ne')
+  assert.equal(speechLanguageCode('nep-NP'), 'ne')
+  assert.equal(speechLanguageCode('lao'), 'lo')
+  assert.equal(speechLanguageCode('gom'), 'kok')
+  assert.equal(speechLanguageCode('European Portuguese'), 'pt-PT')
+  assert.deepEqual(
+    glossarySpeechLanguages({
+      glossary_mode: 'smart',
+      smart_source_lang: '中文',
+      smart_target_lang: '尼泊尔语'
+    }),
+    ['zh', 'ne']
+  )
+})
 
 test('Chinese is mandatory; fresh install does not download English automatically', () => {
   assert.deepEqual(selectedSpeechLanguages({}), ['zh'])

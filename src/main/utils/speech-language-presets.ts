@@ -89,22 +89,55 @@ export const SPEECH_ASR_LANGUAGES = [
   ])
 ]
 
-export function speechLanguageCode(value = ''): string | undefined {
-  const name = value.split('(')[0].trim().toLowerCase().replace('_', '-')
-  if (['中文', '普通话', 'chinese', 'mandarin'].includes(name)) return 'zh'
-  if (['粤语', '廣東話', '广东话', 'cantonese', 'zh-yue'].includes(name)) return 'yue'
-  if (['闽南语', '閩南語', 'min-nan', 'min nan', 'zh-min-nan'].includes(name)) return 'nan'
-  if (name === 'fil' || name === 'tagalog') return 'tl'
-  const codes = [...SPEECH_ASR_LANGUAGES, ...Object.keys(SPEECH_TTS_REPOS)]
-  const direct = codes.find((code) => code.toLowerCase() === name)
-  if (direct) return direct
-  if (name.startsWith('zh-')) return 'zh'
-  return codes.find((code) =>
-    ['en', 'zh-CN', 'zh-TW', 'es'].some(
-      (locale) =>
-        new Intl.DisplayNames([locale], { type: 'language' }).of(code)?.toLowerCase() === name
-    )
+const normalizeSpeechLabel = (value: string) =>
+  value.normalize('NFKC').trim().toLowerCase().replaceAll('_', '-').replace(/\s+/g, ' ')
+
+export const SPEECH_LANGUAGE_ALIASES: Readonly<Record<string, string>> = (() => {
+  const aliases = new Map<string, string>()
+  const locales = ['en', 'zh-CN', 'zh-TW', 'es'].map(
+    (locale) => new Intl.DisplayNames([locale], { type: 'language', fallback: 'none' })
   )
+  const codes = new Set([...SPEECH_ASR_LANGUAGES, ...Object.keys(SPEECH_TTS_REPOS)])
+  for (const code of codes) {
+    aliases.set(normalizeSpeechLabel(code), code)
+    for (const displayNames of locales) {
+      const label = displayNames.of(code)
+      if (label) aliases.set(normalizeSpeechLabel(label), code)
+    }
+  }
+  for (const [code, labels] of Object.entries({
+    zh: ['中文', '普通话', '普通話', '汉语', '漢語', 'chinese', 'mandarin', 'cmn'],
+    yue: ['粤语', '粵語', '廣東話', '广东话', 'cantonese', 'zh-yue'],
+    nan: ['闽南语', '閩南語', 'min-nan', 'min nan', 'zh-min-nan'],
+    es: ['西语', '西語', '西班牙語'],
+    en: ['英语', '英語', '英文'],
+    ne: ['尼泊尔语', '尼泊爾語'],
+    hi: ['印地语', '印地語'],
+    bn: ['孟加拉语', '孟加拉語', 'bengali'],
+    tl: ['fil', 'tagalog', '菲律宾语', '菲律賓語', '他加禄语', '他加祿語', '塔加洛语', '塔加洛語']
+  })) {
+    for (const label of labels) aliases.set(normalizeSpeechLabel(label), code)
+  }
+  return Object.fromEntries(aliases)
+})()
+
+export function speechLanguageCode(value = ''): string | undefined {
+  const name = normalizeSpeechLabel(value)
+  const alias = (key: string) =>
+    Object.hasOwn(SPEECH_LANGUAGE_ALIASES, key) ? SPEECH_LANGUAGE_ALIASES[key] : undefined
+  const direct = alias(name) ?? alias(name.split('(')[0].trim())
+  if (direct) return direct
+  if (/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/.test(name)) {
+    try {
+      const [canonical] = Intl.getCanonicalLocales(name)
+      return canonical
+        ? (alias(normalizeSpeechLabel(canonical)) ?? alias(canonical.split('-')[0]))
+        : undefined
+    } catch {
+      return undefined
+    }
+  }
+  return undefined
 }
 
 export function selectedSpeechLanguages(config: {

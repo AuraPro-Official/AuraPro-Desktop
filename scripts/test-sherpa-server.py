@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import time
 import unittest
+import unicodedata
 from unittest import mock
 from functools import lru_cache
 from collections import OrderedDict
@@ -23,9 +24,9 @@ class HTTPException(Exception):
         self.status_code = status_code
         self.detail = detail
 
-env = dict(os=os, time=time, json=json, re=re, np=np, lru_cache=lru_cache, OrderedDict=OrderedDict,
+env = dict(os=os, time=time, json=json, re=re, unicodedata=unicodedata, np=np, lru_cache=lru_cache, OrderedDict=OrderedDict,
            HTTPException=HTTPException, _timed=lambda _: lambda fn: fn)
-names = {'_normalize_language_code', '_parse_language_candidates', '_profile_key_for_language',
+names = {'_asr_language_aliases', '_normalize_language_code', '_parse_language_candidates', '_profile_key_for_language',
          '_profile_key_for_tts_language', '_cleanup_asr_stream_state', '_get_asr_stream_key',
          '_resolve_asr_profile_for_request', '_qwen_audio_chunks', 'detect_language_task',
          '_normalize_probability_items', '_best_candidate_from_probs', '_truthy',
@@ -61,6 +62,33 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         resolve(None, [], 'auto')
         self.assertEqual(len(calls), 2)
+
+    def test_stream_candidate_changes_invalidate_old_language(self):
+        env['detect_language_task'] = mock.Mock(side_effect=['es', 'ne'])
+        resolve = env['_resolve_asr_profile_for_request']
+        self.assertEqual(resolve(None, [], language_candidates='zh,西班牙语', stream_id='a')[:2], ('es', 'eu'))
+        self.assertEqual(resolve(None, [], language_candidates='zh,尼泊尔语', stream_id='a')[:2], ('ne', 'hindi'))
+        self.assertEqual(resolve(None, [], language_candidates='zh,ne', stream_id='a')[:2], ('ne', 'hindi'))
+        self.assertEqual(env['detect_language_task'].call_count, 2)
+
+    def test_legacy_localized_language_pairs_and_explicit_languages(self):
+        parse = env['_parse_language_candidates']
+        for label in ('尼泊尔语', '尼泊爾語', '尼泊爾文', 'Nepali', 'Nepalí', 'ne-NP'):
+            with self.subTest(label=label):
+                self.assertEqual(parse(f'zh,{label}'), ['zh', 'ne'])
+        self.assertEqual(parse('["印地語", "孟加拉语", "Filipino", "fil-PH", "自訂名稱"]'), ['hi', 'bn', 'tl'])
+        self.assertEqual(parse('zh ne'), ['zh', 'ne'])
+        resolve = env['_resolve_asr_profile_for_request']
+        self.assertEqual(resolve(None, [], '尼泊尔语', language_candidates='zh,es')[:2], ('ne', 'hindi'))
+
+    def test_desktop_alias_map_supports_legacy_clients_without_new_dependencies(self):
+        aliases = env['_asr_language_aliases']
+        with mock.patch.dict(os.environ, {'SHERPA_LANGUAGE_ALIASES': json.dumps({'格魯吉亞語': 'ka'})}):
+            aliases.cache_clear()
+            try:
+                self.assertEqual(env['_parse_language_candidates']('zh,格魯吉亞語'), ['zh', 'ka'])
+            finally:
+                aliases.cache_clear()
 
     def test_specialist_language_routes_and_custom_profile_priority(self):
         for language in ('ka', 'hy'):
@@ -159,8 +187,35 @@ class RoutingTests(unittest.TestCase):
         local = dict(env)
         exec(compile(ast.Module(body=[detect_node], type_ignores=[]), '<server>', 'exec'), local)
         self.assertEqual(local['detect_language_task']([], ['en', 'es']), 'es')
-        with self.assertRaises(HTTPException):
-            local['detect_language_task']([], ['ru', 'fr'])
+        with mock.patch.dict(os.environ, {'SHERPA_LANG_DETECT_MODEL': 'small'}):
+            with self.assertRaises(HTTPException):
+                local['detect_language_task']([], ['ru', 'fr'])
+
+    def test_nepali_reaches_indic_when_top_whisper_language_is_outside_pair(self):
+        detect_node = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'detect_language_task')
+        small = mock.Mock()
+        small.detect_language.return_value = ('ko', 0.22, [('ko', 0.22), ('ne', 0.20), ('zh', 0.04)])
+        large = mock.Mock(side_effect=AssertionError('Do not use a second detector for a complete pair'))
+        local = dict(env, get_whisper_small_model=lambda: small, get_whisper_large_model=large)
+        exec(compile(ast.Module(body=[detect_node], type_ignores=[]), '<server>', 'exec'), local)
+        env['detect_language_task'] = local['detect_language_task']
+        self.assertEqual(env['_resolve_asr_profile_for_request'](None, [], language_candidates='zh,尼泊尔语')[:2], ('ne', 'hindi'))
+        large.assert_not_called()
+
+    def test_partial_detector_scores_do_not_silently_force_chinese(self):
+        detect_node = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'detect_language_task')
+        small, large = mock.Mock(), mock.Mock()
+        small.detect_language.return_value = ('ko', 0.22, [('ko', 0.22), ('zh', 0.04)])
+        large.detect_language.return_value = ('ne', 0.60, [('ne', 0.60), ('zh', 0.01)])
+        local = dict(env, get_whisper_small_model=lambda: small, get_whisper_large_model=lambda: large)
+        exec(compile(ast.Module(body=[detect_node], type_ignores=[]), '<server>', 'exec'), local)
+        with mock.patch.dict(os.environ, {'SHERPA_LANG_DETECT_MODEL': 'large-v3-turbo'}):
+            self.assertEqual(local['detect_language_task']([], 'zh,ne'), 'ne')
+            large.detect_language.assert_called_once()
+            large.detect_language.return_value = small.detect_language.return_value
+            with self.assertRaises(HTTPException) as raised:
+                local['detect_language_task']([], 'zh,ne')
+            self.assertEqual(raised.exception.status_code, 422)
 
 if __name__ == '__main__':
     unittest.main()
