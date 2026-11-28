@@ -15,17 +15,24 @@ import {
 } from '../src/main/utils/speech-language-presets.ts'
 import { DEFAULT_ASR_PRESETS, RECOMMENDED_ASR_PRESETS } from '../src/main/utils/sherp_config.ts'
 
-const webuiLanguages = new URL('../../AuraPro-UI/src/lib/utils/glossaryLanguages.ts', import.meta.url)
-test('WebUI sends the correct speech code for every desktop ASR language and alias', {
-  skip: !existsSync(webuiLanguages) && 'WebUI checkout is not present'
-}, async () => {
-  const { glossarySpeechLanguageCode } = await import(webuiLanguages.href)
-  const supported = new Set(SPEECH_ASR_LANGUAGES)
-  for (const code of supported) assert.equal(glossarySpeechLanguageCode(code), code)
-  for (const [label, code] of Object.entries(SPEECH_LANGUAGE_ALIASES)) {
-    if (supported.has(code)) assert.equal(glossarySpeechLanguageCode(label), code, label)
+const webuiLanguages = new URL(
+  '../../AuraPro-UI/src/lib/utils/glossaryLanguages.ts',
+  import.meta.url
+)
+test(
+  'WebUI sends the correct speech code for every desktop ASR language and alias',
+  {
+    skip: !existsSync(webuiLanguages) && 'WebUI checkout is not present'
+  },
+  async () => {
+    const { glossarySpeechLanguageCode } = await import(webuiLanguages.href)
+    const supported = new Set(SPEECH_ASR_LANGUAGES)
+    for (const code of supported) assert.equal(glossarySpeechLanguageCode(code), code)
+    for (const [label, code] of Object.entries(SPEECH_LANGUAGE_ALIASES)) {
+      if (supported.has(code)) assert.equal(glossarySpeechLanguageCode(label), code, label)
+    }
   }
-})
+)
 
 test('localized speech labels normalize consistently for download and the Sherpa server', () => {
   for (const [name, code] of [
