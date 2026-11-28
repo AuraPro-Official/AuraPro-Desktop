@@ -3,13 +3,17 @@ import fs from 'node:fs'
 import path from 'node:path'
 import vm from 'node:vm'
 import { Writable } from 'node:stream'
+import { writeDownloadBody } from '../src/main/utils/download-stream.ts'
 import ts from 'typescript'
 import test from 'node:test'
 import {
   INDEX_TRANSLATE_MODELS,
   indexTranslateCatalogEntry
 } from '../src/shared/index-translate-models.ts'
-import { recommendInstallModel } from '../src/renderer/src/lib/utils/install-model-recommendation.ts'
+import {
+  recommendInstallModel,
+  recommendWizardModel
+} from '../src/renderer/src/lib/utils/install-model-recommendation.ts'
 import {
   PRO_MODEL_GUIDE,
   proHardwareLabel,
@@ -57,6 +61,7 @@ test('all model selection screens use the shared Omni download catalog', () => {
     lowest: ['2B', 'Q6_K', 1_973_568_256, 361_518_144],
     mediumQ3: ['9B', 'Q3_K_M', 4_623_524_512, 620_690_272],
     medium: ['9B', 'Q4_K_S', 5_351_629_472, 620_690_272],
+    mediumQ6: ['9B', 'Q6_K', 7_359_259_296, 620_690_272],
     high: ['35B', 'Q4_K_M', 21_166_757_824, 610_655_072]
   }
   for (const [key, [family, quant, size, projectorSize]] of Object.entries(expected)) {
@@ -80,7 +85,9 @@ test('all model selection screens use the shared Omni download catalog', () => {
     assert.equal(repair.expectedSize, model.current.expectedSize)
   }
   loadBindings('llamacpp.ts', ['AURA_MODEL_FILENAMES'], context)
-  assert.ok(context.AURA_MODEL_FILENAMES.includes(INDEX_TRANSLATE_MODELS.mediumQ3.name))
+  for (const model of Object.values(INDEX_TRANSLATE_MODELS)) {
+    assert.ok(context.AURA_MODEL_FILENAMES.includes(model.name))
+  }
   for (const file of modelScreens) {
     const source = fs.readFileSync(file, 'utf8')
     for (const key of Object.keys(expected)) {
@@ -88,7 +95,7 @@ test('all model selection screens use the shared Omni download catalog', () => {
     }
     assert.match(
       source,
-      /name: 'high_Q4\.gguf',[\s\S]*?\},\s*indexTranslateCatalogEntry\(INDEX_TRANSLATE_MODELS\.high\)/
+      /(?:name: 'high_Q4\.gguf',[\s\S]*?\}|HIGH_Q4_DOWNLOAD),\s*indexTranslateCatalogEntry\(INDEX_TRANSLATE_MODELS\.high\)/
     )
     assert.doesNotMatch(source, /'lowest.gguf'/)
     assert.doesNotMatch(source, /modelByName\('high_Q4_2.gguf'\)/)
@@ -119,6 +126,34 @@ test('medium Q4 is retired and both wizards use the shared recommendation', () =
     assert.ok(source.includes('indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.medium)'), file)
     if (file.endsWith('/Models.svelte')) continue
     assert.match(source, /recommendWizardModel\(/)
+  }
+})
+
+test('medium Q6 is a manual option independent of the medium Q4 recommendation', () => {
+  const q4 = indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.medium)
+  const q6 = indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.mediumQ6)
+  assert.equal(q6.name, 'medium_Q6_V2.gguf')
+  assert.equal(q6.sizeStr, '~8G')
+  assert.equal(standardRequirementLabel(q6.name), standardRequirementLabel(q4.name))
+  assert.equal(q6.mmprojRepo, q4.mmprojRepo)
+  assert.equal(q6.mmprojFilename, q4.mmprojFilename)
+  assert.equal(
+    desktopGuide.standardModelTutorial.table.rows.some((row) => row[0]['en-US'] === 'medium_Q6_V2'),
+    false
+  )
+
+  for (const platform of ['win32', 'linux', 'darwin']) {
+    for (const preference of ['quality', 'balanced']) {
+      const hardware = {
+        platform,
+        architecture: platform === 'darwin' ? 'arm64' : 'x64',
+        memoryGiB: 16,
+        vramGiB: platform === 'darwin' ? 0 : 8,
+        preference
+      }
+      assert.equal(recommendWizardModel(hardware, [q6, q4], [], false), q4)
+      assert.equal(recommendWizardModel(hardware, [q6], [], false), null)
+    }
   }
 })
 
@@ -382,6 +417,8 @@ for (const [key, model] of Object.entries(INDEX_TRANSLATE_MODELS)) {
     ])
     let manifest = []
     let isFirstAttempt = true
+    let fileLocked = true
+    let releases = 0
     const context = vm.createContext({
       path,
       INDEX_TRANSLATE_MODELS: {
@@ -390,6 +427,7 @@ for (const [key, model] of Object.entries(INDEX_TRANSLATE_MODELS)) {
       },
       AbortController,
       Buffer,
+      writeDownloadBody,
       log: { info: () => undefined, warn: () => undefined, error: () => undefined },
       activeDownloads: new Map(),
       getInstallDir: () => '.',
@@ -401,20 +439,16 @@ for (const [key, model] of Object.entries(INDEX_TRANSLATE_MODELS)) {
       fetch: async (_url, { headers }) => {
         assert.equal(headers.Range, isFirstAttempt ? undefined : 'bytes=3-')
         const value = Buffer.alloc(isFirstAttempt ? 3 : 5)
-        let done = false
         return {
           ok: true,
           status: isFirstAttempt ? 200 : 206,
           headers: new Headers(),
-          body: {
-            getReader: () => ({
-              read: async () => {
-                if (done) return { done: true }
-                done = true
-                return { value, done: false }
-              }
-            })
-          }
+          body: new ReadableStream({
+            start(controller) {
+              controller.enqueue(value)
+              controller.close()
+            }
+          })
         }
       },
       fs: {
@@ -422,6 +456,9 @@ for (const [key, model] of Object.entries(INDEX_TRANSLATE_MODELS)) {
         statSync: (name) => ({ size: files.get(name) }),
         unlinkSync: (name) => files.delete(name),
         renameSync: (src, dest) => {
+          if (fileLocked && dest === filepath) {
+            throw Object.assign(new Error('File is in use'), { code: 'EPERM' })
+          }
           files.set(dest, files.get(src))
           files.delete(src)
         },
@@ -447,7 +484,7 @@ for (const [key, model] of Object.entries(INDEX_TRANSLATE_MODELS)) {
       context
     )
     assert.equal(context.indexTranslatePartialDestination(omniPartial), filepath)
-    if (key === 'mediumQ3')
+    if (key === 'mediumQ3' || key === 'mediumQ6')
       assert.equal(
         context.indexTranslatePartialDestination(
           `${filepath}${INDEX_TRANSLATE_MODELS.medium.partialSuffix}`
@@ -473,17 +510,24 @@ for (const [key, model] of Object.entries(INDEX_TRANSLATE_MODELS)) {
         undefined,
         undefined,
         8,
-        model.name
+        model.name,
+        async () => {
+          releases++
+          fileLocked = false
+          return true
+        }
       )
     await assert.rejects(download(), /expected 8 bytes, got 3 bytes/)
     assert.equal(files.get(filepath), 12)
     assert.equal(files.get(previousPartial), 4)
     assert.equal(files.get(omniPartial), 3)
     assert.equal(manifest.length, 0)
+    assert.equal(releases, 0)
     isFirstAttempt = false
     assert.equal(await download(), filepath)
     assert.equal(files.get(filepath), 8)
     assert.equal(files.has(omniPartial), false)
+    assert.equal(releases, 1)
     assert.equal(manifest[0].sourceFilename, model.current.filename)
   })
 }
@@ -518,6 +562,7 @@ test('no official model enables the DRY sampler (it corrupts copied IDs and numb
     'lowest_V2.gguf',
     'medium_Q3_V2.gguf',
     'medium_Q4_V2.gguf',
+    'medium_Q6_V2.gguf',
     'high_Q4_2.gguf',
     'medium_Q4.gguf',
     'high_Q4.gguf',

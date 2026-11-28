@@ -7,7 +7,7 @@
 </script>
 
 <button
-  class="w-9 h-5 rounded-full transition-colors {checked
+  class="w-9 h-5 shrink-0 rounded-full transition-colors {checked
     ? 'bg-black/30 dark:bg-white/30'
     : 'bg-black/[0.10] dark:bg-white/[0.08]'} border-none relative"
   aria-label={label}

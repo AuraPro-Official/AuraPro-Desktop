@@ -16,6 +16,8 @@ import log from 'electron-log'
 import type { KvCacheType } from './llamacpp-settings'
 import { getBundledPythonTarget, isBundledPythonMachineCompatible } from './platform-support'
 import { withRepairedPythonPackageMetadata } from './python-package-metadata'
+import { parseDxdiagDisplays, type DxdiagDisplay } from './dxdiag-display'
+import { writeDownloadBody } from './download-stream'
 log.transports.file.resolvePathFn = () => getLogFilePath('main')
 
 const serverLogger = log.create({ logId: 'server' })
@@ -145,7 +147,7 @@ export const getLocalOpenWebUISourcePath = (): string | null => {
   return null
 }
 
-export const AURAPRO_UI_TARGET_VERSION = '3.10.16'
+export const AURAPRO_UI_TARGET_VERSION = '3.10.17'
 export const AURAPRO_UI_MIN_VERSION = '3.6.0'
 export const AURAPRO_UI_LATEST_VERSION = 'latest'
 export const AURAPRO_UI_LAST_VERSION = '3.9.3'
@@ -446,12 +448,12 @@ const isIntegratedGpuName = (name: string): boolean => {
 }
 
 type GpuMemoryInfo = { dedicatedVramGB: number; proVramGB: number }
-type WindowsGpuInfo = GpuMemoryInfo & { gpuName: string }
+type WindowsGpuInfo = GpuMemoryInfo & { gpuName: string; displays: DxdiagDisplay[] }
 let windowsGpuInfoRequest: Promise<WindowsGpuInfo> | null = null
 let windowsGpuInfoCache: { value: WindowsGpuInfo; expiresAt: number } | null = null
 
 const readDxdiagGpuInfo = async (): Promise<WindowsGpuInfo> => {
-  const tmpPath = path.join(os.tmpdir(), `aurapro-dxdiag-${Date.now()}.txt`)
+  const tmpPath = path.join(os.tmpdir(), `aurapro-dxdiag-${crypto.randomUUID()}.txt`)
   try {
     await new Promise<void>((resolve, reject) => {
       execFile(
@@ -465,31 +467,14 @@ const readDxdiagGpuInfo = async (): Promise<WindowsGpuInfo> => {
 
     const bytes = fs.readFileSync(tmpPath)
     const text = bytes.includes(0) ? bytes.toString('utf16le') : bytes.toString('utf8')
-    const devices: Array<{ name: string; dedicatedMb: number }> = []
-    let current: { name: string; dedicatedMb: number } | null = null
-
-    for (const rawLine of text.split(/\r?\n/)) {
-      const line = rawLine.trim()
-      const nameMatch = line.match(/^Card name:\s*(.+)$/i)
-      if (nameMatch) {
-        if (current) devices.push(current)
-        current = { name: nameMatch[1].trim(), dedicatedMb: 0 }
-        continue
-      }
-
-      const memoryMatch = line.match(/^Dedicated Memory:\s*([0-9]+)\s*MB/i)
-      if (memoryMatch && current) {
-        current.dedicatedMb = Number(memoryMatch[1]) || 0
-      }
-    }
-
-    if (current) devices.push(current)
+    const devices = parseDxdiagDisplays(text)
 
     const dedicated = devices.filter(({ name }) => !isIntegratedGpuName(name))
     const maxVram = (list: typeof devices) =>
       Math.round(Math.max(0, ...list.map(({ dedicatedMb }) => dedicatedMb)) / 1024)
     if (!devices.length) throw new Error('DxDiag report contains no display devices')
     return {
+      displays: devices,
       gpuName: [...new Set(devices.map((device) => device.name))].join(', '),
       dedicatedVramGB: maxVram(dedicated),
       proVramGB: maxVram(
@@ -505,7 +490,7 @@ const readDxdiagGpuInfo = async (): Promise<WindowsGpuInfo> => {
   }
 }
 
-const getWindowsGpuInfo = (): Promise<WindowsGpuInfo> => {
+export const getWindowsGpuInfo = (): Promise<WindowsGpuInfo> => {
   if (windowsGpuInfoCache && windowsGpuInfoCache.expiresAt > Date.now()) {
     return Promise.resolve(windowsGpuInfoCache.value)
   }
@@ -667,7 +652,6 @@ export const downloadFileWithProgress = async (
   signal?.throwIfAborted()
   const tmpPath = `${downloadPath}.tmp`
   let resumeBytes = 0
-  let writeStream: fs.WriteStream | null = null
   const startedAt = Date.now()
 
   try {
@@ -719,48 +703,36 @@ export const downloadFileWithProgress = async (
     const totalSize =
       totalFromRange || (response.status === 206 ? resumeBytes + contentLength : contentLength)
     let downloadedSize = resumeBytes
-    const reader = response.body?.getReader()
-    if (!reader) {
+    if (!response.body) {
       throw new Error('Response body is not readable')
     }
 
     fs.mkdirSync(path.dirname(downloadPath), { recursive: true })
-    writeStream = fs.createWriteStream(tmpPath, { flags: resumeBytes > 0 ? 'a' : 'w' })
-
-    while (true) {
-      signal?.throwIfAborted()
-      const { done, value } = await reader.read()
-      if (done) break
-      writeStream.write(Buffer.from(value))
-      downloadedSize += value.length
-      if (onProgress && totalSize) {
-        const elapsedSeconds = Math.max((Date.now() - startedAt) / 1000, 0.1)
-        const bytesPerSecond = Math.max((downloadedSize - resumeBytes) / elapsedSeconds, 0)
-        const remainingBytes = Math.max(totalSize - downloadedSize, 0)
+    const writeStream = fs.createWriteStream(tmpPath, { flags: resumeBytes > 0 ? 'a' : 'w' })
+    await writeDownloadBody(
+      response.body,
+      writeStream,
+      (size) => {
+        downloadedSize += size
+        if (!onProgress || !totalSize) return
+        const elapsed = Math.max((Date.now() - startedAt) / 1000, 0.1)
+        const speed = Math.max((downloadedSize - resumeBytes) / elapsed, 0)
         onProgress(
           (downloadedSize / totalSize) * 100,
           downloadedSize,
           totalSize,
-          bytesPerSecond,
-          bytesPerSecond > 0 ? remainingBytes / bytesPerSecond : undefined
+          speed,
+          speed > 0 ? Math.max(totalSize - downloadedSize, 0) / speed : undefined
         )
-      }
-    }
-
-    await new Promise<void>((resolve, reject) => {
-      writeStream?.once('error', reject)
-      writeStream?.end(resolve)
-    })
-    writeStream = null
+      },
+      signal
+    )
 
     signal?.throwIfAborted()
     fs.renameSync(tmpPath, downloadPath)
     log.info('File downloaded successfully:', downloadPath)
     return downloadPath
   } catch (error) {
-    try {
-      writeStream?.end()
-    } catch {}
     log.error('Download failed; partial file kept for retry:', error)
     throw error
   }
@@ -2725,6 +2697,7 @@ export interface Connection {
 }
 
 export interface AppConfig {
+  theme?: import('../../shared/desktop-theme').DesktopTheme
   version: number
   dataVersion: number
   webuiDistributionMigrationVersion: number
@@ -2963,6 +2936,8 @@ const normalizeConfig = (config: AppConfig): AppConfig => {
     localServer.port = 8081
   }
 
+  const shortcutActions = { ...DEFAULT_CONFIG.shortcutActions, ...(config.shortcutActions ?? {}) }
+
   const normalized: AppConfig = {
     ...config,
     localServer,
@@ -2988,10 +2963,7 @@ const normalizeConfig = (config: AppConfig): AppConfig => {
       ...DEFAULT_CONFIG.sherpa,
       ...(config.sherpa ?? {})
     },
-    shortcutActions: {
-      ...DEFAULT_CONFIG.shortcutActions,
-      ...(config.shortcutActions ?? {})
-    },
+    shortcutActions,
     connections: []
   }
 

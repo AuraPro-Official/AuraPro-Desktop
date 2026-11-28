@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import { mkdtempSync, rmdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import test from 'node:test'
 import { checkOptionalService } from '../src/main/utils/optional-service-health.ts'
+import { checkPiAgentHealth } from '../src/main/utils/pi-agent-health.ts'
 
 const snapshot = () => ({ status: 'started', pid: 123, url: 'http://127.0.0.1:39384' })
 const options = { enabled: true, activeProbe: true, snapshot, endpoint: '/health' }
@@ -223,4 +227,48 @@ test('socket check does not claim functional health', async () => {
   assert.equal(await checkOptionalService({ ...options, endpoint: undefined }, deps), 'listening')
   deps.portResponds = async () => false
   assert.equal(await checkOptionalService({ ...options, endpoint: undefined }, deps), 'unverified')
+})
+
+test('Agent reports on-demand readiness without an HTTP service or a running session', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'aurapro-agent-health-'))
+  const descriptor = join(directory, 'desktop-runtime.json')
+  const executable = join(directory, 'agent')
+  const extension = join(directory, 'aurapro.ts')
+  const sdk = join(directory, 'cli.js')
+  t.after(() => {
+    for (const file of [descriptor, executable, extension, sdk]) rmSync(file, { force: true })
+    rmdirSync(directory)
+  })
+  for (const file of [executable, extension, sdk]) writeFileSync(file, '')
+  const runtime = {
+    version: 2,
+    engine: 'pi',
+    ownerPid: process.pid,
+    piVersion: '1.0.3',
+    executable,
+    agentDir: directory,
+    extension,
+    arguments: []
+  }
+
+  assert.equal(checkPiAgentHealth(false, true, descriptor), 'disabled')
+  assert.equal(checkPiAgentHealth(true, false, descriptor), 'stopped')
+  assert.equal(checkPiAgentHealth(true, true, descriptor), 'runtime-invalid')
+  for (const args of [[], [sdk]]) {
+    writeFileSync(descriptor, JSON.stringify({ ...runtime, arguments: args }))
+    assert.equal(checkPiAgentHealth(true, true, descriptor), 'ready-on-demand')
+  }
+  for (const overrides of [
+    { engine: 'opencode' },
+    { ownerPid: 0 },
+    { executable: directory },
+    { extension: join(directory, 'missing.ts') },
+    { agentDir: extension },
+    { arguments: [join(directory, 'missing.js')] }
+  ]) {
+    writeFileSync(descriptor, JSON.stringify({ ...runtime, ...overrides }))
+    assert.equal(checkPiAgentHealth(true, true, descriptor), 'runtime-invalid')
+  }
+  writeFileSync(descriptor, '{')
+  assert.equal(checkPiAgentHealth(true, true, descriptor), 'runtime-invalid')
 })

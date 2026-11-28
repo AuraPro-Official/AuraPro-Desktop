@@ -3,7 +3,7 @@
   import { onMount } from 'svelte'
   import { SvelteMap } from 'svelte/reactivity'
   import { fade } from 'svelte/transition'
-  import { connections, config, serverInfo, appInfo } from '../../stores'
+  import { connections, config, serverInfo, appInfo, llamaCppStartup } from '../../stores'
   import i18n from '../../i18n'
   import {
     diagnoseInstallationFailure,
@@ -16,6 +16,7 @@
   import Content from './Connections/Content.svelte'
   import StatusBar from './Connections/StatusBar.svelte'
   import LogPanel from './Connections/LogPanel.svelte'
+  import ModelUpgradeNotice from './Connections/ModelUpgradeNotice.svelte'
 
   type LlamaDiagnosticsComponentType =
     (typeof import('./Connections/LlamaDiagnostics.svelte'))['default']
@@ -1046,6 +1047,7 @@
         if (payload) updateDownloadItem(payload)
         return
       }
+      if (data.type.startsWith('model:upgrade-')) return
       if (
         data.type.startsWith('llamacpp:diagnostic-') ||
         data.type.startsWith('llamacpp:repair-')
@@ -1330,6 +1332,10 @@
       showBufferedLogs={activeLog === 'pro' ||
         (activeLog === 'server' && serverStatus === 'failed') ||
         (activeLog === 'sherpa' && sherpaStatus === 'failed')}
+      failureText={activeLog === 'llama-server' &&
+      (llamaCppStatus === 'failed' || $llamaCppStartup.phase === 'failed')
+        ? $llamaCppStartup.detail || $i18n.t('startup.llamacpp.failedDescription')
+        : ''}
       onWrite={getOnWrite(activeLog)}
       onResize={getOnResize(activeLog)}
       onStop={activeLog === 'opencode'
@@ -1386,5 +1392,11 @@
   />
   {#if LlamaDiagnosticsComponent}
     <LlamaDiagnosticsComponent {getSpeechRepairGuestId} {diagnosticAlert} />
+  {/if}
+  {#if localInstalled && view !== 'install'}
+    <ModelUpgradeNotice
+      {onOpenSettings}
+      hasProReplacement={proInfo?.models.some((model) => model.installed) ?? false}
+    />
   {/if}
 </div>

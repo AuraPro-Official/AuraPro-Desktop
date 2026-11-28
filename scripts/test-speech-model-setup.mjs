@@ -86,7 +86,27 @@ function harness(initial = {}, options = {}) {
     },
     './sherp_config': presets,
     './speech-language-presets': languages,
+    './indicconformer-mirror': {
+      fetchIndicMirrorManifest: async (required) => {
+        if (options.failMetadata) throw new Error('HTTP 503')
+        return {
+          revision: 'a'.repeat(40),
+          files: [...required, 'assets/onnx__MatMul_1', 'assets/layers.0.weight'].map((path) => ({
+            path,
+            size: 16
+          }))
+        }
+      },
+      downloadIndicMirrorFile: async (dir, revision, file) => {
+        if (options.failIndic) throw new Error('HTTP 503')
+        downloads.push({ repo: 'ai4bharat/indic-conformer-600m-multilingual', filename: file.path })
+        const result = path.join(dir, revision, file.path)
+        files.add(result)
+        return result
+      }
+    },
     './huggingface': {
+      recordSherpaAsrFiles: () => {},
       getHfCacheDir: () => 'cache',
       getRepoFiles: async (repo, token) => {
         if (options.ttsFiles?.[repo])
@@ -304,10 +324,11 @@ test('Indic languages share CTC files and external weights, never download RNNT 
   assert.equal(h.downloads.length, 6)
   assert.ok(h.downloads.every(({ repo }) => repo === 'ai4bharat/indic-conformer-600m-multilingual'))
   assert.ok(h.downloads.every(({ filename }) => !filename.includes('rnnt')))
-  assert.equal(cfg.asrProfiles.hi.SHERPA_ASR_TYPE, 'indic_ctc')
-  assert.equal(cfg.asrProfiles.hi, cfg.asrProfiles.ta)
-  assert.equal(cfg.asrProfiles.hi, cfg.asrProfiles.bn)
-  assert.equal(JSON.parse(cfg.asrProfiles.hi.SHERPA_ASR_EXTERNAL_FILES).length, 2)
+  assert.equal(cfg.asrProfiles.hindi.SHERPA_ASR_TYPE, 'indic_ctc')
+  assert.equal(cfg.asrProfiles.hi, undefined)
+  assert.equal(cfg.asrProfiles.ta, undefined)
+  assert.equal(cfg.asrProfiles.bn, undefined)
+  assert.equal(JSON.parse(cfg.asrProfiles.hindi.SHERPA_ASR_EXTERNAL_FILES).length, 2)
   await h.api.ensureDefaultAsrModel(cfg)
   assert.equal(h.downloads.length, 6)
 })
@@ -324,31 +345,41 @@ test('managed old Indic defaults are replaced while manual models are preserved'
     asrProfiles: { hindi: old, hi: old, bn: custom }
   })
   const cfg = await h.api.ensureDefaultAsrModel(h.config())
-  assert.equal(cfg.asrProfiles.hi.SHERPA_ASR_TYPE, 'indic_ctc')
+  assert.equal(cfg.asrProfiles.hindi.SHERPA_ASR_TYPE, 'indic_ctc')
   assert.equal(cfg.asrProfiles.bn.SHERPA_ASR_MODEL, 'my-bengali.onnx')
 })
 
-test('Indic downloads ignore user tokens and fall back after access failure', async () => {
+test('Indic mirror failures are explicit and never download the retired model', async () => {
   const original = { enabledLanguages: ['hi'], asrProfiles: {} }
   const h = harness(original, { envVars: { HF_TOKEN: 'test-user-token' }, failIndic: true })
-  const fallback = await h.api.ensureDefaultAsrModel(h.config())
-  assert.equal(fallback.asrProfiles.hi.SHERPA_ASR_TYPE, 'sense_voice')
-  assert.equal(fallback.asrProfiles.hi.SHERPA_ASR_INDIC_FALLBACK, 'true')
-  assert.ok(h.downloads.every(({ repo }) => repo.includes('funasr-nano')))
-  await h.api.ensureDefaultAsrModel(fallback)
-  assert.equal(h.downloads.length, 2)
+  await assert.rejects(h.api.ensureDefaultAsrModel(h.config()), /HTTP 503/)
+  assert.equal(h.downloads.length, 0)
   const authorized = harness(original, { envVars: { HF_TOKEN: 'test-user-token' } })
   const cfg = await authorized.api.ensureDefaultAsrModel(authorized.config())
-  assert.equal(cfg.asrProfiles.hi.SHERPA_ASR_TYPE, 'indic_ctc')
+  assert.equal(cfg.asrProfiles.hindi.SHERPA_ASR_TYPE, 'indic_ctc')
 })
 
-test('Indic metadata failure falls back; failure of both downloads preserves configuration', async () => {
+test('Indic metadata failure preserves configuration and leaves other languages ready', async () => {
   const original = { enabledLanguages: ['hi'], asrProfiles: {} }
   const h = harness(original, { failMetadata: true })
-  const result = await h.api.ensureDefaultAsrModel(h.config())
-  assert.equal(result.asrProfiles.hi.SHERPA_ASR_TYPE, 'sense_voice')
-  const broken = harness(original, { failIndic: true, failFallback: true })
-  const before = broken.config()
-  await assert.rejects(broken.api.ensureDefaultAsrModel(broken.config()), /Network unavailable/)
-  assert.deepEqual(broken.config(), before)
+  const before = h.config()
+  await assert.rejects(h.api.prepareIndicSpeechModelUpdate(before), /HTTP 503/)
+  assert.equal(h.config(), before)
+  assert.equal(await h.api.ensureDefaultAsrModel(before, undefined, false, 'without-indic'), before)
+  assert.equal(h.downloads.length, 0)
+})
+
+test('migration detects legacy group-only installs and dictionary languages without overriding custom languages', () => {
+  const fallback = { SHERPA_ASR_NAME: presets.RETIRED_INDIC_ASR_REPO, SHERPA_ASR_MANAGED: 'true' }
+  const legacy = harness({ asrProfiles: { hindi: fallback } })
+  assert.deepEqual(Array.from(legacy.api.indicSpeechModelUpdateLanguages(legacy.config())), ['hi'])
+  const custom = { SHERPA_ASR_MODEL: 'custom-bengali.onnx' }
+  const dictionary = harness(
+    { enabledLanguages: ['bn'], asrProfiles: { bn: custom } },
+    { glossary: { source_lang: 'zh', target_lang: 'ne' } }
+  )
+  assert.deepEqual(
+    Array.from(dictionary.api.indicSpeechModelUpdateLanguages(dictionary.config())),
+    ['ne']
+  )
 })

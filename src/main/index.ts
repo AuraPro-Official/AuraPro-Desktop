@@ -22,6 +22,7 @@ import {
   desktopCapturer,
   screen,
   systemPreferences,
+  nativeTheme,
   BrowserWindow,
   globalShortcut,
   MessageChannelMain,
@@ -38,6 +39,7 @@ import path, { join } from 'path'
 import { access, cp, readFile, readdir, statfs } from 'fs/promises'
 import { execFile } from 'child_process'
 import { userInfo } from 'os'
+import { normalizeDesktopTheme } from '../shared/desktop-theme'
 
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 
@@ -166,6 +168,9 @@ import {
   isSherpaStarting,
   SHERPA_ONNX_VERSION,
   ensureDefaultAsrModel,
+  indicSpeechModelUpdateLanguages,
+  prepareIndicSpeechModelUpdate,
+  verifySherpaRecognition,
   ensureDefaultTtsModel,
   reinitSherpaServerScript,
   prepareSherpaRepairModels,
@@ -182,6 +187,7 @@ import {
   cancelDownload,
   resumeDownload,
   getModelsDir,
+  upgradeLocalModel,
   searchModels,
   getRepoFiles
 } from './utils/huggingface'
@@ -1933,10 +1939,113 @@ let glossarySpeechDownloadPending = false
 let glossarySpeechDownloadSignature = ''
 let speechRepairInProgress = false
 let speechOperations = 0
+let indicUpdate: Promise<void> | null = null
+let triedIndicUpdate = false
+let indicUpdateRetries = 0
+let indicUpdateSwitching = false
+
+const updateIndicSpeechInBackground = (automatic = true): Promise<void> => {
+  if (indicUpdate) return indicUpdate
+  if (
+    isQuiting ||
+    (automatic &&
+      (triedIndicUpdate ||
+        speechRepairInProgress ||
+        startupRepairInProgress ||
+        glossarySpeechDownloadPending ||
+        speechOperations))
+  )
+    return Promise.resolve()
+
+  indicUpdate = (async () => {
+    const previous = (await getConfig()).sherpa
+    if (!previous?.enabled || !isSherpaInstalled() || !validateSherpaProcess()) return
+    const languages = indicSpeechModelUpdateLanguages(previous)
+    if (!languages.length) return
+    const active = await getSherpaInfo()
+    const port = active.url ? Number(new URL(active.url).port) : previous.port
+    triedIndicUpdate = true
+    speechOperations++
+    const onStatus = (status: string) => sendToRenderer('status:sherpa-setup', status)
+    let switching = false
+    try {
+      onStatus('Updating IndicConformer...')
+      const candidate = await prepareIndicSpeechModelUpdate(previous, onStatus)
+      const latest = (await getConfig()).sherpa
+      if (
+        isQuiting ||
+        !latest.enabled ||
+        !validateSherpaProcess() ||
+        JSON.stringify(latest) !== JSON.stringify(previous)
+      ) {
+        triedIndicUpdate = false
+        if (latest.enabled && !isQuiting) setTimeout(scheduleIndicSpeechModelUpdate, 2_000).unref()
+        return
+      }
+      if (
+        !candidate.asrProfiles?.hindi ||
+        candidate.asrProfiles.hindi.SHERPA_ASR_TYPE !== 'indic_ctc'
+      )
+        throw new Error('Downloaded IndicConformer profile is missing.')
+      await ensureSherpaStartupDependencies(candidate, onStatus, { onlyIndic: true })
+      if (
+        isQuiting ||
+        !validateSherpaProcess() ||
+        JSON.stringify((await getConfig()).sherpa) !== JSON.stringify(latest)
+      ) {
+        triedIndicUpdate = false
+        if (!isQuiting) setTimeout(scheduleIndicSpeechModelUpdate, 2_000).unref()
+        return
+      }
+      onStatus('Verifying IndicConformer...')
+      switching = true
+      indicUpdateSwitching = true
+      await stopSherpa()
+      const runtime = await startSherpa(port, onStatus, candidate, { installedOnly: true })
+      await verifySherpaRecognition(runtime, languages[0], 'hindi')
+      await setConfig({ sherpa: { ...latest, ...candidate, port } })
+      CONFIG = await getConfig()
+      sendToRenderer('config:updated', CONFIG)
+      sendToRenderer('sherpa:ready', toIpcSafeValue(runtime))
+      onStatus('IndicConformer is ready')
+    } catch (error) {
+      if (switching && !isQuiting) {
+        await stopSherpa()
+          .then(() => startSherpa(port, undefined, previous, { installedOnly: true }))
+          .then((result) => sendToRenderer('sherpa:ready', toIpcSafeValue(result)))
+          .catch((restoreError) => {
+            log.error('Could not restart Sherpa after the IndicConformer update:', restoreError)
+            sendToRenderer('status:sherpa', 'failed')
+          })
+      }
+      const message = `IndicConformer update failed: ${getErrorMessage(error)}`
+      onStatus(message)
+      log.warn(message)
+      if (automatic && !switching && indicUpdateRetries++ < 2) {
+        setTimeout(() => {
+          triedIndicUpdate = false
+          scheduleIndicSpeechModelUpdate()
+        }, 60_000 * indicUpdateRetries).unref()
+      }
+      if (!automatic) throw error
+    } finally {
+      indicUpdateSwitching = false
+      speechOperations--
+    }
+  })().finally(() => {
+    indicUpdate = null
+  })
+  return indicUpdate
+}
+
+const scheduleIndicSpeechModelUpdate = () => {
+  void updateIndicSpeechInBackground().catch((error) => log.warn('IndicConformer update:', error))
+}
 const existingSpeechOperation =
   <Args extends unknown[], T>(run: (...args: Args) => Promise<T>) =>
   async (...args: Args): Promise<T> => {
-    if (speechRepairInProgress || startupRepairInProgress) throw new SpeechRepairError('busy')
+    if (speechRepairInProgress || startupRepairInProgress || indicUpdateSwitching)
+      throw new SpeechRepairError('busy')
     speechOperations++
     try {
       return await run(...args)
@@ -1945,7 +2054,13 @@ const existingSpeechOperation =
     }
   }
 const scheduleGlossarySpeechDownloads = () => {
-  if (glossarySpeechDownloadPending || speechRepairInProgress || startupRepairInProgress) return
+  if (
+    glossarySpeechDownloadPending ||
+    speechRepairInProgress ||
+    startupRepairInProgress ||
+    indicUpdate
+  )
+    return
   glossarySpeechDownloadPending = true
   void (async () => {
     try {
@@ -1962,7 +2077,9 @@ const scheduleGlossarySpeechDownloads = () => {
       const onStatus = (status: string) => sendToRenderer('status:sherpa-setup', status)
       const asr = await ensureDefaultAsrModel(
         { ...cfg.sherpa, enabledLanguages: selected },
-        onStatus
+        onStatus,
+        true,
+        'without-indic'
       )
       const tts = await ensureDefaultTtsModel(asr, onStatus)
       glossarySpeechDownloadSignature = signature
@@ -1984,6 +2101,7 @@ const scheduleGlossarySpeechDownloads = () => {
       )
     } finally {
       glossarySpeechDownloadPending = false
+      scheduleIndicSpeechModelUpdate()
     }
   })()
 }
@@ -2264,7 +2382,11 @@ const runSpeechRepair = async (event: IpcMainInvokeEvent, guestId: number, selec
 }
 
 const diagnoseLocalStartup = async (trigger = 'manual'): Promise<LlamaDiagnosticReport> => {
-  const report = await diagnoseLlamaCpp(trigger)
+  const llamaError = LLAMACPP_STARTUP_STATE.phase === 'failed' ? LLAMACPP_STARTUP_STATE.detail : ''
+  const report = await diagnoseLlamaCpp(
+    trigger,
+    llamaError.startsWith('llama.cpp ZIP is in use:') ? llamaError : undefined
+  )
   const config = await getConfig()
   const sherpa = getSherpaServiceState()
   const pythonDirectory = join(getInstallDir(), 'python')
@@ -2637,21 +2759,25 @@ const repairLocalStartup = async (
   return { actions, errors, repairIssue }
 }
 
-const reloadLlamaCppModelsAfterDownload = async (filepath: string | null | undefined) => {
+const reloadLlamaCppModelsAfterDownload = async (
+  filepath: string | null | undefined,
+  options?: { modelId?: string; previousUrl?: string; force?: boolean; strict?: boolean }
+) => {
   if (inferenceCoordinator.current === 'pro') return
   if (!filepath || path.extname(filepath).toLowerCase() !== '.gguf') return
 
   const info = getLlamaCppInfo()
   const config = await getConfig()
-  const shouldReload = config?.llamaCpp?.enabled || info.status === 'started'
+  const shouldReload = options?.force || config?.llamaCpp?.enabled || info.status === 'started'
   if (!shouldReload) return
 
   try {
     log.info(`Reloading llama.cpp after model download: ${filepath}`)
-    if (info.url) {
+    const previousUrl = info.url || options?.previousUrl
+    if (previousUrl) {
       sendToRenderer('connections:openai', {
         action: 'remove',
-        url: `${info.url}/v1`
+        url: `${previousUrl}/v1`
       })
     }
 
@@ -2661,6 +2787,21 @@ const reloadLlamaCppModelsAfterDownload = async (filepath: string | null | undef
     const result = await startLlamaCppWithFallback((status) => {
       sendToRenderer('status:llamacpp-setup', status)
     })
+    if (options?.modelId) {
+      if (!result.url) throw new Error('The restarted llama.cpp server has no URL')
+      const response = await fetch(new URL('/v1/models', result.url), {
+        redirect: 'error',
+        signal: AbortSignal.timeout(5000)
+      })
+      if (!response.ok) {
+        await response.body?.cancel()
+        throw new Error(`llama.cpp could not list the updated model (HTTP ${response.status})`)
+      }
+      const body = (await response.json()) as { data?: Array<{ id?: string }> }
+      if (!Array.isArray(body.data) || !body.data.some((model) => model.id === options.modelId)) {
+        throw new Error(`llama.cpp did not list the updated model ${options.modelId}`)
+      }
+    }
 
     sendToRenderer('status:llamacpp', 'started')
     sendToRenderer('llamacpp:ready', result)
@@ -2679,6 +2820,7 @@ const reloadLlamaCppModelsAfterDownload = async (filepath: string | null | undef
   } catch (error) {
     log.error('Failed to reload llama.cpp after model download:', error)
     sendToRenderer('status:llamacpp', 'failed')
+    if (options?.strict) throw error
     sendToRenderer('error', {
       message: `llama.cpp model reload failed: ${getErrorMessage(error)}`
     })
@@ -2797,6 +2939,7 @@ const startConfiguredServices = async (defaultConnection?: Connection): Promise<
               url: `${result.url}/v1`
             })
           }
+          scheduleIndicSpeechModelUpdate()
         } catch (error) {
           log.error('Auto-start sherpa failed:', error)
           sendToRenderer('status:sherpa', 'failed')
@@ -2807,6 +2950,7 @@ const startConfiguredServices = async (defaultConnection?: Connection): Promise<
   }
 
   await Promise.allSettled(startupTasks)
+  scheduleIndicSpeechModelUpdate()
 }
 
 // ─── App Lifecycle ──────────────────────────────────────
@@ -2835,6 +2979,7 @@ if (!gotTheLock) {
   app.whenReady().then(async () => {
     CONFIG = await getConfig()
     CONFIG = await preferLocalConnectionOnStartup(CONFIG)
+    nativeTheme.themeSource = normalizeDesktopTheme(CONFIG.theme)
 
     loadSpotlightPosition()
     log.info('Config:', redactConfigForLog(CONFIG))
@@ -3185,8 +3330,14 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
         call: CONFIG?.callShortcut
       }
       const previousLlamaRuntimeSettings = getLlamaRuntimeSettingsFromConfig(CONFIG)
+      const previousTheme = nativeTheme.themeSource
       await setConfig(config)
       CONFIG = await getConfig()
+      const nextTheme = normalizeDesktopTheme(CONFIG.theme)
+      if (previousTheme !== nextTheme) {
+        nativeTheme.themeSource = nextTheme
+        sendToRenderer('config:updated', CONFIG)
+      }
       const nextLlamaRuntimeSettings = getLlamaRuntimeSettingsFromConfig(CONFIG)
       if (!sameLlamaRuntimeSettings(previousLlamaRuntimeSettings, nextLlamaRuntimeSettings)) {
         await syncGlossaryLlamaSettingsFromConfig()
@@ -4369,6 +4520,7 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
             : CONFIG?.sherpa?.port || 39384
           await setConfig({ sherpa: { ...CONFIG?.sherpa, enabled: true, port: resultPort } })
           CONFIG = await getConfig()
+          setTimeout(scheduleIndicSpeechModelUpdate, 0).unref()
           return safeResult
         } catch (error) {
           const message = getErrorMessage(error)
@@ -4452,14 +4604,20 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     )
     ipcMain.handle(
       'sherpa:downloadAsrModel',
-      existingSpeechOperation(async (_event: IpcMainInvokeEvent, isDelete?: boolean) => {
+      existingSpeechOperation(async () => {
         const config = await getConfig()
         const sherpaConfig = config.sherpa ?? {}
+        const migrate =
+          sherpaConfig.enabled &&
+          validateSherpaProcess() &&
+          indicSpeechModelUpdateLanguages(sherpaConfig).length > 0
         await ensureDefaultAsrModel(
           sherpaConfig,
           (status) => sendToRenderer('status:sherpa-setup', status),
-          isDelete
+          true,
+          migrate ? 'without-indic' : 'all'
         )
+        if (migrate) return updateIndicSpeechInBackground(false)
         if (sherpaConfig.enabled) {
           await stopSherpa()
           const result = await startSherpa(null, (status) =>
@@ -4507,6 +4665,62 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
     // Hugging Face models
     ipcMain.handle('huggingface:models:list', () => listModels())
     ipcMain.handle('huggingface:models:dir', () => getModelsDir())
+    ipcMain.handle('huggingface:models:upgrade', async (event, repo: string, name: string) => {
+      if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame)
+        throw new Error('Model updates are available only from the desktop window')
+      let interrupted = false
+      let wasRunning = false
+      let previousUrl: string | undefined
+      const result = await upgradeLocalModel(repo, name, {
+        switchRuntime: (switchFiles) =>
+          inferenceCoordinator.maintain(async () => {
+            try {
+              await switchFiles()
+            } catch (error) {
+              if (interrupted && wasRunning) {
+                try {
+                  await reloadLlamaCppModelsAfterDownload(name, {
+                    previousUrl,
+                    force: true,
+                    strict: true
+                  })
+                } catch (restoreError) {
+                  log.error(
+                    'Could not restart llama.cpp after model update rollback:',
+                    restoreError
+                  )
+                }
+              }
+              throw error
+            }
+          }),
+        beforeSwitch: async () => {
+          if (inferenceCoordinator.current === 'pro') {
+            throw new Error('Stop the Pro runtime before switching the local model')
+          }
+          const info = getLlamaCppInfo()
+          if (info.status === 'starting') throw new Error('Wait for llama.cpp to finish starting')
+          previousUrl = info.url ?? undefined
+          wasRunning = info.status === 'started'
+          interrupted = true
+          sendToRenderer('model:upgrade-switch')
+          await stopLlamaCpp()
+        },
+        activate: (name) =>
+          reloadLlamaCppModelsAfterDownload(name, {
+            modelId: path.basename(name, '.gguf'),
+            previousUrl,
+            force: true,
+            strict: true
+          }),
+        beforeRollback: () => stopLlamaCpp(),
+        progress: (progress) =>
+          sendToRenderer('model:upgrade-progress', { percent: progress.percent })
+      })
+      sendToRenderer('model:upgrade-done')
+      scheduleCacheCleanup(['huggingface'], 'manual-model-download')
+      return result
+    })
     ipcMain.handle('huggingface:models:delete', (_event, repo: string, filename: string) => {
       return deleteModel(repo, filename)
     })
@@ -4645,22 +4859,30 @@ if ($found) { Write-Output 'true' } else { Write-Output 'false' }
 
     ipcMain.handle('llamacpp:update', async () => {
       try {
-        sendToRenderer('status:llamacpp', 'setting-up')
-        updateLlamaCppStartupState('updating', 'Checking for llama.cpp updates...')
         const result = await updateLlamaCpp((status) => {
           sendToRenderer('status:llamacpp-setup', status)
-          updateLlamaCppStartupProgress(status, 'updating')
         })
-        sendToRenderer('status:llamacpp', 'ready')
-        updateLlamaCppStartupState('ready')
+        if (result.status === 'started') {
+          sendToRenderer('status:llamacpp', 'started')
+          sendToRenderer('llamacpp:ready', result)
+          updateLlamaCppStartupState('ready')
+        }
         return result
       } catch (error) {
         const message = getErrorMessage(error)
         log.error('Failed to update llamacpp:', error)
-        sendToRenderer('status:llamacpp', 'failed')
-        updateLlamaCppStartupState('failed', message)
-        sendToRenderer('error', { message: `llamacpp update failed: ${message}` })
+        const current = getLlamaCppInfo()
+        if (current.status === 'started') {
+          sendToRenderer('status:llamacpp', 'started')
+          sendToRenderer('llamacpp:ready', current)
+          updateLlamaCppStartupState('ready')
+        } else if (current.status === 'failed') {
+          sendToRenderer('status:llamacpp', 'failed')
+          updateLlamaCppStartupState('failed', message)
+        }
         throw error
+      } finally {
+        sendToRenderer('status:llamacpp-setup', '')
       }
     })
 

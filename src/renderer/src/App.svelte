@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte'
+  import { onMount } from 'svelte'
+  import { normalizeDesktopTheme } from '../../shared/desktop-theme'
   import {
     appInfo,
     appState,
@@ -14,35 +15,35 @@
   import Main from './lib/components/Main.svelte'
   import OfficialGlossaryStartup from './lib/components/Setup/OfficialGlossaryStartup.svelte'
 
-  let themeMediaQuery: MediaQueryList
-  let themeChangeHandler: ((event: MediaQueryListEvent) => void) | null = null
-  let disposeMainData: (() => void) | null = null
   let bootstrapped = $state(false)
+  let systemDark = $state(window.matchMedia('(prefers-color-scheme: dark)').matches)
 
   interface MainDataEvent {
     type: string
     data?: unknown
   }
 
-  const applyResolvedTheme = (theme: string) => {
-    let resolved = theme
-    if (theme === 'system') {
-      resolved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-    }
-    document.documentElement.classList.remove('light', 'dark')
-    document.documentElement.classList.add(resolved)
-  }
+  $effect(() => {
+    const theme = normalizeDesktopTheme($config?.theme)
+    const dark = theme === 'dark' || (theme === 'system' && systemDark)
+    document.documentElement.classList.toggle('dark', dark)
+    document.documentElement.classList.toggle('light', !dark)
+  })
 
   onMount(() => {
     const api = window?.electronAPI
     if (!api) return
+
+    const themeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    const themeChangeHandler = () => (systemDark = themeMediaQuery.matches)
+    themeMediaQuery.addEventListener('change', themeChangeHandler)
 
     let disposed = false
     let receivedServerEvent = false
     let receivedWebUIStartupEvent = false
     let receivedLlamaCppStartupEvent = false
 
-    disposeMainData = api.onData((data: MainDataEvent) => {
+    const disposeMainData = api.onData((data: MainDataEvent) => {
       if (data.type === 'status:server') {
         receivedServerEvent = true
         serverInfo.update((info) => ({ ...info, status: String(data.data ?? '') }))
@@ -87,15 +88,6 @@
           llamaCppStartup.set(state.llamaCppStartup)
         }
 
-        applyResolvedTheme(state.config?.theme ?? 'system')
-        themeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-        themeChangeHandler = () => {
-          const currentTheme = $config?.theme ?? 'system'
-          if (currentTheme === 'system') {
-            applyResolvedTheme('system')
-          }
-        }
-        themeMediaQuery.addEventListener('change', themeChangeHandler)
         appState.set('ready')
       } catch (error) {
         console.error('Failed to initialize desktop state:', error)
@@ -108,19 +100,13 @@
 
     return () => {
       disposed = true
-    }
-  })
-
-  onDestroy(() => {
-    disposeMainData?.()
-    disposeMainData = null
-    if (themeMediaQuery && themeChangeHandler) {
+      disposeMainData?.()
       themeMediaQuery.removeEventListener('change', themeChangeHandler)
     }
   })
 </script>
 
-<main class="w-full h-full bg-[#f5f5f7] dark:bg-[#0a0a0a]">
+<main class="w-full h-full">
   <OfficialGlossaryStartup />
   {#if bootstrapped}
     <Main />

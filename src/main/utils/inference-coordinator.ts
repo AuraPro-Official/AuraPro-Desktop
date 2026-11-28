@@ -108,6 +108,13 @@ export class InferenceCoordinator {
     release()
   }
 
+  async maintain<T>(action: () => Promise<T>): Promise<T> {
+    return this.enqueue(async () => {
+      if (this.closing) throw new Error('Inference runtimes are shutting down')
+      return action()
+    })
+  }
+
   async configure(runtime: InferenceRuntime, action: () => Promise<void>): Promise<void> {
     return this.enqueue(async () => {
       if (this.closing) throw new Error('Inference runtimes are shutting down')

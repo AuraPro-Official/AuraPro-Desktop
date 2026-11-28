@@ -1,8 +1,13 @@
 <script lang="ts">
   import type * as Electron from 'electron'
-  import { onMount } from 'svelte'
+  import { onMount, untrack } from 'svelte'
   import { SvelteMap } from 'svelte/reactivity'
   import { fade, fly } from 'svelte/transition'
+  import {
+    desktopThemeFromWebUI,
+    normalizeDesktopTheme,
+    type DesktopTheme
+  } from '../../../../../../shared/desktop-theme'
   import {
     connections,
     config,
@@ -296,6 +301,25 @@
     }
   }
 
+  const themeByWebview = new SvelteMap<Electron.WebviewTag, { theme: DesktopTheme | undefined }>()
+  const syncWebviewTheme = async (wv: Electron.WebviewTag, theme: DesktopTheme) => {
+    if (themeByWebview.get(wv)?.theme === theme) return
+    const update = { theme }
+    themeByWebview.set(wv, update)
+    try {
+      await wv.send('desktop:event', { type: 'theme:update', data: { theme } })
+    } catch {
+      if (themeByWebview.get(wv) === update) themeByWebview.delete(wv)
+    }
+  }
+
+  $effect(() => {
+    const theme = normalizeDesktopTheme($config?.theme)
+    untrack(() => {
+      for (const wv of themeByWebview.keys()) void syncWebviewTheme(wv, theme)
+    })
+  })
+
   // Attach load event listeners and IPC forwarding to webviews
   onMount(() => {
     let disposed = false
@@ -311,6 +335,9 @@
       const attachWebviews = () => {
         const container = document.querySelector('.content-webview-container')
         if (!container) return
+        for (const wv of themeByWebview.keys()) {
+          if (!container.contains(wv)) themeByWebview.delete(wv)
+        }
         const webviews = container.querySelectorAll<Electron.WebviewTag>('webview')
         webviews.forEach((wv) => {
           if (initializedWebviews.has(wv)) return
@@ -335,6 +362,10 @@
               description: event.errorDescription || 'Unknown error',
               url: event.validatedURL || ''
             })
+          })
+
+          wv.addEventListener('did-start-navigation', (event: Electron.DidStartNavigationEvent) => {
+            if (event.isMainFrame && !event.isInPlace) themeByWebview.delete(wv)
           })
 
           // Clear error when a navigation succeeds (retry, redirect, etc.)
@@ -397,32 +428,25 @@
               const payload = event.args?.[0]
               if (!payload?.type) return
 
-              if (payload.type === 'theme:update') {
-                const webuiTheme = payload.data?.theme ?? 'system'
-
-                // Map AuraPro theme names to desktop-compatible values
-                let desktopTheme: string
-                if (webuiTheme === 'system') {
-                  desktopTheme = 'system'
-                } else if (webuiTheme.includes('dark')) {
-                  desktopTheme = 'dark'
-                } else {
-                  desktopTheme = 'light'
+              const currentTheme = normalizeDesktopTheme($config?.theme)
+              const guestTheme = desktopThemeFromWebUI(payload.data?.theme)
+              if (payload.type === 'theme:ready') {
+                // Keep the guest's OLED/Her variant if it matches the desktop mode.
+                themeByWebview.set(wv, { theme: guestTheme })
+                void syncWebviewTheme(wv, currentTheme)
+              } else if (payload.type === 'theme:change' && guestTheme) {
+                themeByWebview.set(wv, { theme: guestTheme })
+                if (view !== 'connected' || connId !== activeConnectionId) {
+                  void syncWebviewTheme(wv, currentTheme)
+                } else if (guestTheme !== currentTheme) {
+                  try {
+                    await window.electronAPI.setConfig({ theme: guestTheme })
+                    config.set(await window.electronAPI.getConfig())
+                  } catch (error) {
+                    console.warn('Failed to save the desktop theme:', error)
+                    void syncWebviewTheme(wv, normalizeDesktopTheme($config?.theme))
+                  }
                 }
-
-                // Resolve and apply CSS class
-                let resolved = desktopTheme
-                if (desktopTheme === 'system') {
-                  resolved = window.matchMedia('(prefers-color-scheme: dark)').matches
-                    ? 'dark'
-                    : 'light'
-                }
-                document.documentElement.classList.remove('light', 'dark')
-                document.documentElement.classList.add(resolved)
-
-                // Persist to desktop config
-                await window.electronAPI.setConfig({ theme: desktopTheme })
-                config.set(await window.electronAPI.getConfig())
               }
             }
           })
@@ -443,6 +467,7 @@
     return () => {
       disposed = true
       observer?.disconnect()
+      themeByWebview.clear()
     }
   })
 </script>
@@ -487,7 +512,13 @@
           {$i18n.t(runtimeStartupTitleKey)}
         </div>
         <div class="mt-2 text-[12px] leading-5 opacity-45">
-          {$i18n.t(runtimeStartupDescriptionKey)}
+          {$i18n.t(
+            runtimeStartupComponent === 'llamacpp' &&
+              runtimeStartupFailed &&
+              runtimeStartupState.detail.startsWith('llama.cpp ZIP is in use:')
+              ? 'startup.llamacpp.archiveInUse'
+              : runtimeStartupDescriptionKey
+          )}
         </div>
         {#if runtimeStartupActive}
           <div class="mt-5 h-1.5 w-full overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
@@ -496,7 +527,16 @@
             ></div>
           </div>
         {/if}
-        {#if runtimeStartupState.detail}
+        {#if runtimeStartupComponent === 'llamacpp' && runtimeStartupFailed && runtimeStartupState.detail}
+          <pre
+            class="mt-3 max-h-[30vh] w-full overflow-auto whitespace-pre-wrap break-words text-left text-[11px] leading-5 text-black/65 dark:text-white/65">{runtimeStartupState.detail}</pre>
+          <button
+            class="mt-1 text-[12px] underline underline-offset-2 opacity-70 hover:opacity-100"
+            onclick={() => {
+              void window.electronAPI.copyToClipboard(runtimeStartupState.detail)
+            }}>{$i18n.t('common.copy')}</button
+          >
+        {:else if runtimeStartupState.detail}
           <div class="mt-3 max-w-full truncate text-[10px] opacity-25">
             {runtimeStartupState.detail}
           </div>

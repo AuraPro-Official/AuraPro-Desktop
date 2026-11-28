@@ -81,6 +81,7 @@
   <label class="help-search">
     <span class="sr-only">{getTutorialText(tutorialUiText.searchPlaceholder, language)}</span>
     <input
+      class="settings-field w-full"
       bind:value={search}
       placeholder={getTutorialText(tutorialUiText.searchPlaceholder, language)}
     />
@@ -108,18 +109,19 @@
     {#each localizedSections.filter((section) => normalizedSearch || section.id === activeSection?.id) as section (section.id)}
       <section class="help-section">
         {#if normalizedSearch}
-          <h2>{section.title}</h2>
+          <h2 class="settings-label">{section.title}</h2>
         {/if}
         <p class="help-description">{section.description}</p>
         <div class="help-articles">
           {#each section.items as item (item.id)}
             <details class="help-article" open={Boolean(normalizedSearch)}>
               <summary>
-                <span class="help-item-title">{item.title}</span>
+                <span class="settings-label">{item.title}</span>
                 <span class="help-summary">{item.summary}</span>
               </summary>
               <div class="help-body">
                 {#if item.table}
+                  <!-- svelte-ignore a11y_no_noninteractive_tabindex (keyboard access to the horizontal scroll region) -->
                   <div class="help-table" role="region" aria-label={item.title} tabindex="0">
                     <table>
                       <thead
@@ -176,82 +178,55 @@
 
 <style>
   .help-page {
-    --help-border: rgba(0, 0, 0, 0.1);
-    --help-muted: #666;
-    --help-accent: #08765a;
+    --help-muted: color-mix(in srgb, var(--settings-fg) 65%, var(--settings-bg));
     width: 100%;
     min-width: 0;
     padding-bottom: 24px;
-    color: #242424;
-    font-size: 13px;
     line-height: 1.6;
-    letter-spacing: 0;
-  }
-  :global(.dark) .help-page {
-    --help-border: rgba(255, 255, 255, 0.14);
-    --help-muted: #b3b3b3;
-    --help-accent: #6ee7b7;
-    color: #ededed;
   }
   .help-search {
     display: block;
     margin-bottom: 16px;
   }
-  .help-search input {
-    box-sizing: border-box;
-    width: 100%;
-    min-width: 0;
-    padding: 9px 12px;
-    border: 1px solid var(--help-border);
-    border-radius: 6px;
-    background: transparent;
-    color: inherit;
-    font: inherit;
-  }
   .help-search input::placeholder {
     color: var(--help-muted);
   }
-  .help-search input:focus-visible,
   .help-categories button:focus-visible,
+  .help-table:focus-visible,
   summary:focus-visible {
-    outline: 2px solid var(--help-accent);
+    outline: 2px solid currentColor;
     outline-offset: 2px;
   }
   .help-categories {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px 16px;
-    border-bottom: 1px solid var(--help-border);
+    gap: 4px;
+    padding: 4px;
+    border-radius: 8px;
+    background: var(--settings-control-bg);
   }
   .help-categories button {
-    padding: 8px 0;
-    border: 0;
-    border-bottom: 2px solid transparent;
-    background: transparent;
+    padding: 4px 8px;
+    border-radius: 6px;
     color: var(--help-muted);
-    font: inherit;
+    font-size: 11px;
     cursor: pointer;
   }
   .help-categories button.active {
-    border-bottom-color: var(--help-accent);
-    color: var(--help-accent);
+    background: var(--settings-selected-bg);
+    color: inherit;
   }
   .help-section {
     min-width: 0;
     margin-top: 16px;
   }
-  h2 {
-    margin: 0;
-    font-size: 14px;
-    font-weight: 600;
-  }
   .help-description {
     margin: 0 0 12px;
     color: var(--help-muted);
-    font-size: 12px;
+    font-size: 11px;
   }
   .help-article {
-    border-bottom: 1px solid var(--help-border);
+    border-bottom: 1px solid var(--settings-divider);
   }
   summary {
     padding: 14px 4px;
@@ -261,14 +236,11 @@
   summary::marker {
     color: var(--help-muted);
   }
-  .help-item-title {
-    font-weight: 600;
-  }
   .help-summary {
     display: block;
     padding-left: 16px;
     margin-top: 3px;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--help-muted);
   }
   .help-body {
@@ -286,13 +258,13 @@
   .help-tips {
     margin-top: 16px;
     padding-left: 12px;
-    border-left: 2px solid var(--help-border);
+    border-left: 2px solid var(--settings-divider);
   }
   .help-tips p,
   .help-links p {
     color: var(--help-muted);
     margin: 0 0 6px;
-    font-size: 12px;
+    font-size: 11px;
   }
   .help-tips ul {
     list-style: disc;
@@ -311,7 +283,7 @@
     padding: 0;
     border: 0;
     background: transparent;
-    color: var(--help-accent);
+    color: inherit;
     text-align: left;
     font: inherit;
     text-decoration: underline;
@@ -340,7 +312,7 @@
     padding: 10px 8px;
     text-align: left;
     vertical-align: top;
-    border-bottom: 1px solid var(--help-border);
+    border-bottom: 1px solid var(--settings-divider);
   }
   .help-table th {
     font-weight: 500;

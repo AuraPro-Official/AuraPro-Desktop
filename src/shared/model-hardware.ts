@@ -87,22 +87,27 @@ export const STANDARD_MODEL_GUIDE = {
   low_E4: { sizeGiB: 4.5 },
   medium_Q3_V2: { sizeGiB: 5 },
   medium_Q4_V2: { sizeGiB: 6 },
+  medium_Q6_V2: { sizeGiB: 8 },
   medium_IQ2: { sizeGiB: 11 },
   high_Q4: { sizeGiB: 15 },
   high_Q4_2: { sizeGiB: 21 }
 } as const
 
 export type StandardModel = keyof typeof STANDARD_MODEL_GUIDE
+type RecommendedStandardModel = Exclude<StandardModel, 'medium_Q6_V2'>
 
 export function standardGuide(name: string) {
   return STANDARD_MODEL_GUIDE[name.replace(/\.gguf$/, '') as StandardModel]
 }
 
+const omni9bRequirements = ['VRAM 8G', 'UMA 16G'] as const
+
 const standardRequirements: Record<StandardModel, readonly [pc: string, mac: string]> = {
   lowest_V2: ['RAM 8G', 'UMA 8G'],
   low_E4: ['RAM 16G', 'UMA 8G'],
   medium_Q3_V2: ['VRAM 6G', 'UMA 8G'],
-  medium_Q4_V2: ['VRAM 8G', 'UMA 16G'],
+  medium_Q4_V2: omni9bRequirements,
+  medium_Q6_V2: omni9bRequirements,
   medium_IQ2: ['RAM+VRAM 24G+4G', 'UMA 18G'],
   high_Q4: ['RAM 48G or RAM+VRAM 32G+4G', 'UMA 24G'],
   high_Q4_2: ['RAM 64G or RAM+VRAM 48G+4G', 'UMA 32G']
@@ -155,7 +160,7 @@ export function proRequirementLabel(name: string, platform?: string) {
   return [pcLabel, macLabel].filter(Boolean).join(' / ')
 }
 
-export const PC_MODEL_PRIORITY: readonly StandardModel[] = [
+export const PC_MODEL_PRIORITY: readonly RecommendedStandardModel[] = [
   'high_Q4_2',
   'medium_Q4_V2',
   'high_Q4',
@@ -165,7 +170,7 @@ export const PC_MODEL_PRIORITY: readonly StandardModel[] = [
   'lowest_V2'
 ]
 
-export function recommendStandardModel(hardware: InstallHardware): StandardModel {
+export function recommendStandardModel(hardware: InstallHardware): RecommendedStandardModel {
   const { platform, architecture, memoryGiB: ram, vramGiB: vram, preference } = hardware
   const quality = preference === 'quality'
   if (platform === 'darwin') {
@@ -177,7 +182,7 @@ export function recommendStandardModel(hardware: InstallHardware): StandardModel
     return ram >= 8 ? lowerTier : 'lowest_V2'
   }
 
-  const matches: Record<StandardModel, boolean> = {
+  const matches: Record<RecommendedStandardModel, boolean> = {
     high_Q4_2: ram >= 64 || (ram >= 48 && vram >= 4),
     medium_Q4_V2: vram >= 8 && (quality || vram < 12),
     high_Q4: (quality ? ram >= 48 : vram >= 12) || (ram >= 32 && vram >= 4),

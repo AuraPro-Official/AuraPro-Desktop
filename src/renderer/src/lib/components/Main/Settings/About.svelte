@@ -298,12 +298,12 @@
   }
 </script>
 
-<div class="flex flex-col divide-y divide-white/[0.04]">
+<div class="settings-sections">
   <button
     class="w-full py-4 flex items-center justify-between bg-transparent border-none cursor-default text-[#1d1d1f] dark:text-[#fafafa]"
     onclick={handleVersionClick}
   >
-    <div class="text-[13px] opacity-70">{$i18n.t('settings.about.desktopVersion')}</div>
+    <div class="settings-label">{$i18n.t('settings.about.desktopVersion')}</div>
     <div class="text-[12px] opacity-30">{$appInfo?.version ?? $i18n.t('common.unknown')}</div>
   </button>
 
@@ -313,8 +313,8 @@
       onclick={() => openRelease('AuraPro-Official/AuraPro-WebUI', openWebuiVersion!)}
     >
       <div class="text-left">
-        <div class="text-[13px] opacity-70">{$i18n.t('settings.about.openWebuiVersion')}</div>
-        <div class="text-[11px] opacity-25 mt-0.5">
+        <div class="settings-label">{$i18n.t('settings.about.openWebuiVersion')}</div>
+        <div class="settings-description mt-0.5">
           {$i18n.t('settings.about.basedOnOpenWebui')}
         </div>
       </div>
@@ -329,7 +329,7 @@
       class="group flex w-full cursor-pointer items-center justify-between border-none bg-transparent py-4"
       onclick={() => openRelease('earendil-works/pi', openCodeVersion!)}
     >
-      <div class="text-[13px] opacity-70">Agent</div>
+      <div class="settings-label">Agent</div>
       <div class="text-[12px] opacity-30 transition group-hover:opacity-50">
         {openCodeVersion}
       </div>
@@ -341,7 +341,7 @@
       class="w-full py-4 flex items-center justify-between bg-transparent border-none cursor-pointer group"
       onclick={() => openRelease('ggml-org/llama.cpp', llamaCppVersion!, '')}
     >
-      <div class="text-[13px] opacity-70">{$i18n.t('settings.about.llamaCppVersion')}</div>
+      <div class="settings-label">{$i18n.t('settings.about.llamaCppVersion')}</div>
       <div class="text-[12px] opacity-30 group-hover:opacity-50 transition">{llamaCppVersion}</div>
     </button>
   {/if}
@@ -350,13 +350,13 @@
       class="w-full py-4 flex items-center justify-between bg-transparent border-none cursor-pointer group"
       onclick={() => openRelease('k2-fsa/sherpa-onnx', sherpaVersion!, 'v')}
     >
-      <div class="text-[13px] opacity-70">Sherpa ONNX</div>
+      <div class="settings-label">Sherpa ONNX</div>
       <div class="text-[12px] opacity-30 group-hover:opacity-50 transition">{sherpaVersion}</div>
     </button>
   {/if}
 
   <div class="py-4 flex items-center justify-between">
-    <div class="text-[13px] opacity-70">{$i18n.t('settings.about.platform')}</div>
+    <div class="settings-label">{$i18n.t('settings.about.platform')}</div>
     <div class="text-[12px] opacity-30">{$appInfo?.platform ?? $i18n.t('common.unknown')}</div>
   </div>
 
@@ -364,15 +364,15 @@
   <div class="py-4">
     <div class="flex items-center justify-between">
       <div>
-        <div class="text-[13px] opacity-70">{$i18n.t('settings.about.softwareUpdate')}</div>
+        <div class="settings-label">{$i18n.t('settings.about.softwareUpdate')}</div>
         {#if updateStatus === 'up-to-date'}
-          <div class="text-[11px] opacity-25 mt-0.5">{$i18n.t('settings.about.upToDate')}</div>
+          <div class="settings-description mt-0.5">{$i18n.t('settings.about.upToDate')}</div>
         {:else if updateStatus === 'available' && updateVersion}
           <div class="text-[11px] opacity-40 mt-0.5">
             {$i18n.t('settings.about.versionAvailable', { version: updateVersion })}
           </div>
         {:else if updateStatus === 'downloading'}
-          <div class="text-[11px] opacity-25 mt-0.5">
+          <div class="settings-description mt-0.5">
             {$i18n.t('settings.about.downloadingPercent', { percent: downloadPercent })}
           </div>
         {:else if updateStatus === 'downloaded'}
@@ -388,15 +388,12 @@
 
       <div>
         {#if updateStatus === 'idle' || updateStatus === 'up-to-date' || updateStatus === 'error'}
-          <button
-            class="text-[12px] opacity-40 hover:opacity-70 px-3 py-1.5 bg-black/[0.04] dark:bg-white/[0.06] transition border-none text-[#1d1d1f] dark:text-[#fafafa] rounded-xl"
-            onclick={handleCheck}
-          >
+          <button class="settings-button transition" onclick={handleCheck}>
             {$i18n.t('settings.about.checkForUpdates')}
           </button>
         {:else if updateStatus === 'checking'}
           <button
-            class="text-[12px] opacity-30 px-3 py-1.5 bg-black/[0.04] dark:bg-white/[0.06] border-none text-[#1d1d1f] dark:text-[#fafafa] rounded-xl pointer-events-none flex items-center gap-1.5"
+            class="settings-button opacity-30 pointer-events-none flex items-center gap-1.5"
             disabled
           >
             <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
@@ -413,10 +410,7 @@
             {$i18n.t('settings.about.checking')}
           </button>
         {:else if updateStatus === 'available'}
-          <button
-            class="text-[12px] opacity-50 hover:opacity-80 px-3 py-1.5 bg-black/[0.06] dark:bg-white/[0.08] transition border-none text-[#1d1d1f] dark:text-[#fafafa] rounded-xl"
-            onclick={handleDownload}
-          >
+          <button class="settings-button transition" onclick={handleDownload}>
             {$i18n.t('settings.about.downloadUpdate')}
           </button>
         {:else if updateStatus === 'downloading'}
@@ -432,10 +426,7 @@
             <span class="text-[11px] opacity-30">{downloadPercent}%</span>
           </div>
         {:else if updateStatus === 'downloaded'}
-          <button
-            class="text-[12px] opacity-50 hover:opacity-80 px-3 py-1.5 bg-black/[0.06] dark:bg-white/[0.08] transition border-none text-[#1d1d1f] dark:text-[#fafafa] rounded-xl"
-            onclick={handleInstall}
-          >
+          <button class="settings-button transition" onclick={handleInstall}>
             {isMac
               ? text('打开安装器', 'Open Installer')
               : $i18n.t('settings.about.restartToUpdate')}
@@ -466,13 +457,13 @@
     {#if changelogOpen}
       <div class="mt-3 max-h-64 overflow-y-auto pr-1">
         {#if changelogLoading}
-          <div class="text-[11px] opacity-25">{$i18n.t('common.loading')}</div>
+          <div class="settings-description">{$i18n.t('common.loading')}</div>
         {:else if changelogEntries.length === 0}
-          <div class="text-[11px] opacity-25">{$i18n.t('settings.about.noChangelog')}</div>
+          <div class="settings-description">{$i18n.t('settings.about.noChangelog')}</div>
         {:else}
           {#each changelogEntries as entry, i (entry.version)}
             {#if i > 0}
-              <div class="border-t border-white/[0.04] my-3"></div>
+              <div class="border-t settings-divider my-3"></div>
             {/if}
             <div>
               <div class="flex items-baseline gap-2">

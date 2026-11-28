@@ -120,7 +120,7 @@
   class="py-4 flex flex-wrap items-center justify-between gap-3 border-b border-black/5 dark:border-white/5"
 >
   <div class="min-w-0 flex-1">
-    <div class="text-[13px] opacity-70">{$i18n.t('settings.openwebui.localCertificate')}</div>
+    <div class="settings-label">{$i18n.t('settings.openwebui.localCertificate')}</div>
     {#if certificateMessage}
       <div
         aria-live="polite"
@@ -134,14 +134,14 @@
   </div>
   <button
     type="button"
-    class="text-[12px] opacity-60 hover:opacity-90 px-3 py-1.5 bg-black/[0.04] dark:bg-white/[0.06] rounded-xl disabled:opacity-30"
+    class="settings-button transition"
     disabled={removingCertificate}
     onclick={removeCertificate}>{$i18n.t('settings.openwebui.removeCertificate')}</button
   >
 </div>
 
 {#if !loaded}
-  <div class="py-6 text-[12px] opacity-20 text-center">{$i18n.t('common.loading')}</div>
+  <div class="settings-loading">{$i18n.t('common.loading')}</div>
 {:else if !installed}
   <div class="py-4 flex items-center justify-between">
     <div>
@@ -151,7 +151,7 @@
       </div>
     </div>
     <button
-      class="text-[12px] opacity-40 hover:opacity-70 px-3 py-1.5 bg-black/[0.04] dark:bg-white/[0.06] transition border-none text-[#1d1d1f] dark:text-[#fafafa] rounded-xl flex items-center gap-1.5 {installing
+      class="settings-button transition flex items-center gap-1.5 {installing
         ? 'pointer-events-none opacity-20'
         : ''}"
       disabled={installing}
@@ -185,13 +185,13 @@
     <div class="pb-4 text-[11px] text-red-500/80 leading-relaxed">{errorMessage}</div>
   {/if}
 {:else}
-  <div class="flex flex-col divide-y divide-white/[0.04]">
+  <div class="settings-sections">
     <!-- Server status & controls -->
     <div class="py-4">
       <div class="flex items-center justify-between mb-3">
         <div>
-          <div class="text-[13px] opacity-70">{$i18n.t('settings.openwebui.server')}</div>
-          <div class="text-[11px] opacity-25 mt-0.5">
+          <div class="settings-label">{$i18n.t('settings.openwebui.server')}</div>
+          <div class="settings-description mt-0.5">
             {#if version}v{version} ·
             {/if}{$i18n.t('settings.openwebui.localInstance')}
           </div>
@@ -215,7 +215,7 @@
       <div class="flex items-center gap-2">
         {#if isRunning}
           <button
-            class="text-[12px] opacity-40 hover:opacity-70 px-3 py-1.5 bg-black/[0.04] dark:bg-white/[0.06] transition border-none text-[#1d1d1f] dark:text-[#fafafa] rounded-xl flex items-center gap-1.5 {stopping
+            class="settings-button transition flex items-center gap-1.5 {stopping
               ? 'pointer-events-none opacity-20'
               : ''}"
             disabled={stopping}
@@ -244,7 +244,7 @@
             {/if}
           </button>
           <button
-            class="text-[12px] opacity-40 hover:opacity-70 px-3 py-1.5 bg-black/[0.04] dark:bg-white/[0.06] transition border-none text-[#1d1d1f] dark:text-[#fafafa] rounded-xl flex items-center gap-1.5 {restarting
+            class="settings-button transition flex items-center gap-1.5 {restarting
               ? 'pointer-events-none opacity-20'
               : ''}"
             disabled={restarting}
@@ -274,7 +274,7 @@
           </button>
         {:else}
           <button
-            class="text-[12px] opacity-40 hover:opacity-70 px-3 py-1.5 bg-black/[0.04] dark:bg-white/[0.06] transition border-none text-[#1d1d1f] dark:text-[#fafafa] rounded-xl flex items-center gap-1.5 {starting
+            class="settings-button transition flex items-center gap-1.5 {starting
               ? 'pointer-events-none opacity-20'
               : ''}"
             disabled={starting}
@@ -305,7 +305,7 @@
         {/if}
 
         <button
-          class="text-[12px] opacity-40 hover:opacity-70 px-3 py-1.5 bg-black/[0.04] dark:bg-white/[0.06] transition border-none text-[#1d1d1f] dark:text-[#fafafa] rounded-xl flex items-center gap-1.5 {updating
+          class="settings-button transition flex items-center gap-1.5 {updating
             ? 'pointer-events-none opacity-20'
             : ''}"
           disabled={updating}
@@ -342,7 +342,7 @@
     <!-- Running Instance Info -->
     {#if isRunning}
       <div class="py-4">
-        <div class="text-[13px] opacity-70 mb-3">
+        <div class="settings-label mb-3">
           {$i18n.t('settings.openwebui.runningInstance')}
         </div>
         <div class="flex flex-col gap-2">
@@ -366,8 +366,8 @@
 
     <div class="py-4 flex items-center justify-between">
       <div>
-        <div class="text-[13px] opacity-70">{$i18n.t('settings.openwebui.startOnLaunch')}</div>
-        <div class="text-[11px] opacity-25 mt-0.5">
+        <div class="settings-label">{$i18n.t('settings.openwebui.startOnLaunch')}</div>
+        <div class="settings-description mt-0.5">
           {$i18n.t('settings.openwebui.startOnLaunchDesc')}
         </div>
       </div>
@@ -380,14 +380,14 @@
 
     <div class="py-4 flex items-center justify-between">
       <div>
-        <div class="text-[13px] opacity-70">{$i18n.t('settings.openwebui.serverPort')}</div>
-        <div class="text-[11px] opacity-25 mt-0.5">
+        <div class="settings-label">{$i18n.t('settings.openwebui.serverPort')}</div>
+        <div class="settings-description mt-0.5">
           {$i18n.t('settings.openwebui.serverPortDesc')}
         </div>
       </div>
       <input
         type="number"
-        class="bg-black/[0.04] dark:bg-white/[0.06] text-[12px] text-[#1d1d1f] dark:text-[#fafafa] px-3 py-1.5 border-none outline-none rounded-xl opacity-60 w-20 text-right"
+        class="settings-field w-20 text-right"
         value={$config?.localServer?.port ?? 8081}
         onchange={(e) =>
           updateConfig('port', parseInt((e.target as HTMLInputElement).value) || 8081)}
@@ -396,10 +396,10 @@
 
     <div class="py-4 flex items-center justify-between">
       <div>
-        <div class="text-[13px] opacity-70">
+        <div class="settings-label">
           {$i18n.t('settings.openwebui.serveOnLocalNetwork')}
         </div>
-        <div class="text-[11px] opacity-25 mt-0.5">
+        <div class="settings-description mt-0.5">
           {$i18n.t('settings.openwebui.serveOnLocalNetworkDesc')}
         </div>
       </div>
@@ -412,10 +412,10 @@
 
     <div class="py-4 flex items-center justify-between">
       <div>
-        <div class="text-[13px] opacity-70">
+        <div class="settings-label">
           {$i18n.t('settings.openwebui.secureLanVoiceAccess')}
         </div>
-        <div class="text-[11px] opacity-25 mt-0.5">
+        <div class="settings-description mt-0.5">
           {$i18n.t('settings.openwebui.secureLanVoiceAccessDesc')}
         </div>
       </div>
@@ -429,12 +429,12 @@
     <!-- Version Pin -->
     <div class="py-4 flex items-center justify-between">
       <div>
-        <div class="text-[13px] opacity-70">{$i18n.t('settings.openwebui.version')}</div>
-        <div class="text-[11px] opacity-25 mt-0.5">{$i18n.t('settings.openwebui.versionDesc')}</div>
+        <div class="settings-label">{$i18n.t('settings.openwebui.version')}</div>
+        <div class="settings-description mt-0.5">{$i18n.t('settings.openwebui.versionDesc')}</div>
       </div>
       <input
         type="text"
-        class="bg-black/[0.04] dark:bg-white/[0.06] text-[12px] text-[#1d1d1f] dark:text-[#fafafa] px-3 py-1.5 border-none outline-none rounded-xl opacity-60 w-28 text-right font-mono"
+        class="settings-field w-28 text-right font-mono"
         placeholder="3.8.7/latest"
         value={$config?.localServer?.version ?? ''}
         onchange={(e) => updateConfig('version', (e.target as HTMLInputElement).value.trim())}
@@ -443,15 +443,15 @@
 
     <div class="py-4 flex items-center justify-between gap-4">
       <div class="shrink-0">
-        <div class="text-[13px] opacity-70">{$i18n.t('settings.openwebui.dataLocation')}</div>
-        <div class="text-[11px] opacity-25 mt-0.5">
+        <div class="settings-label">{$i18n.t('settings.openwebui.dataLocation')}</div>
+        <div class="settings-description mt-0.5">
           {$i18n.t('settings.openwebui.dataLocationDesc')}
         </div>
       </div>
       <div class="flex items-center gap-1.5 min-w-0 flex-1 max-w-[280px] justify-end">
         <input
           type="text"
-          class="bg-black/[0.04] dark:bg-white/[0.06] text-[12px] text-[#1d1d1f] dark:text-[#fafafa] px-3 py-1.5 border-none outline-none rounded-xl opacity-60 min-w-0 flex-1 text-right font-mono"
+          class="settings-field min-w-0 flex-1 text-right font-mono"
           placeholder={defaultDataPath || 'Default'}
           value={$config?.dataDir ?? ''}
           onchange={async (e) => {
@@ -461,7 +461,7 @@
           }}
         />
         <button
-          class="shrink-0 text-[12px] opacity-40 hover:opacity-70 px-2.5 py-1.5 bg-black/[0.04] dark:bg-white/[0.06] transition border-none text-[#1d1d1f] dark:text-[#fafafa] rounded-xl"
+          class="shrink-0 settings-button transition"
           onclick={async () => {
             const folder = await window.electronAPI.selectFolder()
             if (folder) {
@@ -478,13 +478,13 @@
     <!-- Uninstall -->
     <div class="py-4 flex items-center justify-between">
       <div>
-        <div class="text-[13px] opacity-70">{$i18n.t('settings.openwebui.uninstall')}</div>
-        <div class="text-[11px] opacity-25 mt-0.5">
+        <div class="settings-label">{$i18n.t('settings.openwebui.uninstall')}</div>
+        <div class="settings-description mt-0.5">
           {$i18n.t('settings.openwebui.uninstallDesc')}
         </div>
       </div>
       <button
-        class="text-[12px] opacity-40 hover:opacity-70 px-3 py-1.5 bg-black/[0.04] dark:bg-white/[0.06] transition border-none text-[#1d1d1f] dark:text-[#fafafa] rounded-xl flex items-center gap-1.5 {uninstalling
+        class="settings-button transition flex items-center gap-1.5 {uninstalling
           ? 'pointer-events-none opacity-20'
           : ''}"
         disabled={uninstalling}

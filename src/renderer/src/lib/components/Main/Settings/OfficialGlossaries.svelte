@@ -135,22 +135,22 @@
 </script>
 
 {#if !loaded}
-  <div class="py-6 text-[12px] opacity-20 text-center">{$i18n.t('common.loading')}</div>
+  <div class="settings-loading">{$i18n.t('common.loading')}</div>
 {:else}
-  <div class="flex flex-col divide-y divide-black/[0.04] dark:divide-white/[0.04]">
+  <div class="settings-sections">
     {#if !startup}
       <div class="py-4">
         <div class="flex items-center justify-between gap-4">
           <div>
             <div class="flex items-center gap-2">
-              <div class="text-[13px] opacity-70">{$i18n.t('settings.glossaries.package')}</div>
+              <div class="settings-label">{$i18n.t('settings.glossaries.package')}</div>
               <span
                 class="rounded-[4px] bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium text-amber-700 dark:bg-amber-400/10 dark:text-amber-300/80"
               >
                 {$i18n.t('settings.glossaries.betaBadge')}
               </span>
             </div>
-            <div class="text-[11px] opacity-25 mt-0.5">
+            <div class="settings-description mt-0.5">
               {$i18n.t('settings.glossaries.packageDesc')}
             </div>
           </div>
@@ -201,9 +201,9 @@
           id={accessCodeId}
           type="password"
           autocomplete="off"
-          class="flex-1 min-w-0 bg-black/[0.04] dark:bg-white/[0.06] {startup
-            ? 'text-[13px]'
-            : 'text-[12px]'} text-[#1d1d1f] dark:text-[#fafafa] px-3 py-2 border-none outline-none rounded-lg opacity-70"
+          class="flex-1 min-w-0 {startup
+            ? 'bg-black/[0.04] text-[13px] text-[#1d1d1f] dark:bg-white/[0.06] dark:text-[#fafafa] px-3 py-2 border-none outline-none rounded-lg opacity-70'
+            : 'settings-field'}"
           placeholder={$i18n.t('settings.glossaries.passwordPlaceholder')}
           bind:value={accessCode}
           onkeydown={(event) => {
@@ -211,9 +211,9 @@
           }}
         />
         <button
-          class="shrink-0 {startup
-            ? 'text-[13px]'
-            : 'text-[12px]'} opacity-50 hover:opacity-80 px-3 py-2 bg-black/[0.05] dark:bg-white/[0.07] transition border-none text-[#1d1d1f] dark:text-[#fafafa] rounded-lg flex items-center gap-1.5 disabled:pointer-events-none disabled:opacity-20"
+          class="shrink-0 flex items-center gap-1.5 transition {startup
+            ? 'text-[13px] opacity-50 hover:opacity-80 px-3 py-2 bg-black/[0.05] dark:bg-white/[0.07] border-none text-[#1d1d1f] dark:text-[#fafafa] rounded-lg disabled:pointer-events-none disabled:opacity-20'
+            : 'settings-button'}"
           disabled={working || !accessCode.trim()}
           onclick={installOrUpdate}
         >
@@ -275,16 +275,12 @@
     {#if status.installed}
       <div class="py-4 flex items-center justify-between gap-4">
         <div>
-          <div class="text-[13px] opacity-70">{$i18n.t('settings.glossaries.uninstall')}</div>
-          <div class="text-[11px] opacity-25 mt-0.5">
+          <div class="settings-label">{$i18n.t('settings.glossaries.uninstall')}</div>
+          <div class="settings-description mt-0.5">
             {$i18n.t('settings.glossaries.uninstallDesc')}
           </div>
         </div>
-        <button
-          class="text-[12px] opacity-40 hover:opacity-70 px-3 py-1.5 bg-black/[0.04] dark:bg-white/[0.06] transition border-none text-[#1d1d1f] dark:text-[#fafafa] rounded-lg disabled:pointer-events-none disabled:opacity-20"
-          disabled={removing}
-          onclick={uninstall}
-        >
+        <button class="settings-button transition" disabled={removing} onclick={uninstall}>
           {removing ? $i18n.t('common.uninstalling') : $i18n.t('settings.glossaries.uninstall')}
         </button>
       </div>

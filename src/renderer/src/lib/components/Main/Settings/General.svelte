@@ -1,9 +1,9 @@
 <script lang="ts">
-  import type * as Electron from 'electron'
   import { onMount } from 'svelte'
   import { connections, config } from '../../../stores'
   import i18n, { getLanguages, changeLanguage } from '../../../i18n'
   import { getErrorMessage } from '../../../utils/errors'
+  import { normalizeDesktopTheme, type DesktopTheme } from '../../../../../../shared/desktop-theme'
   import Switch from '../../common/Switch.svelte'
   import UnsupportedInstallPathDialog from '../../Setup/UnsupportedInstallPathDialog.svelte'
 
@@ -11,7 +11,7 @@
   let runInBackground = $state(true)
   let resetting = $state(false)
   let resetError = $state('')
-  let theme = $state<string>('system')
+  const theme = $derived(normalizeDesktopTheme($config?.theme))
   let advancedOpen = $state(false)
   let installDirPath = $state('')
   let defaultInstallDir = $state('')
@@ -32,8 +32,6 @@
     runInBackground = cfg?.runInBackground ?? true
     const vars = cfg?.envVars ?? {}
     envEntries = Object.entries(vars).map(([key, value]) => ({ key, value: value as string }))
-    theme = cfg?.theme ?? 'system'
-    applyThemeClass(theme)
 
     // Load install dir
     defaultInstallDir = await window.electronAPI.getDefaultInstallDir()
@@ -45,31 +43,13 @@
     selectedLanguage = cfg?.language ?? localStorage.getItem('locale') ?? 'en-US'
   })
 
-  const applyThemeClass = (t: string) => {
-    let resolved = t
-    if (t === 'system') {
-      resolved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-    }
-    document.documentElement.classList.remove('light', 'dark')
-    document.documentElement.classList.add(resolved)
-  }
-
-  const applyTheme = async (newTheme: string) => {
-    theme = newTheme
-    applyThemeClass(newTheme)
-    await window.electronAPI.setConfig({ theme: newTheme })
-    config.set(await window.electronAPI.getConfig())
-
-    // Push theme to all active AuraPro webviews
-    const container = document.querySelector('.content-webview-container')
-    if (container) {
-      container.querySelectorAll<Electron.WebviewTag>('webview').forEach((wv) => {
-        try {
-          wv.send('desktop:event', { type: 'theme:update', data: { theme: newTheme } })
-        } catch {
-          // webview may not be ready yet
-        }
-      })
+  const applyTheme = async (newTheme: DesktopTheme) => {
+    if (theme === newTheme) return
+    try {
+      await window.electronAPI.setConfig({ theme: newTheme })
+      config.set(await window.electronAPI.getConfig())
+    } catch (error) {
+      console.warn('Failed to save the desktop theme:', error)
     }
   }
 
@@ -406,14 +386,14 @@
   }
 </script>
 
-<div class="flex flex-col divide-y divide-white/[0.04]">
+<div class="settings-sections">
   <div class="py-4 flex items-center justify-between">
     <div>
-      <div class="text-[13px] opacity-70">{$i18n.t('settings.general.language')}</div>
-      <div class="text-[11px] opacity-25 mt-0.5">{$i18n.t('settings.general.languageDesc')}</div>
+      <div class="settings-label">{$i18n.t('settings.general.language')}</div>
+      <div class="settings-description mt-0.5">{$i18n.t('settings.general.languageDesc')}</div>
     </div>
     <select
-      class="bg-black/[0.04] dark:bg-white/[0.06] text-[12px] text-[#1d1d1f] dark:text-[#fafafa] px-3 py-1.5 border-none outline-none rounded-xl opacity-60"
+      class="settings-field"
       onchange={async (e) => {
         const lang = (e.target as HTMLSelectElement).value
         selectedLanguage = lang
@@ -431,8 +411,8 @@
 
   <div class="py-4 flex items-center justify-between">
     <div>
-      <div class="text-[13px] opacity-70">{$i18n.t('settings.general.appearance')}</div>
-      <div class="text-[11px] opacity-25 mt-0.5">{$i18n.t('settings.general.appearanceDesc')}</div>
+      <div class="settings-label">{$i18n.t('settings.general.appearance')}</div>
+      <div class="settings-description mt-0.5">{$i18n.t('settings.general.appearanceDesc')}</div>
     </div>
     <div
       class="grid grid-cols-3 items-center gap-0.5 rounded-2xl bg-black/[0.04] dark:bg-white/[0.06] p-1 text-[11px]"
@@ -443,6 +423,7 @@
           ? 'bg-black/[0.08] dark:bg-white/[0.12] text-[#1d1d1f] dark:text-[#fafafa]'
           : 'bg-transparent text-[#1d1d1f] dark:text-[#fafafa] opacity-40 hover:opacity-70'}"
         onclick={() => applyTheme('system')}
+        aria-pressed={theme === 'system'}
       >
         {$i18n.t('common.auto')}
       </button>
@@ -453,6 +434,7 @@
           : 'bg-transparent text-[#1d1d1f] dark:text-[#fafafa] opacity-40 hover:opacity-70'}"
         onclick={() => applyTheme('light')}
         aria-label={$i18n.t('settings.general.light')}
+        aria-pressed={theme === 'light'}
       >
         <svg
           class="w-3.5 h-3.5"
@@ -475,6 +457,7 @@
           : 'bg-transparent text-[#1d1d1f] dark:text-[#fafafa] opacity-40 hover:opacity-70'}"
         onclick={() => applyTheme('dark')}
         aria-label={$i18n.t('settings.general.dark')}
+        aria-pressed={theme === 'dark'}
       >
         <svg
           class="w-3.5 h-3.5"
@@ -495,13 +478,13 @@
 
   <div class="py-4 flex items-center justify-between">
     <div>
-      <div class="text-[13px] opacity-70">{$i18n.t('settings.general.defaultConnection')}</div>
-      <div class="text-[11px] opacity-25 mt-0.5">
+      <div class="settings-label">{$i18n.t('settings.general.defaultConnection')}</div>
+      <div class="settings-description mt-0.5">
         {$i18n.t('settings.general.defaultConnectionDesc')}
       </div>
     </div>
     <select
-      class="bg-black/[0.04] dark:bg-white/[0.06] text-[12px] text-[#1d1d1f] dark:text-[#fafafa] px-3 py-1.5 border-none outline-none rounded-xl opacity-60"
+      class="settings-field"
       onchange={(e) => setDefault((e.target as HTMLSelectElement).value)}
     >
       <option value="">{$i18n.t('common.none')}</option>
@@ -515,8 +498,8 @@
 
   <div class="py-4 flex items-center justify-between">
     <div>
-      <div class="text-[13px] opacity-70">{$i18n.t('settings.general.launchAtLogin')}</div>
-      <div class="text-[11px] opacity-25 mt-0.5">
+      <div class="settings-label">{$i18n.t('settings.general.launchAtLogin')}</div>
+      <div class="settings-description mt-0.5">
         {$i18n.t('settings.general.launchAtLoginDesc')}
       </div>
     </div>
@@ -532,8 +515,8 @@
 
   <div class="py-4 flex items-center justify-between">
     <div>
-      <div class="text-[13px] opacity-70">{$i18n.t('settings.general.runInBackground')}</div>
-      <div class="text-[11px] opacity-25 mt-0.5">
+      <div class="settings-label">{$i18n.t('settings.general.runInBackground')}</div>
+      <div class="settings-description mt-0.5">
         {$i18n.t('settings.general.runInBackgroundDesc')}
       </div>
     </div>
@@ -550,8 +533,8 @@
 
   <div class="py-4 flex items-center justify-between">
     <div>
-      <div class="text-[13px] opacity-70">{$i18n.t('settings.general.globalShortcut')}</div>
-      <div class="text-[11px] opacity-25 mt-0.5">
+      <div class="settings-label">{$i18n.t('settings.general.globalShortcut')}</div>
+      <div class="settings-description mt-0.5">
         {#if recording}
           {$i18n.t('settings.general.globalShortcutRecording')}
         {:else}
@@ -611,8 +594,8 @@
 
   <div class="py-4 flex items-center justify-between">
     <div>
-      <div class="text-[13px] opacity-70">{$i18n.t('settings.general.spotlightShortcut')}</div>
-      <div class="text-[11px] opacity-25 mt-0.5">
+      <div class="settings-label">{$i18n.t('settings.general.spotlightShortcut')}</div>
+      <div class="settings-description mt-0.5">
         {#if spotlightRecording}
           {$i18n.t('settings.general.globalShortcutRecording')}
         {:else}
@@ -673,12 +656,12 @@
   <div class="py-4 flex items-center justify-between pl-4 opacity-80">
     <div>
       <div class="text-[12px] opacity-70">{$i18n.t('settings.general.shortcutAction')}</div>
-      <div class="text-[11px] opacity-25 mt-0.5">
+      <div class="settings-description mt-0.5">
         {$i18n.t('settings.general.shortcutActionDesc')}
       </div>
     </div>
     <select
-      class="bg-black/[0.04] dark:bg-white/[0.06] text-[11px] text-[#1d1d1f] dark:text-[#fafafa] px-3 py-1.5 border-none outline-none rounded-xl opacity-60"
+      class="settings-field"
       onchange={(e) => saveShortcutAction('spotlight', (e.target as HTMLSelectElement).value)}
     >
       {#each shortcutActions as action (action.id)}
@@ -694,8 +677,8 @@
 
   <div class="py-4 flex items-center justify-between">
     <div>
-      <div class="text-[13px] opacity-70">{$i18n.t('settings.general.clipboardAutoPaste')}</div>
-      <div class="text-[11px] opacity-25 mt-0.5">
+      <div class="settings-label">{$i18n.t('settings.general.clipboardAutoPaste')}</div>
+      <div class="settings-description mt-0.5">
         {$i18n.t('settings.general.clipboardAutoPasteDesc')}
       </div>
     </div>
@@ -712,8 +695,8 @@
 
   <div class="py-4 flex items-center justify-between">
     <div>
-      <div class="text-[13px] opacity-70">{$i18n.t('settings.general.voiceInput')}</div>
-      <div class="text-[11px] opacity-25 mt-0.5">
+      <div class="settings-label">{$i18n.t('settings.general.voiceInput')}</div>
+      <div class="settings-description mt-0.5">
         {$i18n.t('settings.general.voiceInputDesc')}
       </div>
     </div>
@@ -731,8 +714,8 @@
   {#if voiceInputEnabled}
     <div class="py-4 flex items-center justify-between">
       <div>
-        <div class="text-[13px] opacity-70">{$i18n.t('settings.general.voiceInputShortcut')}</div>
-        <div class="text-[11px] opacity-25 mt-0.5">
+        <div class="settings-label">{$i18n.t('settings.general.voiceInputShortcut')}</div>
+        <div class="settings-description mt-0.5">
           {#if voiceInputRecording}
             {$i18n.t('settings.general.globalShortcutRecording')}
           {:else}
@@ -793,12 +776,12 @@
     <div class="py-4 flex items-center justify-between pl-4 opacity-80">
       <div>
         <div class="text-[12px] opacity-70">{$i18n.t('settings.general.shortcutAction')}</div>
-        <div class="text-[11px] opacity-25 mt-0.5">
+        <div class="settings-description mt-0.5">
           {$i18n.t('settings.general.shortcutActionDesc')}
         </div>
       </div>
       <select
-        class="bg-black/[0.04] dark:bg-white/[0.06] text-[11px] text-[#1d1d1f] dark:text-[#fafafa] px-3 py-1.5 border-none outline-none rounded-xl opacity-60"
+        class="settings-field"
         onchange={(e) => saveShortcutAction('voice', (e.target as HTMLSelectElement).value)}
       >
         {#each shortcutActions as action (action.id)}
@@ -815,8 +798,8 @@
 
   <div class="py-4 flex items-center justify-between">
     <div>
-      <div class="text-[13px] opacity-70">{$i18n.t('settings.general.call')}</div>
-      <div class="text-[11px] opacity-25 mt-0.5">
+      <div class="settings-label">{$i18n.t('settings.general.call')}</div>
+      <div class="settings-description mt-0.5">
         {$i18n.t('settings.general.callDesc')}
       </div>
     </div>
@@ -834,8 +817,8 @@
   {#if callEnabled}
     <div class="py-4 flex items-center justify-between">
       <div>
-        <div class="text-[13px] opacity-70">{$i18n.t('settings.general.callShortcut')}</div>
-        <div class="text-[11px] opacity-25 mt-0.5">
+        <div class="settings-label">{$i18n.t('settings.general.callShortcut')}</div>
+        <div class="settings-description mt-0.5">
           {#if callRecording}
             {$i18n.t('settings.general.globalShortcutRecording')}
           {:else}
@@ -896,12 +879,12 @@
     <div class="py-4 flex items-center justify-between pl-4 opacity-80">
       <div>
         <div class="text-[12px] opacity-70">{$i18n.t('settings.general.shortcutAction')}</div>
-        <div class="text-[11px] opacity-25 mt-0.5">
+        <div class="settings-description mt-0.5">
           {$i18n.t('settings.general.shortcutActionDesc')}
         </div>
       </div>
       <select
-        class="bg-black/[0.04] dark:bg-white/[0.06] text-[11px] text-[#1d1d1f] dark:text-[#fafafa] px-3 py-1.5 border-none outline-none rounded-xl opacity-60"
+        class="settings-field"
         onchange={(e) => saveShortcutAction('call', (e.target as HTMLSelectElement).value)}
       >
         {#each shortcutActions as action (action.id)}
@@ -939,12 +922,12 @@
     </button>
 
     {#if advancedOpen}
-      <div class="flex flex-col divide-y divide-white/[0.04] mt-1">
+      <div class="settings-sections mt-1">
         <!-- Install location -->
         <div class="py-4 flex items-center justify-between gap-4">
           <div class="shrink-0">
-            <div class="text-[13px] opacity-70">{$i18n.t('settings.general.installLocation')}</div>
-            <div class="text-[11px] opacity-25 mt-0.5">
+            <div class="settings-label">{$i18n.t('settings.general.installLocation')}</div>
+            <div class="settings-description mt-0.5">
               {$i18n.t('settings.general.installLocationDesc')}
             </div>
             <div class="text-[10px] opacity-15 mt-0.5">
@@ -954,7 +937,7 @@
           <div class="flex items-center gap-1.5 min-w-0 flex-1 max-w-[280px] justify-end">
             <input
               type="text"
-              class="bg-black/[0.04] dark:bg-white/[0.06] text-[12px] text-[#1d1d1f] dark:text-[#fafafa] px-3 py-1.5 border-none outline-none rounded-xl opacity-60 min-w-0 flex-1 text-right font-mono"
+              class="settings-field min-w-0 flex-1 text-right font-mono"
               placeholder={defaultInstallDir || 'Default'}
               value={installDirPath === defaultInstallDir ? '' : installDirPath}
               onchange={async (e) => {
@@ -963,10 +946,7 @@
                 await saveInstallDir(val)
               }}
             />
-            <button
-              class="shrink-0 text-[12px] opacity-40 hover:opacity-70 px-2.5 py-1.5 bg-black/[0.04] dark:bg-white/[0.06] transition border-none text-[#1d1d1f] dark:text-[#fafafa] rounded-xl"
-              onclick={chooseInstallDir}
-            >
+            <button class="shrink-0 settings-button transition" onclick={chooseInstallDir}>
               {$i18n.t('common.browse')}
             </button>
           </div>
@@ -976,10 +956,10 @@
         <div class="py-4">
           <div class="flex items-center justify-between mb-3">
             <div>
-              <div class="text-[13px] opacity-70">
+              <div class="settings-label">
                 {$i18n.t('settings.general.environmentVariables')}
               </div>
-              <div class="text-[11px] opacity-25 mt-0.5">
+              <div class="settings-description mt-0.5">
                 {$i18n.t('settings.general.environmentVariablesDesc')}
               </div>
             </div>
@@ -998,7 +978,7 @@
                   <input
                     type="text"
                     placeholder={$i18n.t('settings.general.keyPlaceholder')}
-                    class="bg-black/[0.04] dark:bg-white/[0.06] text-[12px] text-[#1d1d1f] dark:text-[#fafafa] px-2.5 py-1.5 border-none outline-none rounded-lg opacity-60 flex-1 min-w-0 font-mono"
+                    class="settings-field flex-1 min-w-0 font-mono"
                     value={entry.key}
                     oninput={(e) => {
                       envEntries[i].key = (e.target as HTMLInputElement).value
@@ -1009,7 +989,7 @@
                   <input
                     type="text"
                     placeholder="value"
-                    class="bg-black/[0.04] dark:bg-white/[0.06] text-[12px] text-[#1d1d1f] dark:text-[#fafafa] px-2.5 py-1.5 border-none outline-none rounded-lg opacity-60 flex-[2] min-w-0 font-mono"
+                    class="settings-field flex-[2] min-w-0 font-mono"
                     value={entry.value}
                     oninput={(e) => {
                       envEntries[i].value = (e.target as HTMLInputElement).value
@@ -1046,13 +1026,13 @@
         <div class="py-4">
           <div class="flex items-center justify-between gap-4">
             <div>
-              <div class="text-[13px] opacity-70">{$i18n.t('settings.general.factoryReset')}</div>
-              <div class="text-[11px] opacity-25 mt-0.5">
+              <div class="settings-label">{$i18n.t('settings.general.factoryReset')}</div>
+              <div class="settings-description mt-0.5">
                 {$i18n.t('settings.general.factoryResetDesc')}
               </div>
             </div>
             <button
-              class="shrink-0 text-[12px] opacity-40 hover:opacity-70 px-3 py-1.5 bg-black/[0.04] dark:bg-white/[0.06] transition border-none text-[#1d1d1f] dark:text-[#fafafa] rounded-xl flex items-center gap-1.5 {resetting
+              class="shrink-0 settings-button transition flex items-center gap-1.5 {resetting
                 ? 'pointer-events-none opacity-30'
                 : ''}"
               disabled={resetting}

@@ -277,6 +277,7 @@ test('reports failed local services without treating an unused WebUI or disabled
       SERVER_REACHABLE: false,
       SERVER_PID: null,
       WEBUI_STARTUP_STATE: { phase: 'idle' },
+      LLAMACPP_STARTUP_STATE: { phase: 'idle' },
       webUIStartupEvidence: '',
       webUIInstallationEvidence: '',
       isSherpaStarting: () => false,
@@ -286,6 +287,22 @@ test('reports failed local services without treating an unused WebUI or disabled
       ...overrides
     })
   assert.equal((await diagnostic()()).healthy, true)
+  const archiveError = 'llama.cpp ZIP is in use: llama.zip. Close any program using it and retry.'
+  let receivedError
+  await diagnostic({
+    LLAMACPP_STARTUP_STATE: { phase: 'failed', detail: archiveError },
+    diagnoseLlamaCpp: async (_trigger, error) => {
+      receivedError = error
+      return {
+        healthy: true,
+        fingerprint: 'test',
+        software: { webuiVersion: null, optionalComponents: [] },
+        runtime: { name: 'llama.cpp' },
+        issues: []
+      }
+    }
+  })()
+  assert.equal(receivedError, archiveError)
   const installReport = await diagnostic({ webUIInstallationEvidence: missingMetadata })()
   assert.equal(installReport.issues[0].id, 'service-startup:webui:metadata')
   const report = await diagnostic({

@@ -17,6 +17,14 @@ const pendingReasons = new Set<string>()
 let cleanupTimer: NodeJS.Timeout | null = null
 let cleanupPromise: Promise<void> | null = null
 let pendingLlamaVersion: string | null = null
+let llamaCleanupGeneration = 0
+let llamaVersionCacheQueue: Promise<unknown> = Promise.resolve()
+
+export const withLlamaCppVersionCache = <T>(action: () => Promise<T>): Promise<T> => {
+  const task = llamaVersionCacheQueue.then(action)
+  llamaVersionCacheQueue = task.catch(() => undefined)
+  return task
+}
 
 const runPython = (args: string[], label: string, timeout = 10 * 60 * 1000): Promise<void> =>
   new Promise((resolve) => {
@@ -205,6 +213,7 @@ const runPendingCleanup = async (): Promise<void> => {
   const kinds = new Set(pendingKinds)
   const reasons = [...pendingReasons]
   const llamaVersion = pendingLlamaVersion
+  const llamaGeneration = llamaCleanupGeneration
   pendingKinds.clear()
   pendingReasons.clear()
   if (kinds.has('llamacpp')) pendingLlamaVersion = null
@@ -215,7 +224,11 @@ const runPendingCleanup = async (): Promise<void> => {
     )
     if (kinds.has('huggingface')) await cleanupHuggingFaceCaches()
     if (kinds.has('llamacpp') && llamaVersion) {
-      await cleanupHistoricalLlamaCppVersions(llamaVersion)
+      await withLlamaCppVersionCache(async () => {
+        if (llamaGeneration === llamaCleanupGeneration) {
+          await cleanupHistoricalLlamaCppVersions(llamaVersion)
+        }
+      })
     }
     log.info('[cache-cleanup] Background cleanup finished')
   })()
@@ -244,6 +257,7 @@ export const scheduleLlamaCppVersionCleanup = (
   activeVersion: string,
   reason = 'llamacpp-update'
 ): void => {
+  llamaCleanupGeneration++
   pendingLlamaVersion = activeVersion
   scheduleCacheCleanup(['llamacpp'], reason, 5_000)
 }

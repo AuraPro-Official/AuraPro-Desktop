@@ -92,6 +92,7 @@
     },
     indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.mediumQ3),
     indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.medium),
+    indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.mediumQ6),
     {
       name: 'high_Q4.gguf',
       sizeStr: '~15G',
@@ -402,12 +403,12 @@
           >
             {proMode ? $i18n.t('settings.pro.title') : $i18n.t('main.getStarted.llamaCpp')}
           </div>
-          <div class="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
+          <div class="text-[11px] text-gray-600 dark:text-gray-400 mt-0.5">
             {$i18n.t('main.getStarted.llamaCppHardwareDesc')}
           </div>
         </div>
         {#if proMode}
-          <span class="text-[12px] text-gray-400 dark:text-gray-500"
+          <span class="text-[12px] text-gray-600 dark:text-gray-400"
             >{platform === 'darwin' ? 'llama.cpp' : 'AuraPro-Engine'} · 18882</span
           >
         {:else}
@@ -430,7 +431,7 @@
         <div class="py-3 flex items-center justify-between gap-4">
           <div>
             <div class="text-[13px] font-medium text-gray-700 dark:text-gray-300">RAG 硬件加速</div>
-            <div class="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
+            <div class="text-[11px] text-gray-600 dark:text-gray-400 mt-0.5">
               使用 NVIDIA 显卡加速文档检索。开启后会额外安装 CUDA 版 PyTorch。
             </div>
           </div>
@@ -446,7 +447,7 @@
       <div class="py-3 flex items-center justify-between gap-4">
         <div>
           <div class="text-[13px] font-medium text-gray-700 dark:text-gray-300">sherpa</div>
-          <div class="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
+          <div class="text-[11px] text-gray-600 dark:text-gray-400 mt-0.5">
             {$i18n.t('main.getStarted.sherpaDesc')}
           </div>
         </div>
@@ -591,7 +592,7 @@
         }}
       >
         <svg
-          class="w-2.5 h-2.5 text-gray-400 dark:text-gray-500 transition-transform duration-200 {advancedOpen
+          class="w-2.5 h-2.5 text-gray-600 dark:text-gray-400 transition-transform duration-200 {advancedOpen
             ? 'rotate-90'
             : ''}"
           fill="none"
@@ -601,14 +602,14 @@
         >
           <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
         </svg>
-        <span class="text-[11px] text-gray-400 dark:text-gray-500"
+        <span class="text-[11px] text-gray-600 dark:text-gray-400"
           >{$i18n.t('common.advanced')}</span
         >
       </button>
 
       {#if advancedOpen}
         <div class="mt-3" transition:fade={{ duration: 150 }}>
-          <div class="text-[11px] text-gray-400 dark:text-gray-500 mb-1.5">
+          <div class="text-[11px] text-gray-600 dark:text-gray-400 mb-1.5">
             {$i18n.t('setup.install.installLocation')}
           </div>
           <div class="flex items-center gap-2">
@@ -619,7 +620,7 @@
               {installDir || '…'}
             </div>
             <button
-              class="shrink-0 text-[11px] text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 px-3 py-2 bg-gray-50 dark:bg-gray-900 rounded-xl transition border-none cursor-pointer"
+              class="shrink-0 text-[11px] text-gray-600 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-3 py-2 bg-gray-50 dark:bg-gray-900 rounded-xl transition border-none cursor-pointer"
               onclick={changeInstallDir}
             >
               {$i18n.t('setup.install.changeLocation')}
@@ -646,7 +647,7 @@
           </span>
         </div>
         <div class="mt-1 flex items-center justify-between gap-4">
-          <span class="text-[11px] text-gray-400 dark:text-gray-500">当前安装磁盘剩余空间</span>
+          <span class="text-[11px] text-gray-600 dark:text-gray-400">当前安装磁盘剩余空间</span>
           <span
             class="shrink-0 font-mono text-[12px] {diskFreeBytes !== null &&
             diskFreeBytes >= 0 &&
@@ -661,7 +662,7 @@
                 : `${formatInstallGb(diskFreeBytes)}G`}
           </span>
         </div>
-        <div class="mt-1 text-[10px] leading-relaxed text-gray-400 dark:text-gray-500">
+        <div class="mt-1 text-[10px] leading-relaxed text-gray-600 dark:text-gray-400">
           核心组件 6G · 模型 {selectedModel
             ? selectedModel.proPreset
               ? selectedModel.sizeStr
@@ -682,7 +683,7 @@
         {$i18n.t('main.getStarted.continue')}
       </button>
       <button
-        class="w-full rounded-xl px-4 py-2 text-sm text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition bg-transparent border-none cursor-pointer"
+        class="w-full rounded-xl px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition bg-transparent border-none cursor-pointer"
         onclick={onCancel}
       >
         {$i18n.t('common.cancel')}

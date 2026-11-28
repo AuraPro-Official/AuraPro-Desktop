@@ -1,7 +1,8 @@
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { execFileSync, execSync } from 'child_process'
+import { execFile, execFileSync, execSync } from 'child_process'
+import { promisify } from 'node:util'
 
 import * as tar from 'tar'
 import * as pty from 'node-pty'
@@ -24,7 +25,8 @@ import { getIndexTranslateModel, getIndexTranslateProjector } from './index-tran
 import { ServiceLock, isProcessAlive } from './service-lock'
 import { inferenceCoordinator } from './inference-coordinator'
 import { hasLlamaCppRuntimeAnomaly } from './llamacpp-log-diagnostics'
-import { scheduleLlamaCppVersionCleanup } from './cache-cleanup'
+import { extractWindowsLlamaZip, LlamaArchiveBusyError } from './llamacpp-archive'
+import { scheduleLlamaCppVersionCleanup, withLlamaCppVersionCache } from './cache-cleanup'
 import { normalizeKvCacheType, type KvCacheType } from './llamacpp-settings'
 import {
   isNewerLlamaBuild,
@@ -50,6 +52,7 @@ let logBuffer: string[] = []
 let intentionalStop = false
 type LlamaStartResult = { url: string; pid: number }
 let startPromise: Promise<LlamaStartResult> | null = null
+let updatePromise: Promise<ReturnType<typeof getLlamaCppInfo>> | null = null
 
 const lock = new ServiceLock('llamacpp')
 let binaryPath: string | null = null
@@ -613,10 +616,10 @@ const INSTALL_PENDING_FILENAME = '.aurapro-install-pending'
 
 class CudaRuntimeInstallError extends Error {}
 
-const readInstalledVariant = (versionDir: string): string | null => {
+const readVariantMarker = (versionDir: string, marker = VARIANT_MARKER_FILENAME): string | null => {
   try {
-    const value = fs.readFileSync(path.join(versionDir, VARIANT_MARKER_FILENAME), 'utf8').trim()
-    return normalizeLlamaVariantForPlatform(value, process.platform, process.arch)
+    const value = fs.readFileSync(path.join(versionDir, marker), 'utf8').trim()
+    return value ? normalizeLlamaVariantForPlatform(value, process.platform, process.arch) : null
   } catch {
     return null
   }
@@ -637,7 +640,7 @@ const hasBackendLibrary = (versionDir: string, filename: string): boolean => {
 
 const isCachedVariantCompatible = (versionDir: string, variant: string): boolean => {
   if (fs.existsSync(path.join(versionDir, INSTALL_PENDING_FILENAME))) return false
-  const installedVariant = readInstalledVariant(versionDir)
+  const installedVariant = readVariantMarker(versionDir)
   if (installedVariant) return installedVariant === variant
 
   // Older AuraPro installs did not write a variant marker. Infer their backend
@@ -716,10 +719,10 @@ const downloadAndExtractReleaseAsset = async (
   try {
     if (isZip) {
       if (process.platform === 'win32') {
-        execFileSync('powershell', [
-          '-Command',
-          `Expand-Archive -ErrorAction Stop -Path "${downloadPath}" -DestinationPath "${extractDir}" -Force`
-        ])
+        await extractWindowsLlamaZip(downloadPath, extractDir, {
+          signal,
+          onRetry: () => onStatus?.(`ZIP is in use; retrying extraction of ${asset.name}...`)
+        })
       } else {
         execFileSync('unzip', ['-o', downloadPath, '-d', extractDir])
       }
@@ -727,12 +730,15 @@ const downloadAndExtractReleaseAsset = async (
       await tar.x({ cwd: extractDir, file: downloadPath })
     }
   } catch (error) {
+    signal?.throwIfAborted()
+    if (error instanceof LlamaArchiveBusyError) throw error
     try {
       fs.unlinkSync(downloadPath)
     } catch {}
     throw new Error(`Failed to extract ${asset.name}: ${getErrorMessage(error)}`)
   }
 
+  signal?.throwIfAborted()
   if (!keepArchive) {
     try {
       fs.unlinkSync(downloadPath)
@@ -745,7 +751,8 @@ const ensureBundledCudaRuntime = async (
   mainAsset: LlamaReleaseAsset,
   versionDir: string,
   binary: string,
-  onStatus?: (status: string) => void
+  onStatus?: (status: string) => void,
+  signal?: AbortSignal
 ): Promise<void> => {
   const cudaVersion = getCudaVersionFromAssetName(mainAsset.name)
   if (!cudaVersion) {
@@ -769,7 +776,8 @@ const ensureBundledCudaRuntime = async (
     path.dirname(binary),
     true,
     onStatus,
-    true
+    true,
+    signal
   )
 
   if (!hasBundledCudaRuntime(binary, cudaVersion)) {
@@ -793,7 +801,8 @@ const getMmprojPrefixForModel = (modelName: string): string => {
   if (base.startsWith('lowest_v2')) return 'lowest-v2'
   if (base.startsWith('lowest')) return 'lowest'
   if (base.startsWith('low')) return 'low'
-  if (base === 'medium_q3_v2' || base.startsWith('medium_q4_v2')) return 'medium-v2'
+  if (base === 'medium_q3_v2' || base.startsWith('medium_q4_v2') || base === 'medium_q6_v2')
+    return 'medium-v2'
   if (base === 'high_q4_2') return 'high-2'
   if (base.startsWith('medium_q4')) return 'medium-12b'
   if (base.startsWith('medium_iq2')) return 'medium-26b'
@@ -838,6 +847,7 @@ const AURA_MODEL_FILENAMES = [
   'medium_Q4.gguf',
   'medium_Q3_V2.gguf',
   'medium_Q4_V2.gguf',
+  'medium_Q6_V2.gguf',
   'high_Q4.gguf',
   'high_Q4_2.gguf',
   'high-code_IQ4.gguf',
@@ -1077,11 +1087,14 @@ const writeModelsPreset = async (
   modelsDir: string,
   llamaConfig: LlamaConfig,
   extraArgs: string[] = [],
-  onStatus?: (status: string) => void
+  onStatus?: (status: string) => void,
+  downloadMissing = true
 ): Promise<string> => {
   migrateOfficialRootModels(modelsDir)
-  await ensureAutoMmproj(modelsDir, extraArgs, onStatus)
-  await ensureAutoMtp(modelsDir, extraArgs, onStatus)
+  if (downloadMissing) {
+    await ensureAutoMmproj(modelsDir, extraArgs, onStatus)
+    await ensureAutoMtp(modelsDir, extraArgs, onStatus)
+  }
   const mtpEnabled = llamaConfig.mtpEnabled === true
   const multimodalEnabled = llamaConfig.multimodalEnabled !== false
 
@@ -1265,6 +1278,85 @@ const ensureAutoMtp = async (
   }
 }
 
+const installLlamaRelease = async (
+  release: LlamaRelease,
+  versionDir: string,
+  variant: string,
+  onStatus?: (status: string) => void,
+  signal?: AbortSignal,
+  beforeReplacing?: () => Promise<void>
+): Promise<string> => {
+  fs.mkdirSync(versionDir, { recursive: true })
+  const { patterns, isZip } = getLlamaAssetPatterns(
+    release.tag_name,
+    variant,
+    process.platform,
+    process.arch
+  )
+  const asset = findReleaseAsset(release, variant)
+  if (!asset) {
+    const available = release.assets.map((candidate) => candidate.name).join(', ')
+    throw new Error(
+      `No matching asset found for patterns "${patterns.join('", "')}". Available: ${available}`
+    )
+  }
+
+  const existingBinary = findBinary(versionDir)
+  const resumeExtraction = readVariantMarker(versionDir, INSTALL_PENDING_FILENAME) === variant
+  let resultBinary = resumeExtraction ? null : existingBinary
+  if (!resumeExtraction && existingBinary && !isCachedVariantCompatible(versionDir, variant)) {
+    const installedVariant = readVariantMarker(versionDir) ?? 'legacy/unknown'
+    log.info(`Replacing cached llama.cpp ${installedVariant} build with ${variant}`)
+    await beforeReplacing?.()
+    fs.rmSync(versionDir, { recursive: true, force: true })
+    fs.mkdirSync(versionDir, { recursive: true })
+    resultBinary = null
+  }
+
+  if (!resultBinary) {
+    fs.writeFileSync(path.join(versionDir, INSTALL_PENDING_FILENAME), variant, 'utf8')
+    await downloadAndExtractReleaseAsset(
+      asset,
+      versionDir,
+      versionDir,
+      isZip,
+      onStatus,
+      false,
+      signal
+    )
+    resultBinary = findBinary(versionDir)
+  }
+  if (!resultBinary) {
+    throw new Error(`llama-server binary not found after extraction in ${versionDir}`)
+  }
+  if (process.platform !== 'win32') {
+    try {
+      fs.chmodSync(resultBinary, 0o755)
+    } catch {}
+  }
+
+  // Keep a complete main build if the separate CUDA runtime download is interrupted.
+  writeInstalledVariant(versionDir, variant)
+  fs.rmSync(path.join(versionDir, INSTALL_PENDING_FILENAME), { force: true })
+  if (process.platform === 'win32' && variant.startsWith('cuda-')) {
+    try {
+      await ensureBundledCudaRuntime(
+        release.assets,
+        asset,
+        versionDir,
+        resultBinary,
+        onStatus,
+        signal
+      )
+    } catch (error) {
+      if (error instanceof LlamaArchiveBusyError) throw error
+      throw new CudaRuntimeInstallError(getErrorMessage(error))
+    }
+  }
+  log.info(`llama-server binary ready: ${resultBinary}`)
+  return resultBinary
+}
+
 const setupLlamaCppBinary = async (
   onStatus?: (status: string) => void,
   isolated?: { version: string; variant: string; cacheDir: string; signal?: AbortSignal }
@@ -1322,6 +1414,7 @@ const setupLlamaCppBinary = async (
       )
 
       for (const cachedTag of cachedVersions) {
+        if (llamaConfig.badVersions?.includes(cachedTag)) continue
         const cachedDir = path.join(cacheBase, cachedTag)
         const cachedBinary = findBinary(cachedDir)
         if (cachedBinary && isCachedInstallReady(cachedDir, cachedBinary, variant)) {
@@ -1385,90 +1478,12 @@ const setupLlamaCppBinary = async (
     }
 
     const initialTag = initialReleaseData.tag_name
+    if (version === 'latest' && binaryPath && badVersions.includes(initialTag)) {
+      onStatus?.('Ready')
+      return binaryPath
+    }
     const candidates = llamaReleaseCandidates(initialTag, fallbackVersion, badVersions)
     const failures: string[] = []
-
-    const installRelease = async (releaseData: LlamaRelease): Promise<string> => {
-      const tag = releaseData.tag_name
-      log.info(`llama.cpp release tag: ${tag}`)
-
-      const versionDir = path.join(cacheBase, tag)
-      if (!fs.existsSync(versionDir)) {
-        fs.mkdirSync(versionDir, { recursive: true })
-      }
-
-      const { patterns, isZip } = getLlamaAssetPatterns(
-        tag,
-        variant,
-        process.platform,
-        process.arch
-      )
-      const assets = releaseData.assets
-      const asset = assets.find((candidate) =>
-        patterns.some((pattern) => matchesAssetPattern(candidate.name, pattern))
-      )
-      if (!asset) {
-        const available = assets.map((candidate) => candidate.name).join(', ')
-        throw new Error(
-          `No matching asset found for patterns "${patterns.join('", "')}". Available: ${available}`
-        )
-      }
-
-      const existingBinary = findBinary(versionDir)
-      if (existingBinary && !isCachedVariantCompatible(versionDir, variant)) {
-        const installedVariant = readInstalledVariant(versionDir) ?? 'legacy/unknown'
-        log.info(`Replacing cached llama.cpp ${installedVariant} build with ${variant}`)
-        if (!isolated && (ptyProcess || pid)) await stopLlamaCpp()
-        fs.rmSync(versionDir, { recursive: true, force: true })
-        fs.mkdirSync(versionDir, { recursive: true })
-        if (binaryPath === existingBinary) binaryPath = null
-      }
-
-      let resultBinary = findBinary(versionDir)
-      if (!resultBinary) {
-        fs.writeFileSync(path.join(versionDir, INSTALL_PENDING_FILENAME), variant, 'utf8')
-        await downloadAndExtractReleaseAsset(
-          asset,
-          versionDir,
-          versionDir,
-          isZip,
-          onStatus,
-          false,
-          isolated?.signal
-        )
-        resultBinary = findBinary(versionDir)
-      }
-
-      if (process.platform !== 'win32') {
-        if (resultBinary) {
-          try {
-            fs.chmodSync(resultBinary, 0o755)
-          } catch {}
-        }
-      }
-
-      if (!resultBinary) {
-        throw new Error(`llama-server binary not found after extraction in ${versionDir}`)
-      }
-
-      // Commit the main build before downloading its runtime so an interrupted
-      // runtime download can resume without replacing the main build again.
-      writeInstalledVariant(versionDir, variant)
-      fs.rmSync(path.join(versionDir, INSTALL_PENDING_FILENAME), { force: true })
-
-      if (process.platform === 'win32' && variant.startsWith('cuda-')) {
-        try {
-          await ensureBundledCudaRuntime(assets, asset, versionDir, resultBinary, onStatus)
-        } catch (error) {
-          throw new CudaRuntimeInstallError(getErrorMessage(error))
-        }
-      }
-
-      log.info(`llama-server binary ready: ${resultBinary}`)
-      binaryPath = resultBinary
-      onStatus?.('Ready')
-      return resultBinary
-    }
 
     for (const candidateTag of candidates) {
       isolated?.signal?.throwIfAborted()
@@ -1482,7 +1497,19 @@ const setupLlamaCppBinary = async (
           onStatus?.(`Latest llama.cpp is unavailable, trying ${candidateTag}...`)
         }
 
-        const resultBinary = await installRelease(releaseData)
+        const versionDir = path.join(cacheBase, candidateTag)
+        const resultBinary = await installLlamaRelease(
+          releaseData,
+          versionDir,
+          variant,
+          onStatus,
+          isolated?.signal,
+          async () => {
+            if (!isolated && (ptyProcess || pid)) await stopLlamaCpp()
+            if (binaryPath === findBinary(versionDir)) binaryPath = null
+          }
+        )
+        onStatus?.('Ready')
         if (!isolated && version !== 'latest' && candidateTag !== version) {
           await setConfig({
             llamaCpp: {
@@ -1507,7 +1534,8 @@ const setupLlamaCppBinary = async (
         return resultBinary
       } catch (error) {
         isolated?.signal?.throwIfAborted()
-        if (error instanceof CudaRuntimeInstallError) throw error
+        if (error instanceof CudaRuntimeInstallError || error instanceof LlamaArchiveBusyError)
+          throw error
         const message = describeGithubError(error)
         failures.push(`${candidateTag}: ${message}`)
         log.warn(`Failed to install llama.cpp ${candidateTag}, trying previous release:`, error)
@@ -1639,10 +1667,20 @@ export const checkLlamaCppUpdate = async (): Promise<{
 export const updateLlamaCpp = async (
   onStatus?: (status: string) => void
 ): Promise<ReturnType<typeof getLlamaCppInfo>> => {
+  if (updatePromise) return updatePromise
+  updatePromise = performLlamaCppUpdate(onStatus).finally(() => {
+    updatePromise = null
+  })
+  return updatePromise
+}
+
+const performLlamaCppUpdate = async (
+  onStatus?: (status: string) => void
+): Promise<ReturnType<typeof getLlamaCppInfo>> => {
   onStatus?.('Checking for updates...')
   const config = await getConfig()
-  const originalVersion = config.llamaCpp?.version || 'latest'
   const variant = resolveVariant(config.llamaCpp?.variant)
+  const installDir = getInstallDir()
   let latestRelease: LlamaRelease
   try {
     latestRelease = await fetchLatestLlamaRelease(variant, true)
@@ -1653,48 +1691,137 @@ export const updateLlamaCpp = async (
     )
   }
 
-  const currentInfo = getLlamaCppInfo()
-  if (currentInfo.version && !isNewerLlamaBuild(currentInfo.version, latestRelease.tag_name)) {
+  const tag = latestRelease.tag_name
+  const installed = getLlamaCppInfo()
+  if (installed.version && !isNewerLlamaBuild(installed.version, tag)) {
     onStatus?.('Already up to date')
-    scheduleLlamaCppVersionCleanup(currentInfo.version)
-    return currentInfo
+    return installed
+  }
+  if (inferenceCoordinator.current === 'pro') {
+    throw new Error('Stop the Pro runtime before switching to the updated llama.cpp.')
   }
 
-  // Keep the old runtime until the replacement has downloaded and started.
-  // An interrupted or incompatible update can therefore restart the working build.
-  await stopLlamaCpp()
-  await setConfig({ llamaCpp: { ...config.llamaCpp, version: 'latest', badVersions: [] } })
-
+  // Staged files are outside the version directories used for ordinary starts and cleanup.
+  const cacheBase = path.join(installDir, 'llama.cpp')
+  const stagingRoot = path.join(cacheBase, 'runtime-cache', 'updates')
+  const stagedDir = path.join(stagingRoot, variant, tag)
+  const preparedBinary = await installLlamaRelease(latestRelease, stagedDir, variant, onStatus)
+  onStatus?.(`Checking llama.cpp ${tag} before switching...`)
   try {
-    onStatus?.(`Downloading llama.cpp ${latestRelease.tag_name}...`)
-    await startLlamaCppWithFallback(onStatus)
+    await promisify(execFile)(preparedBinary, ['--version'], {
+      cwd: path.dirname(preparedBinary),
+      env: { ...process.env, ...(config.envVars ?? {}) },
+      timeout: 15_000,
+      windowsHide: true
+    })
   } catch (error) {
-    if (currentInfo.version) {
-      onStatus?.(`Update failed; restoring llama.cpp ${currentInfo.version}...`)
-      const recoveryConfig = await getConfig()
-      await setConfig({
-        llamaCpp: { ...recoveryConfig.llamaCpp, version: currentInfo.version }
-      })
-      try {
-        await startLlamaCpp(onStatus)
-      } catch (recoveryError) {
-        log.error(`Failed to restart previous llama.cpp ${currentInfo.version}:`, recoveryError)
-      } finally {
-        const restoredConfig = await getConfig()
-        await setConfig({
-          llamaCpp: { ...restoredConfig.llamaCpp, version: originalVersion }
-        })
-      }
+    // An executable that cannot even report its version must not be reused on retry.
+    try {
+      await fs.promises.rm(stagedDir, { recursive: true, force: true })
+    } catch (cleanupError) {
+      log.warn(`Could not remove unusable staged llama.cpp ${tag}:`, cleanupError)
     }
-    throw error
+    throw new Error(`llama.cpp ${tag} did not pass its preflight check: ${getErrorMessage(error)}`)
   }
 
-  const updatedInfo = getLlamaCppInfo()
-  if (updatedInfo.version) {
-    scheduleLlamaCppVersionCleanup(updatedInfo.version)
-  }
+  const result = await inferenceCoordinator.maintain(() =>
+    withLlamaCppVersionCache(async () => {
+      const previous = getLlamaCppInfo()
+      if (previous.version && !isNewerLlamaBuild(previous.version, tag)) {
+        onStatus?.('Already up to date')
+        return previous
+      }
 
-  return updatedInfo
+      const currentConfig = await getConfig()
+      if (
+        installDir !== getInstallDir() ||
+        (installed.pid && !previous.pid && currentConfig.llamaCpp?.enabled === false) ||
+        (currentConfig.llamaCpp?.variant !== config.llamaCpp?.variant &&
+          resolveVariant(currentConfig.llamaCpp?.variant) !== variant)
+      ) {
+        throw new Error(
+          'llama.cpp settings changed while preparing the update. Check for updates again.'
+        )
+      }
+      if (inferenceCoordinator.current === 'pro') {
+        throw new Error('Stop the Pro runtime before switching to the updated llama.cpp.')
+      }
+
+      const wasRunning = previous.status === 'started' && previous.pid && isPidRunning(previous.pid)
+      if (wasRunning && (!previous.binaryPath || !fs.existsSync(previous.binaryPath))) {
+        throw new Error('Cannot update llama.cpp while the current runtime is missing from disk.')
+      }
+      const versionDir = path.join(cacheBase, tag)
+      await fs.promises.rm(versionDir, { recursive: true, force: true })
+      await fs.promises.rename(stagedDir, versionDir)
+      const candidate = path.join(versionDir, path.relative(stagedDir, preparedBinary))
+      const startPrepared = (binary: string) =>
+        inferenceCoordinator.start('standard', () => startManagedLlamaCpp(onStatus, binary))
+
+      onStatus?.(`Switching to llama.cpp ${tag}...`)
+      let candidateStarted = false
+      let oldStopped = false
+      try {
+        await stopLlamaCpp()
+        oldStopped = true
+        await startPrepared(candidate)
+        candidateStarted = true
+        const updatedConfig = await getConfig()
+        await setConfig({
+          llamaCpp: {
+            ...updatedConfig.llamaCpp,
+            variant,
+            version: 'latest',
+            badVersions: (updatedConfig.llamaCpp?.badVersions ?? []).filter(
+              (version) => version !== tag
+            )
+          }
+        })
+      } catch (error) {
+        try {
+          if (oldStopped) await stopLlamaCpp()
+          // Do not advertise a failed update as an installed build on the next retry.
+          await fs.promises.rename(versionDir, stagedDir).catch((moveError) => {
+            log.warn(`Could not move llama.cpp ${tag} back to staging:`, moveError)
+          })
+          binaryPath = previous.binaryPath
+          if (oldStopped && wasRunning && previous.binaryPath) {
+            onStatus?.(`Update failed; restoring llama.cpp ${previous.version}...`)
+            await startPrepared(previous.binaryPath)
+          } else if (oldStopped) {
+            status = 'failed'
+          }
+        } catch (recoveryError) {
+          status = 'failed'
+          log.error(`Failed to restore previous llama.cpp ${previous.version}:`, recoveryError)
+          throw new Error(
+            `llama.cpp ${tag} update failed: ${getErrorMessage(error)}. ` +
+              `Recovery also failed: ${getErrorMessage(recoveryError)}`
+          )
+        } finally {
+          if (!candidateStarted && error instanceof LlamaStartError && error.canFallback) {
+            await markVersionBad(tag).catch((markError) => {
+              log.warn(`Could not mark llama.cpp ${tag} as failed:`, markError)
+            })
+          }
+        }
+        const result = getLlamaCppInfo()
+        throw new Error(
+          `llama.cpp ${tag} update failed: ${getErrorMessage(error)}` +
+            (wasRunning && result.status === 'started' ? `. Restored ${result.version}.` : '')
+        )
+      }
+
+      scheduleLlamaCppVersionCleanup(tag)
+      return getLlamaCppInfo()
+    })
+  )
+  try {
+    await fs.promises.rm(stagingRoot, { recursive: true, force: true })
+  } catch (error) {
+    log.warn('Could not clean up staged llama.cpp updates:', error)
+  }
+  return result
 }
 
 export const reinstallLlamaCpp = async (onStatus?: (status: string) => void): Promise<string> => {
@@ -1763,14 +1890,16 @@ class LlamaStartError extends Error {
 }
 
 const startLlamaCppAttempt = async (
-  onStatus?: (status: string) => void
+  onStatus?: (status: string) => void,
+  preparedBinary?: string
 ): Promise<LlamaStartResult> => {
   await stopLlamaCpp({ preserveLock: true })
 
   status = 'setting-up'
   onStatus?.('Setting up llama.cpp...')
 
-  const binary = await setupLlamaCpp(onStatus)
+  const binary = preparedBinary ?? (await setupLlamaCpp(onStatus))
+  binaryPath = binary
 
   status = 'starting'
   onStatus?.('Starting llama-server...')
@@ -1810,7 +1939,7 @@ const startLlamaCppAttempt = async (
   const explicitModelsPreset = hasExplicitArg(extraArgs, '--models-preset')
   const modelsPreset = explicitModelsPreset
     ? null
-    : await writeModelsPreset(modelsDir, llamaConfig, extraArgs, onStatus)
+    : await writeModelsPreset(modelsDir, llamaConfig, extraArgs, onStatus, !preparedBinary)
   const commandArgs = [
     '--host',
     host,
@@ -1841,7 +1970,10 @@ const startLlamaCppAttempt = async (
     })
   } catch (error) {
     status = 'failed'
-    throw new Error(`Failed to spawn llama-server: ${getErrorMessage(error)}`)
+    throw new LlamaStartError(
+      `Failed to spawn llama-server: ${getErrorMessage(error)}`,
+      Boolean(preparedBinary)
+    )
   }
 
   let earlyExitReject: (err: LlamaStartError) => void
@@ -1861,7 +1993,11 @@ const startLlamaCppAttempt = async (
     log.info(`[llamacpp:${spawnedPid}] ${data.replace(/[\r\n]+/g, ' ').trim()}`)
     runtimeAnomalyTail = `${runtimeAnomalyTail}${data}`.slice(-8000)
 
-    if (!runtimeAnomalyReported && hasLlamaCppRuntimeAnomaly(runtimeAnomalyTail)) {
+    if (
+      (!preparedBinary || status === 'started') &&
+      !runtimeAnomalyReported &&
+      hasLlamaCppRuntimeAnomaly(runtimeAnomalyTail)
+    ) {
       runtimeAnomalyReported = true
       const message = runtimeAnomalyTail
         .replace(/[\r\n]+/g, ' ')
@@ -1882,6 +2018,7 @@ const startLlamaCppAttempt = async (
     }
 
     const exitMsg = `\r\n[Process exited with code ${exitCode}${signal ? ` signal ${signal}` : ''}]\r\n`
+    const shouldReportAnomaly = !preparedBinary || status === 'started'
     logBuffer.push(exitMsg)
     ptyProcess = null
     pid = null
@@ -1893,7 +2030,7 @@ const startLlamaCppAttempt = async (
     if (!intentionalStop) {
       const error = `llama-server exited early (code=${exitCode}${signal ? ` signal=${signal}` : ''})`
       log.info(error)
-      if (!runtimeAnomalyReported) {
+      if (shouldReportAnomaly && !runtimeAnomalyReported) {
         runtimeAnomalyReported = true
         setTimeout(() => runtimeAnomalyHandler?.(error), 0)
       }
@@ -1903,14 +2040,18 @@ const startLlamaCppAttempt = async (
 
   const serverUrl = `http://${host}:${availablePort}`
   const startupTimeoutMs = llamaConfig.mtpEnabled === true ? 180000 : 60000
+  const healthCheck = new AbortController()
 
   const healthCheckPromise = (async (): Promise<boolean> => {
     const deadline = Date.now() + startupTimeoutMs
     let lastStatusUpdate = 0
-    while (Date.now() < deadline) {
+    while (!healthCheck.signal.aborted && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 1000))
+      if (healthCheck.signal.aborted) return false
       try {
-        const resp = await fetch(`${serverUrl}/health`, { signal: AbortSignal.timeout(2000) })
+        const resp = await fetch(`${serverUrl}/health`, {
+          signal: AbortSignal.any([healthCheck.signal, AbortSignal.timeout(2000)])
+        })
         if (resp.ok) {
           const body = await resp.json()
           if (body.status === 'ok' || body.status === 'no slot available') {
@@ -1920,6 +2061,7 @@ const startLlamaCppAttempt = async (
       } catch {
         // Not ready yet
       }
+      if (healthCheck.signal.aborted) return false
       const elapsed = Date.now() - (deadline - startupTimeoutMs)
       if (elapsed - lastStatusUpdate >= 15000) {
         const seconds = Math.round(elapsed / 1000)
@@ -1943,6 +2085,8 @@ const startLlamaCppAttempt = async (
       spawned.kill()
     } catch {}
     throw err
+  } finally {
+    healthCheck.abort()
   }
 
   if (!ready) {
@@ -1975,7 +2119,8 @@ export const startLlamaCpp = async (
   inferenceCoordinator.start('standard', () => startManagedLlamaCpp(onStatus))
 
 const startManagedLlamaCpp = async (
-  onStatus?: (status: string) => void
+  onStatus?: (status: string) => void,
+  preparedBinary?: string
 ): Promise<LlamaStartResult> => {
   if (startPromise) {
     log.info('llama.cpp startup already in progress; reusing the active startup task')
@@ -1990,7 +2135,7 @@ const startManagedLlamaCpp = async (
     throw new Error('llama.cpp is already starting')
   }
 
-  const attempt = startLlamaCppAttempt(onStatus)
+  const attempt = startLlamaCppAttempt(onStatus, preparedBinary)
   startPromise = attempt
   try {
     return await attempt

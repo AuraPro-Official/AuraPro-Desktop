@@ -7,7 +7,6 @@ export {
   getOpenCodeInfo,
   isOpenCodeInstalled,
   getInstalledOpenCodeVersion,
-  getOpenCodeServiceState,
   validateOpenCodeProcess,
   getOpenCodeLog,
   setOpenCodeRuntimeStatusHandler,

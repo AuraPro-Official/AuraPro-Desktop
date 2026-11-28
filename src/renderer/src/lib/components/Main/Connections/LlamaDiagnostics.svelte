@@ -45,6 +45,8 @@
           | 'running'
           | 'responding'
           | 'listening'
+          | 'ready-on-demand'
+          | 'runtime-invalid'
           | 'unverified'
           | 'auth-required'
           | 'failed'
@@ -127,6 +129,14 @@
       running: ['进程运行中 · 未探测接口', 'Process running · API not checked'],
       responding: ['健康接口已响应', 'Health endpoint responding'],
       listening: ['端口可连接 · 未测试终端执行', 'Port reachable · Execution not tested'],
+      'ready-on-demand': [
+        '运行配置已就绪 · 按需启动，未测试任务执行',
+        'Runtime configured · Starts on demand; tasks not tested'
+      ],
+      'runtime-invalid': [
+        'Agent 运行配置无效或文件缺失 · 请在设置中重新启动 Agent',
+        'Agent runtime configuration is invalid or incomplete · Restart Agent in Settings'
+      ],
       unverified: ['暂未确认 · 请稍后重新检测', 'Unconfirmed · Check again later'],
       'auth-required': ['接口认证未通过', 'Endpoint authentication failed'],
       failed: ['服务启动失败或异常退出', 'Service failed to start or exited unexpectedly'],
@@ -180,6 +190,7 @@
       'nvidia-cpu-variant': '检测到 NVIDIA 显卡，建议启用 CUDA',
       'cuda-variant-mismatch': 'CUDA 版本与显卡不匹配',
       'llamacpp-missing': 'llama.cpp 运行库缺失',
+      'llamacpp-archive-in-use': 'llama.cpp 安装包正被占用',
       'cuda-backend-missing': 'CUDA 后端文件不完整',
       'accelerator-backend-missing': '硬件加速后端文件不完整',
       'cuda-runtime-missing': 'CUDA Runtime DLL 不完整',
@@ -205,6 +216,7 @@
   const localizedIssueDetail = (issue: DiagnosticIssue): string => {
     if (baseIssueId(issue.id) === 'service-startup') return startupCopy(issue)[1]
     if (issue.id === 'windows-app-control-blocked') return $i18n.t('diagnostics.appControl.detail')
+    if (issue.id === 'llamacpp-archive-in-use') return $i18n.t('startup.llamacpp.archiveInUse')
     if (!isChinese) return issue.detail
     const details: Record<string, string> = {
       'nvidia-not-found': `当前选择了 CUDA，但系统没有检测到 NVIDIA 显卡。可切换到 ${report?.recommendedVariant ?? 'CPU'}。`,
@@ -452,7 +464,7 @@
         <div class="text-[14px] font-semibold">
           {text('本地推理检测与修复', 'Local inference diagnostics')}
         </div>
-        <div class="mt-0.5 text-[10px] text-black/35 dark:text-white/35">
+        <div class="mt-0.5 text-[10px] text-gray-600 dark:text-gray-400">
           {text('所有检测均在本机完成', 'All checks run locally')}
         </div>
       </div>
@@ -497,7 +509,7 @@
           </div>
 
           <dl class="mt-3 grid grid-cols-[108px_1fr] gap-x-3 gap-y-2 text-[11px]">
-            <dt class="text-black/35 dark:text-white/35">{text('服务状态', 'Service health')}</dt>
+            <dt class="text-gray-600 dark:text-gray-400">{text('服务状态', 'Service health')}</dt>
             <dd class="m-0 text-right text-black/65 dark:text-white/65">
               {report.runtime.health === 'healthy'
                 ? text('正常响应', 'Responding')
@@ -509,70 +521,77 @@
                       ? text('无响应', 'Not responding')
                       : text('未运行', 'Stopped')}
             </dd>
-            <dt class="text-black/35 dark:text-white/35">{text('操作系统', 'Operating system')}</dt>
+            <dt class="text-gray-600 dark:text-gray-400">{text('操作系统', 'Operating system')}</dt>
             <dd
               class="m-0 break-words text-right font-mono text-black/65 dark:text-white/65"
               title={report.system.operatingSystem}
             >
               {report.system.operatingSystem}
             </dd>
-            <dt class="text-black/35 dark:text-white/35">{text('处理器', 'CPU')}</dt>
+            <dt class="text-gray-600 dark:text-gray-400">{text('处理器', 'CPU')}</dt>
             <dd
               class="m-0 break-words text-right text-black/65 dark:text-white/65"
               title={report.system.cpuModel}
             >
               {report.system.cpuModel}
             </dd>
-            <dt class="text-black/35 dark:text-white/35">{text('运行变体', 'Runtime variant')}</dt>
+            <dt class="text-gray-600 dark:text-gray-400">{text('运行变体', 'Runtime variant')}</dt>
             <dd class="m-0 text-right font-mono text-black/65 dark:text-white/65">
               {report.system.operatingSystem.startsWith('macOS') &&
               ['cpu', 'auto'].includes(report.variant)
                 ? 'Metal'
                 : report.variant}
             </dd>
-            <dt class="text-black/35 dark:text-white/35">{text('显卡', 'GPU')}</dt>
+            <dt class="text-gray-600 dark:text-gray-400">{text('显卡', 'GPU')}</dt>
             <dd class="m-0 truncate text-right text-black/65 dark:text-white/65">
               {report.hardware.gpuNames.join(', ') || text('未检测到', 'Not detected')}
             </dd>
-            <dt class="text-black/35 dark:text-white/35">{text('驱动版本', 'Driver')}</dt>
+            <dt class="text-gray-600 dark:text-gray-400">{text('驱动版本', 'Driver')}</dt>
             <dd class="m-0 text-right font-mono text-black/65 dark:text-white/65">
               {report.system.operatingSystem.startsWith('macOS')
                 ? text('随 macOS 提供', 'Included with macOS')
                 : (report.hardware.driverVersion ?? text('未知', 'Unknown'))}
             </dd>
-            <dt class="text-black/35 dark:text-white/35">{text('可用内存', 'Available memory')}</dt>
+            <dt class="text-gray-600 dark:text-gray-400">{text('可用内存', 'Available memory')}</dt>
             <dd class="m-0 text-right font-mono text-black/65 dark:text-white/65">
               {formatMemory(report.hardware.freeRamBytes)} / {formatMemory(
                 report.hardware.totalRamBytes
               )}
             </dd>
             {#if report.hardware.totalVramMb}
-              <dt class="text-black/35 dark:text-white/35">{text('可用显存', 'Available VRAM')}</dt>
+              <dt class="text-gray-600 dark:text-gray-400">
+                {report.hardware.freeVramMb === null
+                  ? text('专用显存', 'Dedicated VRAM')
+                  : text('可用显存', 'Available VRAM')}
+              </dt>
               <dd class="m-0 text-right font-mono text-black/65 dark:text-white/65">
-                {((report.hardware.freeVramMb ?? 0) / 1024).toFixed(1)} /
+                {#if report.hardware.freeVramMb !== null}
+                  {(report.hardware.freeVramMb / 1024).toFixed(1)} /
+                {/if}
                 {(report.hardware.totalVramMb / 1024).toFixed(1)} GB
               </dd>
             {/if}
-            <dt class="text-black/35 dark:text-white/35">{report.runtime.name ?? 'llama.cpp'}</dt>
+            <dt class="text-gray-600 dark:text-gray-400">{report.runtime.name ?? 'llama.cpp'}</dt>
             <dd class="m-0 text-right font-mono text-black/65 dark:text-white/65">
               {report.runtime.version ?? text('未安装', 'Not installed')}
             </dd>
-            <dt class="text-black/35 dark:text-white/35">AuraPro</dt>
+            <dt class="text-gray-600 dark:text-gray-400">AuraPro</dt>
             <dd class="m-0 text-right font-mono text-black/65 dark:text-white/65">
               {report.software.auraProVersion}
             </dd>
-            <dt class="text-black/35 dark:text-white/35">WebUI</dt>
+            <dt class="text-gray-600 dark:text-gray-400">WebUI</dt>
             <dd class="m-0 text-right font-mono text-black/65 dark:text-white/65">
               {report.software.webuiVersion ?? text('未安装', 'Not installed')}
             </dd>
             {#each report.software.optionalComponents as component (component.id)}
-              <dt class="text-black/35 dark:text-white/35">{componentLabel(component.id)}</dt>
+              <dt class="text-gray-600 dark:text-gray-400">{componentLabel(component.id)}</dt>
               <dd class="m-0 text-right font-mono text-black/65 dark:text-white/65">
                 {component.version}
                 {#if component.health}
                   <div
                     class="mt-1 break-words font-sans text-xs leading-relaxed {[
                       'unverified',
+                      'runtime-invalid',
                       'auth-required',
                       'failed',
                       'exited'
@@ -585,7 +604,7 @@
                 {/if}
               </dd>
             {/each}
-            <dt class="text-black/35 dark:text-white/35">{text('本地模型', 'Local models')}</dt>
+            <dt class="text-gray-600 dark:text-gray-400">{text('本地模型', 'Local models')}</dt>
             <dd class="m-0 text-right text-black/65 dark:text-white/65">
               {report.models.total}
               {#if report.models.invalid + report.models.partial > 0}
@@ -595,7 +614,7 @@
                 )}
               {/if}
             </dd>
-            <dt class="text-black/35 dark:text-white/35">{text('附加模型', 'Companion models')}</dt>
+            <dt class="text-gray-600 dark:text-gray-400">{text('附加模型', 'Companion models')}</dt>
             <dd class="m-0 text-right text-black/65 dark:text-white/65">
               {report.models.visionProjectorMissing + report.models.mtpMissing > 0
                 ? text(
@@ -609,7 +628,7 @@
 
         <section>
           {#if report.issues.length === 0}
-            <div class="px-4 py-8 text-center text-[12px] text-black/35 dark:text-white/35">
+            <div class="px-4 py-8 text-center text-[12px] text-gray-600 dark:text-gray-400">
               {text(
                 '未发现需要处理的本机服务或推理问题。',
                 'No local service or inference issues require action.'

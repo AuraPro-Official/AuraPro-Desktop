@@ -228,6 +228,11 @@
 
   const localizeSherpaStatus = (status: string): string => {
     const normalized = status.trim()
+    if (normalized.startsWith('IndicConformer update failed: ')) {
+      return $i18n.t('settings.speech.status.indicFailed', {
+        detail: normalized.slice('IndicConformer update failed: '.length)
+      })
+    }
     const asrProgress = normalized.match(/^Downloading Sherpa ASR (\d+)%\.\.\.$/)
     if (asrProgress) {
       return $i18n.t('settings.speech.status.downloadAsrProgress', { percent: asrProgress[1] })
@@ -244,6 +249,9 @@
     }
 
     const statusKeys: Record<string, string> = {
+      'Updating IndicConformer...': 'settings.speech.status.indicUpdating',
+      'Verifying IndicConformer...': 'settings.speech.status.indicVerifying',
+      'IndicConformer is ready': 'settings.speech.status.indicReady',
       'Deleting old ASR models...': 'settings.speech.status.deletingOldAsr',
       'Downloading recommended Sherpa ASR models...':
         'settings.speech.status.downloadingRecommendedAsr',
@@ -1093,14 +1101,14 @@
   })
 </script>
 
-<div class="space-y-5">
-  <div class="flex items-center justify-between">
+<div>
+  <div class="flex flex-wrap items-center justify-between gap-3 py-4">
     <div>
-      <div class="text-[13px] opacity-70">{$i18n.t('settings.speech.serviceTitle')}</div>
-      <div class="text-[11px] opacity-50 mt-0.5">
+      <div class="settings-label">{$i18n.t('settings.speech.serviceTitle')}</div>
+      <div class="settings-detail mt-0.5">
         {$i18n.t('main.getStarted.sherpaDesc')}
       </div>
-      <div class="text-[11px] opacity-30 mt-0.5">
+      <div class="settings-detail mt-0.5">
         {#if installed}
           {serviceRunning
             ? (sherpaInfo?.url ?? $i18n.t('settings.speech.running'))
@@ -1114,55 +1122,39 @@
     </div>
 
     {#if installed}
-      <div class="flex gap-2">
+      <div class="flex flex-wrap gap-2">
         {#if serviceRunning}
-          <button
-            class="text-[12px] opacity-50 hover:opacity-80 px-3 py-1.5 bg-black/[0.04] dark:bg-white/[0.06] rounded-xl border-none"
-            disabled={restarting || stopping}
-            onclick={restartSherpa}
-          >
+          <button class="settings-button" disabled={restarting || stopping} onclick={restartSherpa}>
             {restarting ? $i18n.t('common.restarting') : $i18n.t('common.restart')}
           </button>
-          <button
-            class="text-[12px] opacity-50 hover:opacity-80 px-3 py-1.5 bg-black/[0.04] dark:bg-white/[0.06] rounded-xl border-none"
-            disabled={stopping}
-            onclick={stopSherpa}
-          >
+          <button class="settings-button" disabled={stopping} onclick={stopSherpa}>
             {stopping ? $i18n.t('common.stopping') : $i18n.t('common.stop')}
           </button>
         {:else}
           <button
-            class="text-[12px] opacity-60 hover:opacity-90 px-3 py-1.5 bg-black/[0.06] dark:bg-white/[0.08] rounded-xl border-none"
+            class="settings-button"
             disabled={starting || !asrReady || !ttsReady}
             onclick={startSherpa}
           >
             {starting ? $i18n.t('common.starting') : $i18n.t('common.start')}
           </button>
         {/if}
-        <button
-          class="text-[12px] opacity-50 hover:opacity-80 px-3 py-1.5 bg-black/[0.04] dark:bg-white/[0.06] rounded-xl border-none"
-          disabled={updating}
-          onclick={updateSherpa}
-        >
+        <button class="settings-button" disabled={updating} onclick={updateSherpa}>
           {updating ? $i18n.t('common.updating') : $i18n.t('common.update')}
         </button>
-        <button
-          class="text-[12px] opacity-50 hover:opacity-80 px-3 py-1.5 bg-black/[0.04] dark:bg-white/[0.06] rounded-xl border-none"
-          disabled={uninstalling}
-          onclick={uninstallSherpa}
-        >
+        <button class="settings-button" disabled={uninstalling} onclick={uninstallSherpa}>
           {uninstalling ? $i18n.t('common.uninstalling') : $i18n.t('common.uninstall')}
         </button>
       </div>
     {:else}
       <button
-        class="text-[12px] opacity-60 hover:opacity-90 px-6 py-1.5 bg-black/[0.04] dark:bg-white/[0.06] text-white rounded-xl border-none flex items-center gap-2"
+        class="settings-button flex items-center gap-2"
         disabled={installing}
         onclick={installSherpa}
       >
         {#if installing}
           <div
-            class="w-3.5 h-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin"
+            class="w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin"
           ></div>
           {$i18n.t('common.installing')}
         {:else}
@@ -1173,29 +1165,26 @@
   </div>
 
   {#if !loaded}
-    <div class="py-6 text-[12px] opacity-20 text-center">{$i18n.t('common.loading')}</div>
+    <div class="settings-loading">{$i18n.t('common.loading')}</div>
   {:else if installed}
     <!-- 已安装状态 -->
-    <div class="space-y-5">
+    <div>
       <!-- 音频设备 -->
-      <div class="py-4 border-t border-black/[0.04] dark:border-white/[0.04]">
+      <div class="py-4 border-t settings-divider">
         <div class="flex items-center justify-between gap-4">
           <div class="min-w-0">
-            <div class="text-[13px] opacity-70">{$i18n.t('settings.speech.audioDevices')}</div>
-            <div class="text-[11px] opacity-30 mt-0.5 truncate">
+            <div class="settings-label">{$i18n.t('settings.speech.audioDevices')}</div>
+            <div class="settings-detail mt-0.5 truncate">
               {$i18n.t('settings.speech.audioDevicesDesc')}
             </div>
           </div>
-          <button
-            class="text-[12px] opacity-60 hover:opacity-90 px-3 py-1.5 bg-black/[0.06] dark:bg-white/[0.08] rounded-xl border-none shrink-0"
-            onclick={requestAudioDeviceLabels}
-          >
+          <button class="settings-button shrink-0" onclick={requestAudioDeviceLabels}>
             {$i18n.t('common.refresh')}
           </button>
         </div>
         <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
           <select
-            class="w-full bg-black/[0.04] dark:bg-white/[0.06] rounded-xl px-3 py-2 text-[12px] outline-none"
+            class="settings-field w-full"
             value={audioInputDeviceId}
             onchange={(e) => saveAudioDevice('audioInputDeviceId', e.currentTarget.value)}
           >
@@ -1208,7 +1197,7 @@
             {/each}
           </select>
           <select
-            class="w-full bg-black/[0.04] dark:bg-white/[0.06] rounded-xl px-3 py-2 text-[12px] outline-none"
+            class="settings-field w-full"
             value={audioOutputDeviceId}
             onchange={(e) => saveAudioDevice('audioOutputDeviceId', e.currentTarget.value)}
             disabled={!('setSinkId' in HTMLMediaElement.prototype)}
@@ -1224,8 +1213,8 @@
         </div>
       </div>
 
-      <details class="py-4 border-t border-black/[0.04] dark:border-white/[0.04]" open>
-        <summary class="text-[13px] cursor-pointer"
+      <details class="py-4 border-t settings-divider" open>
+        <summary class="settings-label cursor-pointer"
           >{$i18n.t('settings.speech.enabledLanguages')}</summary
         >
         <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-x-4 max-h-64 overflow-y-auto">
@@ -1238,9 +1227,9 @@
                 disabled={language === 'zh' || downloading !== null || savingLanguages}
                 onchange={(event) => toggleLanguage(language, event.currentTarget.checked)}
               />
-              <span class="min-w-0">{languageName(language)}</span>
+              <span class="settings-label min-w-0">{languageName(language)}</span>
               <span class="col-start-2 flex flex-wrap gap-x-3">
-                <span class="text-[11px] opacity-60"
+                <span class="settings-detail"
                   >STT: {$i18n.t(
                     sherpaInfo?.languages?.[language]?.asr
                       ? 'settings.speech.modelReady'
@@ -1249,7 +1238,7 @@
                         : 'settings.speech.notDownloaded'
                   )}</span
                 >
-                <span class="text-[11px] opacity-60"
+                <span class="settings-detail"
                   >TTS: {$i18n.t(
                     sherpaInfo?.languages?.[language]?.tts
                       ? 'settings.speech.modelReady'
@@ -1263,18 +1252,18 @@
           {/each}
         </div>
       </details>
-      <div class="py-4 border-t border-black/[0.04] dark:border-white/[0.04]">
+      <div class="py-4 border-t settings-divider">
         <div class="flex items-center justify-between gap-4">
           <div class="min-w-0">
-            <div class="text-[13px] opacity-70">
+            <div class="settings-label">
               {$i18n.t('settings.speech.automaticTranscription')}
             </div>
-            <div class="text-[11px] opacity-30 mt-0.5 truncate">
+            <div class="settings-detail mt-0.5 truncate">
               {$i18n.t('settings.speech.automaticTranscriptionDesc')}
             </div>
           </div>
           <button
-            class="text-[12px] opacity-60 hover:opacity-90 px-3 py-1.5 bg-black/[0.06] dark:bg-white/[0.08] rounded-xl border-none shrink-0"
+            class="settings-button shrink-0"
             disabled={downloading !== null}
             onclick={() => downloadAsrModel(false)}
           >
@@ -1288,13 +1277,13 @@
           </button>
         </div>
         <div class="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
-          <div class="rounded-xl bg-black/[0.03] dark:bg-white/[0.04] px-3 py-2">
+          <div class="settings-well px-3 py-2">
             <div class="opacity-35">{$i18n.t('settings.speech.languageDetection')}</div>
             <div class="opacity-60 truncate">
               {sherpaConfig.asrLanguageDetectorModel ?? 'large-v3-turbo'} / CPU int8
             </div>
           </div>
-          <div class="rounded-xl bg-black/[0.03] dark:bg-white/[0.04] px-3 py-2">
+          <div class="settings-well px-3 py-2">
             <div class="opacity-35">{$i18n.t('settings.speech.routingProfiles')}</div>
             <div class="opacity-60 truncate">
               {$i18n.t('settings.speech.readyCount', {
@@ -1302,30 +1291,30 @@
               })}
             </div>
           </div>
-          <div class="rounded-xl bg-black/[0.03] dark:bg-white/[0.04] px-3 py-2">
-            <div class="opacity-35">{$i18n.t('settings.speech.fallbackRecognitionModel')}</div>
+          <div class="settings-well px-3 py-2">
+            <div class="opacity-35">{$i18n.t('settings.speech.recognitionPreset')}</div>
             <div class="opacity-60 truncate">
               {asrReady ? selectedAsrPreset.label : $i18n.t('settings.speech.notDownloaded')}
             </div>
           </div>
         </div>
         {#if downloadedAsrModels.length > 0}
-          <div class="mt-3 rounded-xl bg-black/[0.03] dark:bg-white/[0.04] px-3 py-2">
+          <div class="mt-3 settings-well px-3 py-2">
             <div class="text-[11px] opacity-40 mb-1">
               {$i18n.t('settings.speech.downloadedRecognitionModels')}
             </div>
             {#each downloadedAsrModels.slice(0, 8) as model (model.filename)}
-              <div class="text-[11px] opacity-55 truncate">{model.filename}</div>
+              <div class="settings-detail truncate">{model.filename}</div>
             {/each}
           </div>
         {/if}
       </div>
 
-      <div class="py-4 border-t border-black/[0.04] dark:border-white/[0.04]">
+      <div class="py-4 border-t settings-divider">
         <div class="flex items-center justify-between gap-4">
           <div class="min-w-0">
-            <div class="text-[13px] opacity-70">{$i18n.t('settings.speech.synthesisModel')}</div>
-            <div class="text-[11px] opacity-30 mt-0.5 truncate">
+            <div class="settings-label">{$i18n.t('settings.speech.synthesisModel')}</div>
+            <div class="settings-detail mt-0.5 truncate">
               {ttsReady
                 ? sherpaConfig.ttsModel
                 : selectedTtsDownloadable
@@ -1334,7 +1323,7 @@
             </div>
           </div>
           <button
-            class="text-[12px] opacity-60 hover:opacity-90 px-3 py-1.5 bg-black/[0.06] dark:bg-white/[0.08] rounded-xl border-none shrink-0"
+            class="settings-button shrink-0"
             disabled={downloading !== null}
             onclick={() => downloadTTSModel(false)}
           >
@@ -1348,7 +1337,7 @@
           </button>
         </div>
         <div class="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
-          <div class="rounded-xl bg-black/[0.03] dark:bg-white/[0.04] px-3 py-2">
+          <div class="settings-well px-3 py-2">
             <div class="opacity-35">{$i18n.t('settings.speech.routingProfiles')}</div>
             <div class="opacity-60 truncate">
               {$i18n.t('settings.speech.readyCount', {
@@ -1356,7 +1345,7 @@
               })}
             </div>
           </div>
-          <div class="rounded-xl bg-black/[0.03] dark:bg-white/[0.04] px-3 py-2">
+          <div class="settings-well px-3 py-2">
             <div class="opacity-35">{$i18n.t('settings.speech.fallbackSynthesisModel')}</div>
             <div class="opacity-60 truncate">
               {ttsReady ? selectedTtsPreset.label : $i18n.t('settings.speech.notDownloaded')}
@@ -1364,21 +1353,19 @@
           </div>
         </div>
         {#if downloadedTtsModels.length > 0}
-          <div class="mt-3 rounded-xl bg-black/[0.03] dark:bg-white/[0.04] px-3 py-2">
+          <div class="mt-3 settings-well px-3 py-2">
             <div class="text-[11px] opacity-40 mb-1">
               {$i18n.t('settings.speech.downloadedSynthesisModels')}
             </div>
             {#each downloadedTtsModels.slice(0, 8) as model (model.filename)}
-              <div class="text-[11px] opacity-55 truncate">{model.filename}</div>
+              <div class="settings-detail truncate">{model.filename}</div>
             {/each}
           </div>
         {/if}
       </div>
 
       {#if setupStatus || Object.keys(downloadProgress).length > 0}
-        <div
-          class="rounded-xl bg-black/[0.04] dark:bg-white/[0.05] px-3 py-2 text-[11px] opacity-60"
-        >
+        <div class="settings-feedback px-3 py-2">
           <div>{setupStatus}</div>
           {#each Object.entries(downloadProgress) as [filename, percent] (filename)}
             <div class="mt-1">{filename}: {percent}%</div>

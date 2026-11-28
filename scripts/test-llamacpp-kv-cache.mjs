@@ -253,6 +253,7 @@ test('launch arguments use the selection even with conflicting custom cache argu
       path,
       process: { env: {} },
       status: null,
+      LlamaStartError: Error,
       stopLlamaCpp: async () => {},
       setupLlamaCpp: async () => '/test/llama-server',
       getConfig: async () => ({

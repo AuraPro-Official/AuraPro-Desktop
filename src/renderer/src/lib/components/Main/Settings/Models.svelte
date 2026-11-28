@@ -1,7 +1,9 @@
 <script lang="ts">
   import ModelCapabilityBadges from '../../common/ModelCapabilityBadges.svelte'
   import {
+    HIGH_Q4_DOWNLOAD,
     INDEX_TRANSLATE_MODELS,
+    LOW_E4_DOWNLOAD,
     indexTranslateCatalogEntry
   } from '../../../../../../shared/index-translate-models'
   import { onMount } from 'svelte'
@@ -48,18 +50,7 @@
 
   const AURA_MODELS: AuraModel[] = [
     indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.lowest),
-    {
-      name: 'low_E4.gguf',
-      sizeStr: '~5GB',
-      repo: 'AuraPro',
-      hfRepo: 'unsloth/gemma-4-E4B-it-qat-GGUF',
-      filename: 'gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf',
-      mmprojRepo: 'unsloth/gemma-4-E4B-it-qat-GGUF',
-      mmprojFilename: 'mmproj-F16.gguf',
-      mtpRepo: 'unsloth/gemma-4-E4B-it-qat-GGUF',
-      mtpFilename: 'mtp-gemma-4-E4B-it.gguf',
-      sizeBytes: 5 * 1024 * 1024 * 1024
-    },
+    LOW_E4_DOWNLOAD,
     {
       name: 'medium_IQ2.gguf',
       sizeStr: '~11GB',
@@ -74,18 +65,8 @@
     },
     indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.mediumQ3),
     indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.medium),
-    {
-      name: 'high_Q4.gguf',
-      sizeStr: '~15GB',
-      repo: 'AuraPro',
-      hfRepo: 'unsloth/gemma-4-26B-A4B-it-qat-GGUF',
-      filename: 'gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf',
-      mmprojRepo: 'unsloth/gemma-4-26B-A4B-it-qat-GGUF',
-      mmprojFilename: 'mmproj-F16.gguf',
-      mtpRepo: 'unsloth/gemma-4-26B-A4B-it-qat-GGUF',
-      mtpFilename: 'mtp-gemma-4-26B-A4B-it.gguf',
-      sizeBytes: 15 * 1024 * 1024 * 1024
-    },
+    indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.mediumQ6),
+    HIGH_Q4_DOWNLOAD,
     indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.high)
   ]
 
@@ -131,6 +112,10 @@
     loaded = true
 
     window.electronAPI.onData((data: HfDownloadEvent) => {
+      if (data.type === 'model:upgrade-done') {
+        void window.electronAPI.listHfModels().then((items: HfModel[]) => (models = items))
+        return
+      }
       if (data.type === 'status:huggingface-download') {
         const d = data.data
         if (!d?.repo || !d.filename) return
@@ -337,20 +322,25 @@
     if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
   }
+
+  const settingActionClass = 'text-inherit hover:opacity-70 focus-visible:opacity-100'
 </script>
 
 {#if !loaded}
-  <div class="py-6 text-[12px] opacity-20 text-center">{$i18n.t('common.loading')}</div>
+  <div class="settings-loading">{$i18n.t('common.loading')}</div>
 {:else}
-  <div class="flex flex-col divide-y divide-white/[0.04]">
+  <div class="settings-sections">
     <!-- Models directory -->
     <div class="py-4 flex items-center justify-between gap-4">
-      <div class="shrink-0">
-        <div class="text-[13px] opacity-70">{$i18n.t('settings.models.modelsDirectory')}</div>
-        <div class="text-[11px] opacity-25 mt-0.5">{$i18n.t('settings.models.modelsHint')}</div>
+      <div class="min-w-0">
+        <div class="settings-label">{$i18n.t('settings.models.modelsDirectory')}</div>
+        <div class="mt-0.5 settings-detail">
+          {$i18n.t('settings.models.modelsHint')}
+        </div>
       </div>
       <button
-        class="text-[12px] font-mono hover:opacity-80 transition bg-transparent border-none text-[#1d1d1f] dark:text-[#fafafa] p-0 underline decoration-dotted underline-offset-2 cursor-pointer flex items-center gap-1.5 min-w-0 truncate"
+        class="text-[12px] font-mono opacity-60 transition bg-transparent border-none p-0 underline decoration-dotted underline-offset-2 cursor-pointer flex items-center gap-1.5 min-w-0 max-w-[45%] {settingActionClass}"
+        title={modelsDir}
         onclick={() => {
           if (modelsDir) window.electronAPI.openPath(modelsDir)
         }}
@@ -374,7 +364,9 @@
 
     <!-- Downloaded models + active downloads -->
     <div class="py-4">
-      <div class="text-[12px] opacity-50 mb-2">{$i18n.t('settings.models.downloadedModels')}</div>
+      <div class="mb-2 settings-label">
+        {$i18n.t('settings.models.downloadedModels')}
+      </div>
 
       {#if models.length > 0 || hasActiveDownloads}
         <div class="flex flex-col">
@@ -383,9 +375,8 @@
             <div class="flex items-center gap-3 py-2 group">
               <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-2">
-                  <span class="text-[12px] opacity-60 truncate font-mono">{dl.filename}</span>
-                  <span class="text-[10px] opacity-30 font-mono shrink-0"
-                    >{dl.percent.toFixed(1)}%</span
+                  <span class="truncate settings-label">{dl.filename}</span>
+                  <span class="shrink-0 tabular-nums settings-detail">{dl.percent.toFixed(1)}%</span
                   >
                 </div>
                 <div
@@ -396,12 +387,13 @@
                     style="width: {dl.percent}%"
                   ></div>
                 </div>
-                <div class="text-[10px] opacity-20 mt-1 truncate">{dl.repo}</div>
+                <div class="mt-1 truncate settings-detail">{dl.repo}</div>
               </div>
               <button
-                class="opacity-0 group-hover:opacity-40 hover:!opacity-70 transition bg-transparent border-none text-[#1d1d1f] dark:text-[#fafafa] p-1 shrink-0"
+                class="opacity-0 group-hover:opacity-50 transition bg-transparent border-none p-1 shrink-0 {settingActionClass}"
                 onclick={() => cancelActiveDownload(dl)}
                 title={$i18n.t('settings.models.cancelDownload')}
+                aria-label={`${$i18n.t('settings.models.cancelDownload')}: ${dl.filename}`}
               >
                 <svg
                   class="w-3 h-3"
@@ -420,18 +412,19 @@
           {#each models as model (`${model.repo}/${model.filename}`)}
             <div class="flex items-center gap-3 py-2 group">
               <div class="min-w-0 flex-1">
-                <div class="text-[12px] opacity-60 truncate font-mono">{model.filename}</div>
-                <div class="text-[10px] opacity-20 truncate mt-0.5">
+                <div class="truncate settings-label">
+                  {model.filename}
+                </div>
+                <div class="mt-0.5 truncate settings-detail">
                   {model.repo} · {formatSize(model.size)}
                 </div>
               </div>
               <button
-                class="opacity-0 group-hover:opacity-30 hover:!opacity-60 transition bg-transparent border-none text-[#1d1d1f] dark:text-[#fafafa] p-1 shrink-0 {deleting ===
-                `${model.repo}/${model.filename}`
-                  ? '!opacity-30 pointer-events-none'
-                  : ''}"
+                class="opacity-0 group-hover:opacity-50 disabled:opacity-40 transition bg-transparent border-none p-1 shrink-0 {settingActionClass}"
+                disabled={deleting === `${model.repo}/${model.filename}`}
                 onclick={() => removeModel(model.repo, model.filename)}
                 title={$i18n.t('settings.models.deleteModel')}
+                aria-label={`${$i18n.t('settings.models.deleteModel')}: ${model.filename}`}
               >
                 {#if deleting === `${model.repo}/${model.filename}`}
                   <div
@@ -457,13 +450,15 @@
           {/each}
         </div>
       {:else}
-        <div class="text-[11px] opacity-20 py-3">{$i18n.t('settings.models.noModels')}</div>
+        <div class="py-3 settings-detail">
+          {$i18n.t('settings.models.noModels')}
+        </div>
       {/if}
     </div>
 
     <!-- Download from HF -->
     <div class="py-4">
-      <div class="text-[12px] opacity-50 mb-2">
+      <div class="mb-2 settings-label">
         {$i18n.t('settings.models.downloadFromHF')} - AuraPro Models
       </div>
 
@@ -473,12 +468,15 @@
           {@const installed = isDownloaded(modelKey, model.name)}
           {@const downloaded = isAuraModelCurrent(model)}
           {@const dlActive = isDownloading(modelKey, model.name)}
+          {@const downloadLabel = $i18n.t(
+            installed ? 'settings.models.updateModel' : 'common.download'
+          )}
           <div class="flex items-center gap-3 py-2 group">
             <div class="min-w-0 flex-1">
-              <div class="text-[12px] opacity-50 truncate font-mono">
-                {model.name.replace('.gguf', '')}
+              <div class="truncate settings-label">
+                {modelKey}
               </div>
-              <div class="mt-0.5 text-[11px] leading-snug text-gray-600 dark:text-gray-400">
+              <div class="mt-0.5 settings-detail">
                 ~{standardGuide(model.name).sizeGiB}G · {standardRequirementLabel(model.name)}
               </div>
               <ModelCapabilityBadges name={model.name} mtp={!!model.mtpFilename} />
@@ -494,18 +492,17 @@
               {/if}
             </div>
             {#if downloaded}
-              <span class="text-[10px] opacity-25 shrink-0"
-                >{$i18n.t('settings.models.downloaded')}</span
-              >
+              <span class="shrink-0 settings-detail">{$i18n.t('settings.models.downloaded')}</span>
             {:else if dlActive}
               <div class="flex items-center gap-1.5 shrink-0">
-                <span class="text-[10px] opacity-40 font-mono"
+                <span class="tabular-nums settings-detail"
                   >{getDownloadPercent(modelKey, model.name).toFixed(0)}%</span
                 >
                 <button
-                  class="opacity-30 hover:opacity-70 transition bg-transparent border-none text-[#1d1d1f] dark:text-[#fafafa] p-0.5"
+                  class="opacity-50 transition bg-transparent border-none p-0.5 {settingActionClass}"
                   onclick={() => cancelAuraModelDownload(model)}
                   title={$i18n.t('settings.models.cancelDownload')}
+                  aria-label={`${$i18n.t('settings.models.cancelDownload')}: ${modelKey}`}
                 >
                   <svg
                     class="w-3 h-3"
@@ -522,10 +519,11 @@
               <button
                 class="{installed
                   ? 'opacity-50'
-                  : 'opacity-0 group-hover:opacity-40'} hover:!opacity-70 transition bg-transparent border-none text-[#1d1d1f] dark:text-[#fafafa] p-1 shrink-0"
+                  : 'opacity-0 group-hover:opacity-50'} transition bg-transparent border-none p-1 shrink-0 {settingActionClass}"
                 onclick={() =>
                   startDownload(model.hfRepo, model.filename, model.name, model.sizeBytes, model)}
-                title={installed ? '更新模型' : $i18n.t('common.download')}
+                title={downloadLabel}
+                aria-label={`${downloadLabel}: ${modelKey}`}
               >
                 <svg
                   class="w-3.5 h-3.5"

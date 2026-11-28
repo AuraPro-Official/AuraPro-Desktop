@@ -113,14 +113,9 @@
   ]
 </script>
 
-<div
-  class="h-full w-full flex bg-[#f5f5f7] dark:bg-[#0a0a0a] text-[#1d1d1f] dark:text-[#fafafa]"
-  in:fade={{ duration: 150 }}
->
+<div class="desktop-settings h-full w-full flex" in:fade={{ duration: 150 }}>
   <!-- Settings sidebar -->
-  <div
-    class="w-[180px] shrink-0 flex flex-col border-r border-black/[0.06] dark:border-white/[0.06] bg-[#eee] dark:bg-[#111] px-1.5"
-  >
+  <div class="settings-sidebar settings-divider w-[180px] shrink-0 flex flex-col border-r px-1.5">
     <div class="h-4 shrink-0"></div>
     <div class="px-3 pb-3">
       <span class="text-[13px] opacity-60 font-medium">{$i18n.t('settings.title')}</span>
@@ -155,9 +150,7 @@
 
   <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
     <!-- Content header -->
-    <div
-      class="flex items-center justify-between px-8 pt-5 pb-3 border-b border-black/[0.04] dark:border-white/[0.04]"
-    >
+    <div class="settings-divider flex items-center justify-between border-b px-4 pt-5 pb-3 sm:px-8">
       <span class="text-[15px] opacity-80 font-medium"
         >{tabs.find((t) => t.id === settingsTab)?.label() ?? settingsTab}</span
       >
@@ -178,11 +171,11 @@
       </button>
     </div>
 
-    <div class="flex-1 overflow-y-auto px-8 py-4">
+    <div class="flex-1 overflow-x-hidden overflow-y-auto px-4 py-4 sm:px-8">
       {#if ActiveSettingsComponent}
         <ActiveSettingsComponent />
       {:else}
-        <div class="flex h-full items-center justify-center text-[12px] opacity-40">
+        <div class="settings-loading flex h-full items-center justify-center">
           {$i18n.t('common.loading')}
         </div>
       {/if}

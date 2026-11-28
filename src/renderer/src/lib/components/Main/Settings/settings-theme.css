@@ -1,0 +1,113 @@
+@layer components {
+  :root {
+    --settings-bg: #f5f5f7;
+    --settings-sidebar-bg: #eee;
+    --settings-fg: #1d1d1f;
+    --settings-divider: rgb(0 0 0 / 4%);
+    --settings-control-bg: rgb(0 0 0 / 4%);
+    --settings-selected-bg: rgb(0 0 0 / 8%);
+  }
+
+  :root.dark {
+    --settings-bg: #0a0a0a;
+    --settings-sidebar-bg: #111;
+    --settings-fg: #fafafa;
+    --settings-divider: rgb(255 255 255 / 4%);
+    --settings-control-bg: rgb(255 255 255 / 6%);
+    --settings-selected-bg: rgb(255 255 255 / 12%);
+  }
+
+  .desktop-settings {
+    background: var(--settings-bg);
+    color: var(--settings-fg);
+    color-scheme: light;
+    font-family: inherit;
+  }
+
+  .dark .desktop-settings {
+    color-scheme: dark;
+  }
+
+  :where(.desktop-settings) .settings-sidebar {
+    background: var(--settings-sidebar-bg);
+  }
+
+  .settings-divider {
+    border-color: var(--settings-divider);
+  }
+
+  .settings-sections {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .settings-sections > :not(:last-child) {
+    border-block-end: 1px solid var(--settings-divider);
+  }
+
+  .settings-label {
+    font-size: 13px;
+    opacity: 0.7;
+  }
+
+  .settings-description {
+    font-size: 11px;
+    opacity: 0.25;
+  }
+
+  .settings-detail {
+    font-size: 11px;
+    opacity: 0.55;
+  }
+
+  .settings-loading {
+    padding-block: 24px;
+    font-size: 12px;
+    text-align: center;
+    opacity: 0.45;
+  }
+
+  .settings-well,
+  .settings-feedback {
+    border-radius: 8px;
+    background: var(--settings-control-bg);
+  }
+
+  .settings-feedback {
+    font-size: 11px;
+    opacity: 0.75;
+    overflow-wrap: anywhere;
+  }
+
+  :is(.settings-field, .settings-button) {
+    min-width: 0;
+    max-width: 100%;
+    border: 0;
+    border-radius: 8px;
+    padding: 6px 12px;
+    background: var(--settings-control-bg);
+    color: inherit;
+    font-size: 12px;
+    opacity: 0.6;
+  }
+
+  .settings-button:enabled:hover {
+    opacity: 0.85;
+  }
+
+  :is(.settings-field, .settings-button):focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+    opacity: 1;
+  }
+
+  :is(.settings-field, .settings-button):disabled {
+    cursor: default;
+    opacity: 0.3;
+  }
+
+  .settings-field option {
+    background: var(--settings-bg);
+    color: var(--settings-fg);
+  }
+}

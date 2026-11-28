@@ -95,12 +95,12 @@
 {#if !loaded}
   <div class="py-6 text-center text-[12px] opacity-30">{$i18n.t('common.loading')}</div>
 {:else}
-  <div class="flex flex-col divide-y divide-black/[0.05] dark:divide-white/[0.05]">
+  <div class="settings-sections">
     <section class="py-4">
       <div class="flex items-start justify-between gap-4">
         <div>
-          <div class="text-[13px] font-medium opacity-80">Agent</div>
-          <div class="mt-1 text-[11px] leading-5 opacity-35">
+          <div class="settings-label">Agent</div>
+          <div class="mt-0.5 settings-detail">
             Agent 执行核心与扩展在本机运行。任务、模型配置、确认和结果都在 WebUI 中操作。
           </div>
         </div>
@@ -112,7 +112,7 @@
                 ? 'bg-red-500'
                 : 'bg-black/20 dark:bg-white/25'}"
           ></span>
-          <span class="text-[11px] opacity-45">
+          <span class="settings-detail">
             {isRunning
               ? $i18n.t('common.running')
               : info?.status === 'failed'
@@ -124,7 +124,7 @@
 
       {#if progress}
         <div
-          class="mt-3 rounded-md bg-black/[0.035] px-3 py-2 text-[11px] opacity-55 dark:bg-white/[0.05]"
+          class="mt-3 rounded-md bg-black/[0.035] px-3 py-2 settings-detail dark:bg-white/[0.05]"
         >
           {progress}
         </div>
@@ -139,32 +139,24 @@
 
       <div class="mt-3 flex flex-wrap gap-2">
         {#if !installed}
-          <button
-            class="rounded-md border-0 bg-black px-3 py-1.5 text-[12px] text-white disabled:opacity-35 dark:bg-white dark:text-black"
-            disabled={action !== null}
-            onclick={install}
-          >
+          <button class="settings-button" disabled={action !== null} onclick={install}>
             {action === 'install' ? $i18n.t('common.installing') : $i18n.t('common.install')}
           </button>
         {:else}
           {#if isRunning}
             <button
-              class="rounded-md border-0 bg-black/[0.05] px-3 py-1.5 text-[12px] opacity-60 hover:opacity-90 dark:bg-white/[0.08]"
+              class="settings-button"
               disabled={action !== null}
               onclick={() => runAction('stop', () => window.electronAPI.stopOpenCode())}
             >
               {action === 'stop' ? $i18n.t('common.stopping') : $i18n.t('common.stop')}
             </button>
-            <button
-              class="rounded-md border-0 bg-black/[0.05] px-3 py-1.5 text-[12px] opacity-60 hover:opacity-90 dark:bg-white/[0.08]"
-              disabled={action !== null}
-              onclick={restart}
-            >
+            <button class="settings-button" disabled={action !== null} onclick={restart}>
               {action === 'restart' ? $i18n.t('common.restarting') : $i18n.t('common.restart')}
             </button>
           {:else}
             <button
-              class="rounded-md border-0 bg-black px-3 py-1.5 text-[12px] text-white disabled:opacity-35 dark:bg-white dark:text-black"
+              class="settings-button"
               disabled={action !== null}
               onclick={() => runAction('start', () => window.electronAPI.startOpenCode())}
             >
@@ -172,7 +164,7 @@
             </button>
           {/if}
           <button
-            class="rounded-md border-0 bg-black/[0.05] px-3 py-1.5 text-[12px] opacity-60 hover:opacity-90 dark:bg-white/[0.08]"
+            class="settings-button"
             disabled={action !== null}
             onclick={() => runAction('update', () => window.electronAPI.updateOpenCode())}
           >
@@ -186,10 +178,8 @@
       <section class="py-4">
         <div class="flex items-center justify-between gap-4">
           <div>
-            <div class="text-[13px] opacity-70">启动时启用</div>
-            <div class="mt-0.5 text-[11px] opacity-30">
-              打开 AuraPro 后允许 WebUI 启动 Agent 任务。
-            </div>
+            <div class="settings-label">启动时启用</div>
+            <div class="mt-0.5 settings-detail">打开 AuraPro 后允许 WebUI 启动 Agent 任务。</div>
           </div>
           <Switch
             checked={$config?.openCode?.enabled ?? false}
@@ -202,13 +192,13 @@
       <section class="space-y-4 py-4">
         <label class="flex items-center justify-between gap-4">
           <span>
-            <span class="block text-[13px] opacity-70">{$i18n.t('settings.opencode.version')}</span>
-            <span class="mt-0.5 block text-[11px] opacity-30">
+            <span class="block settings-label">{$i18n.t('settings.opencode.version')}</span>
+            <span class="mt-0.5 block settings-detail">
               使用经过验证的固定发行版本，默认 1.0.3。
             </span>
           </span>
           <input
-            class="w-28 rounded-md border-0 bg-black/[0.04] px-3 py-1.5 text-right font-mono text-[12px] outline-none dark:bg-white/[0.06]"
+            class="settings-field w-28 text-right font-mono"
             value={$config?.openCode?.version ?? '1.0.3'}
             placeholder="1.0.3"
             onchange={(event) =>
@@ -218,15 +208,15 @@
 
         <div class="flex items-center justify-between gap-4">
           <div class="min-w-0">
-            <div class="text-[13px] opacity-70">
+            <div class="settings-label">
               {$i18n.t('settings.opencode.workingDirectory')}
             </div>
-            <div class="mt-0.5 truncate text-[11px] opacity-30">
+            <div class="mt-0.5 truncate settings-detail">
               {$config?.openCode?.cwd || $i18n.t('settings.opencode.homeDirectory')}
             </div>
           </div>
           <button
-            class="shrink-0 rounded-md border-0 bg-black/[0.05] px-3 py-1.5 text-[12px] opacity-60 hover:opacity-90 dark:bg-white/[0.08]"
+            class="shrink-0 settings-button"
             onclick={async () => {
               const folder = await window.electronAPI.selectFolder()
               if (folder) await updateConfig('cwd', folder)
@@ -237,7 +227,7 @@
         </div>
       </section>
 
-      <section class="py-4 text-[11px] opacity-45">
+      <section class="py-4 settings-detail">
         <div class="flex justify-between">
           <span>{$i18n.t('common.version')}</span><span>{info?.version ?? '-'}</span>
         </div>
@@ -250,11 +240,11 @@
 
       <section class="flex items-center justify-between gap-4 py-4">
         <div>
-          <div class="text-[13px] opacity-70">卸载 Agent 运行时</div>
-          <div class="mt-0.5 text-[11px] opacity-30">保留模型配置、扩展和会话记录。</div>
+          <div class="settings-label">卸载 Agent 运行时</div>
+          <div class="mt-0.5 settings-detail">保留模型配置、扩展和会话记录。</div>
         </div>
         <button
-          class="rounded-md border-0 bg-red-500/10 px-3 py-1.5 text-[12px] text-red-600 disabled:opacity-35 dark:text-red-300"
+          class="settings-button bg-red-500/10 text-red-600 dark:text-red-300"
           disabled={action !== null}
           onclick={() => {
             if (confirm('卸载 AuraPro 管理的 Agent 运行时？')) {
@@ -266,17 +256,17 @@
         </button>
       </section>
       <section class="space-y-3 py-4">
-        <div class="text-[13px] opacity-80">Agent 扩展</div>
-        <div class="text-[11px] opacity-45">
+        <div class="settings-label">Agent 扩展</div>
+        <div class="settings-detail">
           安装成功后，在 WebUI 的 Agent
           设置中执行功能检查。检查通过后再使用。已有会话需要重置后加载新扩展。
         </div>
         {#each extensions as extension (extension.id)}
-          <div class="rounded-lg border border-black/10 p-3 dark:border-white/10">
+          <div class="settings-divider border-t py-3">
             <div class="flex items-center justify-between gap-3">
-              <span class="text-[12px] font-medium">{extension.name}</span>
+              <span class="settings-label">{extension.name}</span>
               <button
-                class="rounded border px-2 py-1 text-[11px] disabled:opacity-40"
+                class="settings-button"
                 disabled={extensionBusy || action !== null}
                 onclick={async () => {
                   extensionBusy = true
@@ -296,8 +286,8 @@
                 }}>{extension.installed ? '移除' : '安装'}</button
               >
             </div>
-            <div class="mt-1 text-[11px] opacity-50">{extension.description}</div>
-            <div class="mt-1 break-all text-[11px] opacity-50">
+            <div class="mt-1 settings-detail">{extension.description}</div>
+            <div class="mt-1 break-all settings-detail">
               {extension.state === 'not_installed' ? '未安装' : extension.detail}
             </div>
           </div>

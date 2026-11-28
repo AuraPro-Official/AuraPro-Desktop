@@ -22,8 +22,10 @@ ipcRenderer.on('desktop:event', (_event, data) => {
 })
 
 contextBridge.exposeInMainWorld('applyTheme', () => {
+  // WebUI calls this on startup, before it subscribes to desktop events.
+  if (!eventCallbacks.length) return
   const theme = localStorage.getItem('theme') ?? 'system'
-  ipcRenderer.sendToHost('webview:event', { type: 'theme:update', data: { theme } })
+  ipcRenderer.sendToHost('webview:event', { type: 'theme:change', data: { theme } })
 })
 
 // Override navigator.clipboard.writeText to ensure it works in Electron webview
@@ -52,6 +54,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Push events: desktop → AuraPro
   onEvent: (callback: EventCallback): void => {
     eventCallbacks.push(callback)
+    if (eventCallbacks.length === 1) {
+      const theme = localStorage.getItem('theme') ?? 'system'
+      ipcRenderer.sendToHost('webview:event', { type: 'theme:ready', data: { theme } })
+    }
   },
 
   // Request/Response: AuraPro → desktop

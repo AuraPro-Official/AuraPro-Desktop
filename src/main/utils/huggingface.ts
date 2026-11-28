@@ -8,9 +8,18 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
+import { createHash } from 'node:crypto'
 import log from 'electron-log'
 
 import { getInstallDir } from './index'
+import { writeDownloadBody } from './download-stream'
+import { localModelUpgradeNotice } from '../../shared/index-translate-models'
+import {
+  checkModelUpgradeDirectory,
+  modelFileSnapshot,
+  swapModelUpgradeFiles,
+  verifyStagedGguf
+} from './model-upgrade-files'
 import {
   getIndexTranslateModel,
   getIndexTranslateUpgrade,
@@ -98,13 +107,14 @@ const readManifest = (): HfModel[] => {
   }
 }
 
-const writeManifest = (models: HfModel[]): void => {
+const writeManifest = (models: HfModel[], strict = false): void => {
   const p = getManifestPath()
   const tmp = p + '.tmp'
   try {
     fs.writeFileSync(tmp, JSON.stringify(models, null, 2))
     fs.renameSync(tmp, p)
   } catch (e) {
+    if (strict) throw e
     log.error('[huggingface] Failed to write manifest:', e)
   }
 }
@@ -121,6 +131,7 @@ interface ActiveDownload {
 const activeDownloads = new Map<string, ActiveDownload>()
 const activeDownloadPromises = new Map<string, Promise<string>>()
 const cancelledDownloads = new Set<string>()
+const modelUpgradeDirs = new Set<string>()
 
 export const isDownloadCancelled = (repo: string, filename: string): boolean =>
   cancelledDownloads.has(downloadKey(repo, filename))
@@ -268,7 +279,7 @@ export const listModels = (): HfModel[] => {
 
   const nonLlmEntries = manifest.filter((m) => !isGgufModel(m))
   const previousLlmEntries = manifest.filter(isGgufModel)
-  if (foundModels.length !== previousLlmEntries.length) {
+  if (!modelUpgradeDirs.size && foundModels.length !== previousLlmEntries.length) {
     writeManifest([...nonLlmEntries, ...foundModels])
   }
 
@@ -304,6 +315,31 @@ export const listSherpaModels = (kind?: 'asr' | 'tts'): HfModel[] => {
     .map((model) => ({ ...model, filepath: normalizeModelPath(model, installDir) }))
 }
 
+export const recordSherpaAsrFiles = (
+  repo: string,
+  files: readonly { filename: string; filepath: string }[]
+): void => {
+  const installDir = getInstallDir()
+  const manifest = readManifest()
+  const registered = files.map(
+    ({ filename, filepath }): HfModel => ({
+      repo: `sherpa-${repo}`,
+      filename,
+      filepath: path.relative(installDir, filepath),
+      size: fs.statSync(filepath).size,
+      downloadedAt: new Date().toISOString(),
+      sourceRepo: repo,
+      sourceFilename: filename,
+      category: 'sherpa-asr'
+    })
+  )
+  const paths = new Set(registered.map((entry) => entry.filename))
+  writeManifest([
+    ...manifest.filter((entry) => entry.repo !== `sherpa-${repo}` || !paths.has(entry.filename)),
+    ...registered
+  ])
+}
+
 /**
  * Get the cache directory path (so runtimes can reference it).
  */
@@ -332,7 +368,8 @@ export const downloadModel = async (
   expectedSize?: number,
   saveAs?: string,
   saveRepoAs?: string,
-  subDir?: string
+  subDir?: string,
+  releaseModelFile?: () => Promise<boolean>
 ): Promise<string> => {
   const storageRepo = saveRepoAs || repo
   const slug = repoSlug(storageRepo)
@@ -347,6 +384,7 @@ export const downloadModel = async (
   // If saveRepoAs is provided, we use the cache dir directly to avoid deep nesting
   // unless the user specifically wants a subfolder.
   const repoDir = saveRepoAs ? baseCacheDir : path.join(baseCacheDir, slug)
+  if (modelUpgradeDirs.has(path.resolve(repoDir))) throw new Error('A model update is in progress')
 
   if (!fs.existsSync(repoDir)) {
     fs.mkdirSync(repoDir, { recursive: true })
@@ -385,7 +423,8 @@ export const downloadModel = async (
     onProgress,
     token,
     expectedSize,
-    saveAs
+    saveAs,
+    releaseModelFile
   )
   activeDownloadPromises.set(activeKey, downloadPromise)
   try {
@@ -405,9 +444,20 @@ const downloadModelInner = async (
   onProgress?: (progress: HfDownloadProgress) => void,
   token?: string,
   expectedSize?: number,
-  saveAs?: string
+  saveAs?: string,
+  releaseModelFile?: () => Promise<boolean>,
+  stageOnly = false
 ): Promise<string> => {
   const recordDownloadedModel = (): string => {
+    if (stageOnly) {
+      try {
+        verifyStagedGguf(destPath, verificationSize)
+      } catch (error) {
+        fs.rmSync(destPath, { force: true })
+        throw error
+      }
+      return destPath
+    }
     const manifest = readManifest()
     const storageRepoName = storageRepo.endsWith('.gguf') ? storageRepo.slice(0, -5) : storageRepo
     const existing = manifest.findIndex(
@@ -471,6 +521,25 @@ const downloadModelInner = async (
   const abortController = new AbortController()
   activeDownloads.set(activeKey, { controller: abortController, repo, filename, destPath })
   const { signal } = abortController
+  const promoteDownload = async () => {
+    try {
+      signal.throwIfAborted()
+      fs.renameSync(tmpPath, destPath)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (
+        !omniUpgrade ||
+        !fs.existsSync(destPath) ||
+        !['EACCES', 'EPERM', 'EBUSY'].includes(code || '') ||
+        !(await releaseModelFile?.())
+      )
+        throw error
+      signal.throwIfAborted()
+      fs.renameSync(tmpPath, destPath)
+    } finally {
+      activeDownloads.delete(activeKey)
+    }
+  }
 
   let remoteSize = 0
   try {
@@ -493,10 +562,15 @@ const downloadModelInner = async (
     )
   }
 
-  const verificationSize = omniUpgrade?.current.expectedSize ?? remoteSize
-  if (omniUpgrade && remoteSize > 0 && remoteSize !== verificationSize) {
+  const verificationSize =
+    (stageOnly ? expectedSize : omniUpgrade?.current.expectedSize) ?? remoteSize
+  if ((omniUpgrade || stageOnly) && remoteSize > 0 && remoteSize !== verificationSize) {
     activeDownloads.delete(activeKey)
     throw new Error(`Unexpected file size for ${repo}/${filename}: ${remoteSize} bytes`)
+  }
+  if (stageOnly && !verificationSize) {
+    activeDownloads.delete(activeKey)
+    throw new Error(`Cannot verify the download size of ${filename}`)
   }
 
   if (fs.existsSync(destPath)) {
@@ -526,8 +600,16 @@ const downloadModelInner = async (
 
   if (verificationSize > 0 && resumeBytes >= verificationSize) {
     if (resumeBytes === verificationSize) {
-      fs.renameSync(tmpPath, destPath)
-      activeDownloads.delete(activeKey)
+      if (stageOnly) {
+        try {
+          verifyStagedGguf(tmpPath, verificationSize)
+        } catch (error) {
+          fs.rmSync(tmpPath, { force: true })
+          activeDownloads.delete(activeKey)
+          throw error
+        }
+      }
+      await promoteDownload()
       log.info(`[huggingface] Resumed file was already complete: ${destPath}`)
       return recordDownloadedModel()
     }
@@ -560,9 +642,8 @@ const downloadModelInner = async (
 
   if (response.status === 416 && resumeBytes > 0) {
     const totalFromRange = parseContentRangeTotal(response.headers.get('content-range'))
-    if (!omniUpgrade && totalFromRange > 0 && resumeBytes >= totalFromRange) {
-      fs.renameSync(tmpPath, destPath)
-      activeDownloads.delete(activeKey)
+    if (!stageOnly && !omniUpgrade && totalFromRange > 0 && resumeBytes >= totalFromRange) {
+      await promoteDownload()
       log.info(`[huggingface] Resumed file was already complete: ${destPath}`)
       return recordDownloadedModel()
     } else {
@@ -607,14 +688,26 @@ const downloadModelInner = async (
 
   const contentLength = parseContentLength(response.headers.get('content-length'))
   const totalFromRange = parseContentRangeTotal(response.headers.get('content-range'))
+  if (stageOnly && response.status === 206) {
+    const range = response.headers.get('content-range')?.match(/^bytes (\d+)-(\d+)\/(\d+)$/i)
+    if (
+      !range ||
+      Number(range[1]) !== resumeBytes ||
+      Number(range[2]) !== verificationSize - 1 ||
+      totalFromRange !== verificationSize
+    ) {
+      await response.body?.cancel().catch(() => undefined)
+      activeDownloads.delete(activeKey)
+      throw new Error(`Invalid download range for ${filename}`)
+    }
+  }
   const totalBytes =
     verificationSize ||
     totalFromRange ||
     (response.status === 206 ? resumeBytes + contentLength : contentLength) ||
     expectedSize ||
     0
-  const reader = response.body?.getReader()
-  if (!reader) {
+  if (!response.body) {
     activeDownloads.delete(activeKey)
     throw new Error('Response body is not readable')
   }
@@ -624,40 +717,40 @@ const downloadModelInner = async (
   const startedAt = Date.now()
 
   try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
+    await writeDownloadBody(
+      response.body,
+      writeStream,
+      (bytes) => {
+        downloadedBytes += bytes
 
-      writeStream.write(Buffer.from(value))
-      downloadedBytes += value.byteLength
-
-      if (onProgress && totalBytes > 0) {
-        const elapsedSeconds = Math.max((Date.now() - startedAt) / 1000, 0.1)
-        const bytesPerSecond = Math.max((downloadedBytes - resumeBytes) / elapsedSeconds, 0)
-        const remainingBytes = Math.max(totalBytes - downloadedBytes, 0)
-        onProgress({
-          percent: (downloadedBytes / totalBytes) * 100,
-          downloadedBytes,
-          totalBytes,
-          bytesPerSecond,
-          etaSeconds: bytesPerSecond > 0 ? remainingBytes / bytesPerSecond : undefined
-        })
-      }
-    }
+        if (onProgress && totalBytes > 0) {
+          const elapsedSeconds = Math.max((Date.now() - startedAt) / 1000, 0.1)
+          const bytesPerSecond = Math.max((downloadedBytes - resumeBytes) / elapsedSeconds, 0)
+          const remainingBytes = Math.max(totalBytes - downloadedBytes, 0)
+          onProgress({
+            percent: (downloadedBytes / totalBytes) * 100,
+            downloadedBytes,
+            totalBytes,
+            bytesPerSecond,
+            etaSeconds: bytesPerSecond > 0 ? remainingBytes / bytesPerSecond : undefined
+          })
+        }
+      },
+      signal
+    )
   } catch (err) {
-    writeStream.end()
     activeDownloads.delete(activeKey)
     log.error(
       `[huggingface] Download failed; partial file kept for retry: ${repo}/${filename}`,
       err
     )
     throw err
-  } finally {
-    writeStream.end()
-    await new Promise<void>((resolve) => writeStream.on('finish', () => resolve()))
   }
 
-  if (verificationSize > 0 && downloadedBytes !== verificationSize) {
+  if (
+    verificationSize > 0 &&
+    (downloadedBytes !== verificationSize || fs.statSync(tmpPath).size !== verificationSize)
+  ) {
     activeDownloads.delete(activeKey)
     log.error(
       `[huggingface] Download size mismatch for ${repo}/${filename}: downloaded=${downloadedBytes}, expected=${verificationSize}`
@@ -667,9 +760,17 @@ const downloadModelInner = async (
     )
   }
 
+  if (stageOnly) {
+    try {
+      verifyStagedGguf(tmpPath, verificationSize)
+    } catch (error) {
+      fs.rmSync(tmpPath, { force: true })
+      activeDownloads.delete(activeKey)
+      throw error
+    }
+  }
   // Rename tmp to final
-  fs.renameSync(tmpPath, destPath)
-  activeDownloads.delete(activeKey)
+  await promoteDownload()
 
   if (verificationSize > 0) {
     const finalSize = fs.statSync(destPath).size
@@ -689,6 +790,186 @@ const downloadModelInner = async (
   return recordDownloadedModel()
 }
 
+export async function upgradeLocalModel(
+  oldRepo: string,
+  oldName: string,
+  hooks: {
+    switchRuntime: (switchFiles: () => Promise<void>) => Promise<void>
+    beforeSwitch: () => Promise<void>
+    activate: (modelName: string) => Promise<void>
+    beforeRollback: () => Promise<void>
+    progress?: (progress: HfDownloadProgress) => void
+  }
+): Promise<string> {
+  const models = listModels()
+  const old = models.find((model) => model.repo === oldRepo && model.filename === oldName)
+  const notice =
+    old && localModelUpgradeNotice([old, ...models.filter((model) => model !== old)], true)
+  if (
+    !notice ||
+    notice.kind === 'pro' ||
+    !old ||
+    notice.from !== oldName ||
+    notice.fromRepo !== oldRepo
+  )
+    throw new Error('This model update is no longer available')
+
+  const { target } = notice
+  const root = path.resolve(getHfCacheDir())
+  const previous = normalizeModelPath(old)
+  const previousDir = path.dirname(previous)
+  const storageRepo = target.name.slice(0, -5)
+  const install = path.join(root, storageRepo)
+  const dirs = new Set([previousDir, install])
+  for (const dir of dirs) checkModelUpgradeDirectory(root, dir)
+  if (
+    modelUpgradeDirs.size ||
+    [...activeDownloads.values()].some(({ destPath }) => dirs.has(path.dirname(destPath)))
+  )
+    throw new Error('A model download or update is in progress')
+  const snapshot = modelFileSnapshot(previous)
+  if (!snapshot || fs.statSync(previous).size !== old.size)
+    throw new Error('The old model has changed')
+
+  const finalModel = path.join(install, target.name)
+  if (finalModel !== previous && modelFileSnapshot(finalModel)) {
+    throw new Error('A different model already uses the replacement name')
+  }
+  if (
+    install !== previousDir &&
+    fs.existsSync(install) &&
+    fs
+      .readdirSync(install)
+      .some(
+        (name) =>
+          name.toLowerCase().endsWith('.gguf') && !isVisionProjector(name) && !isMtpDraftModel(name)
+      )
+  ) {
+    throw new Error('The replacement directory already contains model files')
+  }
+  for (const dir of dirs) modelUpgradeDirs.add(dir)
+  try {
+    fs.mkdirSync(install, { recursive: true })
+    const staged: Array<{
+      partial: string
+      final: string
+      entry: HfModel
+      original: string | null
+    }> = []
+    for (const file of [
+      target.projector,
+      ...(target.draft ? [target.draft] : []),
+      target.current
+    ]) {
+      const isMain = file === target.current
+      const name = isMain ? target.name : path.posix.basename(file.filename)
+      const source = createHash('sha256')
+        .update(`${file.repo}/${file.filename}`)
+        .digest('hex')
+        .slice(0, 16)
+      const final = path.join(install, name)
+      const original = modelFileSnapshot(final)
+      const partial = path.join(install, `.aurapro-${source}-${name}.pending`)
+      modelFileSnapshot(partial)
+      modelFileSnapshot(`${partial}.tmp`)
+      const activeKey = activeDownloadKey(file.repo, file.filename, partial)
+      resumeDownload(file.repo, file.filename)
+      try {
+        await downloadModelInner(
+          file.repo,
+          file.filename,
+          partial,
+          storageRepo,
+          storageRepo,
+          activeKey,
+          isMain ? hooks.progress : undefined,
+          undefined,
+          file.expectedSize,
+          undefined,
+          undefined,
+          true
+        )
+      } finally {
+        activeDownloads.delete(activeKey)
+      }
+      const size = verifyStagedGguf(partial, file.expectedSize)
+      staged.push({
+        partial,
+        final,
+        original,
+        entry: {
+          repo: storageRepo,
+          filename: name,
+          filepath: path.relative(getInstallDir(), final),
+          size,
+          downloadedAt: new Date().toISOString(),
+          sourceRepo: file.repo,
+          sourceFilename: file.filename,
+          category: isMain ? 'llm' : file === target.draft ? 'mtp-draft' : 'vision-projector'
+        }
+      })
+    }
+
+    await hooks.switchRuntime(async () => {
+      for (const dir of dirs) checkModelUpgradeDirectory(root, dir)
+      if (
+        modelFileSnapshot(previous) !== snapshot ||
+        staged.some((file) => modelFileSnapshot(file.final) !== file.original)
+      )
+        throw new Error('Model files changed while the update was downloading')
+
+      const obsolete = [previous]
+      const entries = fs.readdirSync(previousDir, { withFileTypes: true })
+      const hasOtherModel = entries.some(
+        (entry) =>
+          entry.name !== oldName &&
+          entry.name.toLowerCase().endsWith('.gguf') &&
+          !isVisionProjector(entry.name) &&
+          !isMtpDraftModel(entry.name)
+      )
+      if (hasOtherModel && previousDir === install) {
+        throw new Error('The old model shares a directory with another model')
+      }
+      // Remove attachments only from an exclusive model directory. Loose models may share files.
+      if (!hasOtherModel && path.basename(previousDir) === path.basename(previous, '.gguf')) {
+        const next = new Set(staged.map((file) => file.final))
+        obsolete.push(
+          ...entries
+            .filter(
+              (entry) =>
+                entry.isFile() &&
+                entry.name.toLowerCase().endsWith('.gguf') &&
+                (isVisionProjector(entry.name) || isMtpDraftModel(entry.name))
+            )
+            .map((entry) => path.join(previousDir, entry.name))
+            .filter((file) => !next.has(file))
+        )
+      }
+      await hooks.beforeSwitch()
+      const pathsToRemove = new Set([...obsolete, ...staged.map((file) => file.final)])
+      await swapModelUpgradeFiles(
+        staged,
+        obsolete,
+        async () => {
+          await hooks.activate(target.name)
+          writeManifest(
+            [
+              ...readManifest().filter((entry) => !pathsToRemove.has(normalizeModelPath(entry))),
+              ...staged.map((file) => file.entry)
+            ],
+            true
+          )
+        },
+        hooks.beforeRollback,
+        (error) => log.warn('[huggingface] Could not remove the old model backup:', error)
+      )
+    })
+    return finalModel
+  } finally {
+    for (const dir of dirs) modelUpgradeDirs.delete(dir)
+  }
+}
+
 /**
  * Delete a downloaded model.
  */
@@ -702,6 +983,7 @@ export const deleteModel = (repo: string, filename: string): boolean => {
     ? model.filepath
     : path.join(installDir, model.filepath)
   const repoDir = path.dirname(filepath)
+  if (modelUpgradeDirs.has(path.resolve(repoDir))) return false
   const cacheDir = path.resolve(getHfCacheDir())
   const relative = path.relative(cacheDir, path.resolve(filepath))
   if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {

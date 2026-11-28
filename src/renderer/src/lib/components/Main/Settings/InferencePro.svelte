@@ -112,27 +112,25 @@
     ...(info?.models.map((model) => ({ ...model, retired: false })) ?? []),
     ...(info?.legacyModels.map((model) => ({ ...model, retired: true })) ?? [])
   ])
-  const commandClass =
-    'text-[12px] opacity-40 hover:opacity-70 px-3 py-1.5 bg-black/[0.04] dark:bg-white/[0.06] transition border-none text-[#1d1d1f] dark:text-[#fafafa] rounded-xl disabled:opacity-20 disabled:cursor-not-allowed'
-  const controlClass =
-    'max-w-full bg-black/[0.04] dark:bg-white/[0.06] text-[12px] text-[#1d1d1f] dark:text-[#fafafa] px-3 py-1.5 border-none outline-none rounded-xl opacity-60'
+  const commandClass = 'settings-button transition'
+  const controlClass = 'settings-field'
 </script>
 
 {#if !info}
-  <div class="py-6 text-[12px] opacity-20 text-center">{$i18n.t('common.loading')}</div>
+  <div class="settings-loading">{$i18n.t('common.loading')}</div>
 {:else}
-  <div class="flex flex-col divide-y divide-white/[0.04]">
+  <div class="settings-sections">
     <div class="py-4">
       <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div>
-          <div class="text-[13px] opacity-70 flex flex-wrap items-center gap-1.5">
+          <div class="settings-label flex flex-wrap items-center gap-1.5">
             {info.runtime}
             {info.installed?.productVersion ?? info.installed?.version ?? ''}
-            <span class="text-[9px] opacity-30 uppercase tracking-wide">
+            <span class="settings-detail uppercase">
               {$i18n.t('common.experimental')}
             </span>
           </div>
-          <div class="text-[11px] opacity-25 mt-0.5 font-mono">127.0.0.1:{info.port}</div>
+          <div class="settings-description mt-0.5 font-mono">127.0.0.1:{info.port}</div>
           {#if info.installed?.managed}
             <div class="text-[11px] opacity-40 mt-1 font-mono">
               Control {info.installed.controlVersion} · Engine {info.installed.version}
@@ -196,9 +194,9 @@
           {error || info.error}
         </p>{/if}
     </div>
-    {#if !info.supported}<p class="py-4 text-[11px] opacity-25">{t('unsupported')}</p>{/if}
+    {#if !info.supported}<p class="py-4 settings-description">{t('unsupported')}</p>{/if}
     <div class="py-4 flex flex-wrap items-center justify-between gap-3">
-      <div class="text-[13px] opacity-70">{$i18n.t('settings.about.softwareUpdate')}</div>
+      <div class="settings-label">{$i18n.t('settings.about.softwareUpdate')}</div>
       <div class="flex flex-wrap gap-2">
         <button
           class={commandClass}
@@ -230,7 +228,7 @@
       class="min-w-0 border-none p-0 m-0 disabled:opacity-60"
     >
       <label class="py-4 flex flex-wrap items-center justify-between gap-3"
-        ><span class="text-[13px] opacity-70">{t('model')}</span><select
+        ><span class="settings-label">{t('model')}</span><select
           class="{controlClass} w-[360px] min-w-0"
           bind:value={settings.model}
         >
@@ -250,7 +248,7 @@
           >{$i18n.t('common.advanced')}</summary
         >
         <label class="py-4 flex flex-wrap items-center justify-between gap-3"
-          ><span class="text-[13px] opacity-70">{t('backend')}</span><select
+          ><span class="settings-label">{t('backend')}</span><select
             class={controlClass}
             bind:value={settings.backend}
             ><option value="auto">{t('auto')}</option>
@@ -262,7 +260,7 @@
           ></label
         >
         <div class="py-4 flex flex-wrap items-center justify-between gap-3">
-          <span class="text-[13px] opacity-70">{t('context')}</span>
+          <span class="settings-label">{t('context')}</span>
           <div class="flex flex-wrap items-center gap-2">
             <select
               class={controlClass}
@@ -293,7 +291,7 @@
         </div>
         {#if info.runtime === 'llama.cpp' || !settings.model.startsWith('qwen36-')}
           <label class="py-4 flex flex-wrap items-center justify-between gap-3"
-            ><span class="text-[13px] opacity-70">{t('cache')}</span><select
+            ><span class="settings-label">{t('cache')}</span><select
               class={controlClass}
               bind:value={settings.kv}
               ><option value="int8">INT8</option><option value="q4_0">Q4_0</option><option
@@ -303,7 +301,7 @@
           >
         {/if}
         <div class="py-4 flex items-center justify-between gap-4">
-          <span class="text-[13px] opacity-70">{t('vision')}</span>
+          <span class="settings-label">{t('vision')}</span>
           <fieldset class="shrink-0 border-none p-0 m-0 disabled:opacity-40">
             <Switch
               checked={settings.vision}
@@ -315,7 +313,7 @@
         {#if info.runtime !== 'llama.cpp'}<div
             class="py-4 flex flex-wrap items-center justify-between gap-3"
           >
-            <span class="text-[13px] opacity-70">MTP</span><span class="text-[11px] opacity-25"
+            <span class="settings-label">MTP</span><span class="settings-description"
               >{t('auto')}</span
             >
           </div>{/if}
@@ -340,12 +338,12 @@
       </div>
     </fieldset>
     <div class="py-4">
-      <h3 class="mb-3 text-[13px] opacity-70">{t('models')}</h3>
+      <h3 class="mb-3 settings-label">{t('models')}</h3>
       {#each modelRows as model (model.id)}
         <div class="flex items-center justify-between gap-3 py-3">
           <div class="min-w-0">
-            <div class="break-words text-[13px] opacity-70">{model.name}</div>
-            <div class="mt-0.5 text-[11px] leading-snug text-gray-600 dark:text-gray-400">
+            <div class="break-words settings-label">{model.name}</div>
+            <div class="mt-0.5 settings-detail">
               ~{model.retired ? model.gb : model.sizeGiB}G · {model.ramInfo}
               {#if model.retired}
                 · {t('retired')}{/if}
@@ -378,8 +376,8 @@
     {#if info.installed}
       <div class="py-4 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div class="text-[13px] opacity-70">{t('uninstall')}</div>
-          <div class="text-[11px] opacity-25 mt-0.5">{t('uninstallDesc')}</div>
+          <div class="settings-label">{t('uninstall')}</div>
+          <div class="settings-description mt-0.5">{t('uninstallDesc')}</div>
         </div>
         <button
           class={commandClass}

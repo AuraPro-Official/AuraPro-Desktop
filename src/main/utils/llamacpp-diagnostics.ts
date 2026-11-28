@@ -8,7 +8,15 @@ import { promisify } from 'util'
 import { app } from 'electron'
 import log from 'electron-log'
 
-import { getConfig, getExactPackageVersions, getInstallDir, portInUse, setConfig } from './index'
+import {
+  getConfig,
+  getExactPackageVersions,
+  getInstallDir,
+  getWindowsGpuInfo,
+  portInUse,
+  setConfig
+} from './index'
+import { parseCimDisplays, summarizeDxdiagDisplays, type DxdiagDisplay } from './dxdiag-display'
 import { downloadModel, getModelsDir, listModels, type HfModel } from './huggingface'
 import { INDEX_TRANSLATE_MODELS } from '../../shared/index-translate-models'
 import {
@@ -35,7 +43,8 @@ import {
   inspectLlamaCppMultimodalLog,
   isWindowsApplicationControlBlock
 } from './llamacpp-log-diagnostics'
-import { getInstalledOpenCodeVersion, getOpenCodeServiceState } from './pi-agent'
+import { getInstalledOpenCodeVersion, getPiAgentHealth } from './pi-agent'
+import type { PiAgentHealth } from './pi-agent-health'
 import { getSherpaServiceState } from './sherpa'
 import { checkOptionalService, type OptionalServiceHealth } from './optional-service-health'
 import { getInstalledOfficialGlossaryVersion } from './official-glossaries'
@@ -83,7 +92,7 @@ export interface LlamaDiagnosticReport {
     optionalComponents: Array<{
       id: 'sherpa' | 'official-glossaries' | 'opencode' | 'pytorch'
       version: string
-      health?: OptionalServiceHealth
+      health?: OptionalServiceHealth | PiAgentHealth
     }>
   }
   hardware: {
@@ -132,7 +141,6 @@ interface NvidiaProbe {
   names: string[]
   driverVersion: string | null
   smiPath: string | null
-  adapters: string
   totalVramMb: number | null
   freeVramMb: number | null
 }
@@ -420,21 +428,44 @@ const getMacGpuNames = async (): Promise<string[]> => {
   }
 }
 
-const probeNvidia = async (): Promise<NvidiaProbe> => {
-  let adapters = ''
-  if (process.platform === 'win32') {
-    try {
-      const result = await execFileAsync('wmic', ['path', 'win32_VideoController', 'get', 'name'], {
-        encoding: 'utf8',
-        timeout: 5000,
-        windowsHide: true
+const probeWindowsDiagnosticDisplays = async (): Promise<DxdiagDisplay[]> => {
+  let timer: NodeJS.Timeout | undefined
+  try {
+    const result = await Promise.race([
+      getWindowsGpuInfo(),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), 10_000)
       })
-      adapters = result.stdout
-    } catch {
-      // Fall back to nvidia-smi when WMIC is unavailable.
-    }
+    ])
+    if (result) return result.displays
+  } catch (error) {
+    log.warn('DxDiag failed during llama.cpp diagnostics:', error)
+  } finally {
+    clearTimeout(timer)
   }
 
+  // If DxDiag is slow or produces an unreadable report, still show the Windows adapter and driver.
+  try {
+    const { stdout } = await execFileAsync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); ' +
+          'Get-CimInstance Win32_VideoController -ErrorAction Stop | ' +
+          'Select-Object Name, DriverVersion | ConvertTo-Json -Compress'
+      ],
+      { encoding: 'utf8', timeout: 3000, windowsHide: true }
+    )
+    return stdout.trim() ? parseCimDisplays(stdout) : []
+  } catch (error) {
+    log.warn('Windows display adapter fallback failed:', error)
+    return []
+  }
+}
+
+const probeNvidia = async (): Promise<NvidiaProbe> => {
   for (const smiPath of nvidiaSmiPaths()) {
     try {
       const { stdout: output } = await execFileAsync(
@@ -466,7 +497,6 @@ const probeNvidia = async (): Promise<NvidiaProbe> => {
           names,
           driverVersion,
           smiPath,
-          adapters,
           totalVramMb: totalVramMb || null,
           freeVramMb: freeVramMb || null
         }
@@ -476,26 +506,21 @@ const probeNvidia = async (): Promise<NvidiaProbe> => {
     }
   }
 
-  const fallbackNames = adapters
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => /nvidia|geforce|rtx/i.test(line) && !/^name$/i.test(line))
   return {
-    detected: fallbackNames.length > 0,
-    names: fallbackNames,
+    detected: false,
+    names: [],
     driverVersion: null,
     smiPath: null,
-    adapters,
     totalVramMb: null,
     freeVramMb: null
   }
 }
 
-const recommendedVariantFor = (probe: NvidiaProbe): string => {
+const recommendedVariantFor = (probe: NvidiaProbe, adapterNames: string[]): string => {
   if (probe.detected) {
     return probe.names.some((name) => /\brtx\s+50[5-9]0\b/i.test(name)) ? 'cuda-13.3' : 'cuda-12.4'
   }
-  const adapters = probe.adapters.toLowerCase()
+  const adapters = adapterNames.join(' ').toLowerCase()
   if (
     adapters.includes('amd') ||
     adapters.includes('radeon') ||
@@ -506,12 +531,6 @@ const recommendedVariantFor = (probe: NvidiaProbe): string => {
   }
   return 'cpu'
 }
-
-const adapterNamesFromProbe = (probe: NvidiaProbe): string[] =>
-  probe.adapters
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line && !/^name$/i.test(line))
 
 const findFileBesideBinary = (binary: string | null, prefix: string): boolean => {
   if (!binary) return false
@@ -748,13 +767,40 @@ export const diagnoseLlamaCpp = async (
   trigger = 'manual',
   startupError?: string
 ): Promise<LlamaDiagnosticReport> => {
-  const [config, software, operatingSystem, probe, macGpuNames] = await Promise.all([
-    getConfig(),
-    getSoftwareVersions(),
-    getOperatingSystemVersion(),
-    probeNvidia(),
-    process.platform === 'darwin' ? getMacGpuNames() : Promise.resolve([])
-  ])
+  const [config, software, operatingSystem, nvidia, macGpuNames, windowsDisplays] =
+    await Promise.all([
+      getConfig(),
+      getSoftwareVersions(),
+      getOperatingSystemVersion(),
+      probeNvidia(),
+      process.platform === 'darwin' ? getMacGpuNames() : Promise.resolve([]),
+      process.platform === 'win32' ? probeWindowsDiagnosticDisplays() : Promise.resolve([])
+    ])
+  const windowsGpu = summarizeDxdiagDisplays(windowsDisplays)
+  const windowsNvidiaNames = windowsGpu.gpuNames.filter((name) =>
+    /\b(?:nvidia|geforce|quadro)\b/i.test(name)
+  )
+  const probe =
+    !nvidia.detected && windowsNvidiaNames.length > 0
+      ? { ...nvidia, detected: true, names: windowsNvidiaNames }
+      : nvidia
+  const otherDriverVersion = summarizeDxdiagDisplays(
+    windowsDisplays.filter(({ name }) => !windowsNvidiaNames.includes(name))
+  ).driverVersion
+  const hardwareGpu = {
+    nvidiaDetected: probe.detected,
+    gpuNames:
+      process.platform === 'darwin'
+        ? macGpuNames
+        : windowsGpu.gpuNames.length > 0
+          ? windowsGpu.gpuNames
+          : probe.names,
+    driverVersion: probe.driverVersion
+      ? [probe.driverVersion, otherDriverVersion].filter(Boolean).join(', ')
+      : windowsGpu.driverVersion,
+    totalVramMb: probe.totalVramMb ?? windowsGpu.totalVramMb,
+    freeVramMb: probe.freeVramMb
+  }
   const system = {
     operatingSystem,
     cpuModel: getCpuModel()
@@ -772,19 +818,7 @@ export const diagnoseLlamaCpp = async (
             !!body && typeof body === 'object' && 'ok' in body && body.ok === true
         })
       } else if (component.id === 'opencode') {
-        component.health = await checkOptionalService({
-          enabled: config.openCode?.enabled === true,
-          activeProbe,
-          snapshot: getOpenCodeServiceState,
-          endpoint: '/global/health',
-          headers: {
-            Authorization:
-              'Basic ' +
-              Buffer.from(
-                getOpenCodeServiceState().username + ':' + (config.openCode?.password ?? '')
-              ).toString('base64')
-          }
-        })
+        component.health = getPiAgentHealth(config.openCode?.enabled === true)
       }
     })
   )
@@ -828,19 +862,10 @@ export const diagnoseLlamaCpp = async (
       system,
       software,
       hardware: {
-        nvidiaDetected: probe.detected,
-        gpuNames:
-          process.platform === 'darwin'
-            ? macGpuNames
-            : probe.names.length
-              ? probe.names
-              : adapterNamesFromProbe(probe),
-        driverVersion: probe.driverVersion,
+        ...hardwareGpu,
         processOnGpu: null,
         totalRamBytes: os.totalmem(),
-        freeRamBytes: os.freemem(),
-        totalVramMb: probe.totalVramMb,
-        freeVramMb: probe.freeVramMb
+        freeRamBytes: os.freemem()
       },
       runtime: {
         name: 'Pro_V1',
@@ -871,7 +896,7 @@ export const diagnoseLlamaCpp = async (
     }
   }
   const configuredVariant = normalizeVariant(config.llamaCpp?.variant)
-  const recommendedVariant = recommendedVariantFor(probe)
+  const recommendedVariant = recommendedVariantFor(probe, windowsGpu.gpuNames)
   const variant = configuredVariant === 'auto' ? recommendedVariant : configuredVariant
   const info = getLlamaCppInfo()
   const binary = info.binaryPath && fs.existsSync(info.binaryPath) ? info.binaryPath : null
@@ -975,7 +1000,15 @@ export const diagnoseLlamaCpp = async (
     }
   }
 
-  if (!binaryPresent) {
+  if (startupError?.startsWith('llama.cpp ZIP is in use:')) {
+    addIssue(issues, {
+      id: 'llamacpp-archive-in-use',
+      severity: 'error',
+      title: 'llama.cpp ZIP is in use',
+      detail: startupError,
+      repairable: false
+    })
+  } else if (!binaryPresent) {
     addIssue(issues, {
       id: 'llamacpp-missing',
       severity: 'error',
@@ -1492,7 +1525,7 @@ export const diagnoseLlamaCpp = async (
   const fingerprintSource = [
     variant,
     info.version ?? '',
-    probe.driverVersion ?? '',
+    hardwareGpu.driverVersion ?? '',
     ...issues.map((issue) => issue.id).sort()
   ].join('|')
   const fingerprint = createHash('sha256').update(fingerprintSource).digest('hex').slice(0, 16)
@@ -1507,19 +1540,10 @@ export const diagnoseLlamaCpp = async (
     system,
     software,
     hardware: {
-      nvidiaDetected: probe.detected,
-      gpuNames:
-        process.platform === 'darwin'
-          ? macGpuNames
-          : probe.names.length > 0
-            ? probe.names
-            : adapterNamesFromProbe(probe),
-      driverVersion: probe.driverVersion,
+      ...hardwareGpu,
       processOnGpu,
       totalRamBytes,
-      freeRamBytes,
-      totalVramMb: probe.totalVramMb,
-      freeVramMb: probe.freeVramMb
+      freeRamBytes
     },
     runtime: {
       health: runtimeHealth,

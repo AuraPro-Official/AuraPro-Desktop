@@ -12,6 +12,7 @@ import {
   getInstallDir,
   getOpenCodeRuntimeFilePath
 } from './index'
+import { checkPiAgentHealth, type PiAgentHealth } from './pi-agent-health'
 
 const VERSION = '1.0.3'
 const NODE_VERSION = '24.22.3'
@@ -287,6 +288,9 @@ export function getPiInfo() {
     username: 'aurapro'
   }
 }
+export const getPiAgentHealth = (enabled: boolean): PiAgentHealth =>
+  checkPiAgentHealth(enabled, active, getOpenCodeRuntimeFilePath())
+
 export const PI_EXTENSIONS = [
   {
     id: 'browser',
@@ -431,7 +435,6 @@ export const uninstallOpenCode = uninstallPi
 export const getOpenCodeInfo = getPiInfo
 export const isOpenCodeInstalled = () => fs.existsSync(binary())
 export const getInstalledOpenCodeVersion = async () => getPiInfo().version
-export const getOpenCodeServiceState = () => ({ ...getPiInfo(), url: null })
 export const validateOpenCodeProcess = () => active
 export const getOpenCodeLog = () => logs
 export const setOpenCodeRuntimeStatusHandler = (next: typeof handler) => {

@@ -29,9 +29,14 @@ const require = createRequire(import.meta.url)
 const defaultModel = STRATA_MODELS.find((model) => model.id === DEFAULT_STRATA_SETTINGS.model)
 const alternateModel = STRATA_MODELS.find((model) => model.id !== defaultModel.id)
 const mediumQ3 = indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.mediumQ3)
+const mediumQ6 = indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.mediumQ6)
 const q3Downloads = [
   [mediumQ3.hfRepo, mediumQ3.filename, mediumQ3.name, 'medium_Q3_V2'],
   [mediumQ3.mmprojRepo, mediumQ3.mmprojFilename, mediumQ3.mmprojFilename, 'medium_Q3_V2']
+]
+const q6Downloads = [
+  [mediumQ6.hfRepo, mediumQ6.filename, mediumQ6.name, 'medium_Q6_V2'],
+  [mediumQ6.mmprojRepo, mediumQ6.mmprojFilename, mediumQ6.mmprojFilename, 'medium_Q6_V2']
 ]
 const modelDownloads = (calls) =>
   calls
@@ -408,6 +413,7 @@ try {
       await page.getByText(standardRequirementLabel(mediumQ3.name), { exact: false }).waitFor()
       await checkModelColumns(page, 'lowest_V2.gguf', 'low_E4.gguf')
       await checkWizardBadges(page, mediumQ3.name, ['图片', '视频'])
+      await checkWizardBadges(page, mediumQ6.name, ['图片', '视频'])
       await checkWizardBadges(page, 'low_E4.gguf', ['图片', '视频', '音频', 'MTP'])
       await checkWizardBadges(page, 'medium_IQ2.gguf', ['图片', '视频', 'MTP'])
       await checkWizardBadges(page, 'high_Q4.gguf', ['图片', '视频', 'MTP'])
@@ -465,9 +471,10 @@ try {
     assert.deepEqual(errors, [])
     await page.close()
   }
-  for (const [proChoice, lowRam] of [
+  for (const [proChoice, lowRam, chooseQ6] of [
     [true, false],
     [false, true],
+    [false, true, true],
     [true, true]
   ]) {
     const page = await browser.newPage({
@@ -520,6 +527,7 @@ try {
     } else {
       await checkModelColumns(page, 'lowest_V2', 'low_E4')
       await checkWizardBadges(page, 'medium_Q3_V2', ['图片', '视频'])
+      await checkWizardBadges(page, 'medium_Q6_V2', ['图片', '视频'])
       await checkWizardBadges(page, 'low_E4', ['图片', '视频', '音频', 'MTP'])
     }
     await page.screenshot({
@@ -530,7 +538,11 @@ try {
       await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
       false
     )
-    if (!proChoice) await page.getByText('medium_Q3_V2', { exact: true }).click()
+    if (!proChoice) {
+      const name = chooseQ6 ? 'medium_Q6_V2' : 'medium_Q3_V2'
+      await page.locator('summary ~ div').getByText(name, { exact: true }).click()
+      await page.locator('summary').getByText(`${name}.gguf`, { exact: true }).waitFor()
+    }
     await page.getByRole('button', { name: 'Download & Finish Setup' }).click()
     await page.waitForFunction(() => window.completed)
     const calls = await page.evaluate(() => window.calls)
@@ -540,7 +552,7 @@ try {
     assert.equal(names.includes('startStrata'), proChoice)
     assert.equal(names.includes('startLlamaCpp'), !proChoice)
     assert.equal(names.includes('downloadHfModel'), !proChoice)
-    if (!proChoice) assert.deepEqual(modelDownloads(calls), q3Downloads)
+    if (!proChoice) assert.deepEqual(modelDownloads(calls), chooseQ6 ? q6Downloads : q3Downloads)
     if (proChoice) {
       assert.equal(
         calls.find(([action]) => action === 'prepareStrataModel')[1].model,

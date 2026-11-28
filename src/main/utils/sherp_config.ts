@@ -308,6 +308,9 @@ export const DEFAULT_TTS_PRESETS = [
   }
 ]
 
+export const RETIRED_INDIC_ASR_REPO =
+  'csukuangfj/sherpa-onnx-sense-voice-funasr-nano-int8-2025-12-17'
+
 export const DEFAULT_ASR_PRESETS = [
   {
     id: 'csukuangfj/sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30',
@@ -656,21 +659,6 @@ export const DEFAULT_ASR_PRESETS = [
         saveAs: 'sherpa-asr-arabic-fastconformer-tokens.txt',
         field: 'asrTokens'
       }
-    ]
-  },
-  {
-    id: 'csukuangfj/sherpa-onnx-sense-voice-funasr-nano-int8-2025-12-17',
-    repo: 'csukuangfj/sherpa-onnx-sense-voice-funasr-nano-int8-2025-12-17',
-    asrType: 'sense_voice',
-    profileKeys: ['hindi'],
-    language: 'auto',
-    files: [
-      {
-        filename: 'model.int8.onnx',
-        saveAs: 'sherpa-asr-funasr-nano-model.int8.onnx',
-        field: 'asrModel'
-      },
-      { filename: 'tokens.txt', saveAs: 'sherpa-asr-funasr-nano-tokens.txt', field: 'asrTokens' }
     ]
   },
   {

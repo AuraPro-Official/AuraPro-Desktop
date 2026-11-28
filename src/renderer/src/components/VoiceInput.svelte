@@ -487,13 +487,12 @@
       sans-serif;
     animation: appear 0.15s ease-out;
 
-    background: rgba(30, 30, 30, 0.78);
+    background: rgba(245, 245, 247, 0.95);
+    color: #1d1d1f;
     backdrop-filter: blur(40px) saturate(1.8);
     -webkit-backdrop-filter: blur(40px) saturate(1.8);
-    border: 0.5px solid rgba(255, 255, 255, 0.12);
-    box-shadow:
-      0 2px 12px rgba(0, 0, 0, 0.35),
-      inset 0 0.5px 0 rgba(255, 255, 255, 0.06);
+    border: 0.5px solid rgba(0, 0, 0, 0.12);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);
   }
 
   .pill:active {
@@ -521,7 +520,7 @@
   .bar {
     width: 4px;
     border-radius: 99px;
-    background: #fff;
+    background: currentColor;
     opacity: 0.9;
     transition: height 60ms ease-out;
     min-height: 6px;
@@ -531,15 +530,14 @@
     font-size: 14px;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
-    color: rgba(255, 255, 255, 0.85);
     letter-spacing: 0.01em;
   }
 
   .loader {
     width: 16px;
     height: 16px;
-    border: 2px solid rgba(255, 255, 255, 0.15);
-    border-top-color: rgba(255, 255, 255, 0.8);
+    border: 2px solid color-mix(in srgb, currentColor 20%, transparent);
+    border-top-color: currentColor;
     border-radius: 50%;
     animation: spin 0.7s linear infinite;
   }
@@ -553,6 +551,19 @@
   .err {
     font-size: 12px;
     font-weight: 500;
-    color: #ff6b6b;
+    color: #a52121;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .pill {
+      background: rgba(30, 30, 30, 0.9);
+      color: #fafafa;
+      border-color: rgba(255, 255, 255, 0.12);
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+    }
+
+    .err {
+      color: #ff8c8c;
+    }
   }
 </style>

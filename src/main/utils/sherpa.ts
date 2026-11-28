@@ -20,19 +20,22 @@ import {
   portInUse,
   getInstallDir,
   ensureFfmpeg,
-  getFfmpegDir
+  getFfmpegDir,
+  downloadFileWithProgress
 } from './index'
 import {
   downloadModel,
   getRepoFiles,
   downloadFromUrl,
   getHfCacheDir,
+  recordSherpaAsrFiles,
   type HfFileInfo
 } from './huggingface'
+import { downloadIndicMirrorFile, fetchIndicMirrorManifest } from './indicconformer-mirror'
 import { ServiceLock, isProcessAlive } from './service-lock'
 import {
   RECOMMENDED_ASR_PRESETS as DEFAULT_ASR_PRESETS,
-  DEFAULT_ASR_PRESETS as LEGACY_ASR_PRESETS,
+  RETIRED_INDIC_ASR_REPO,
   DEFAULT_TTS_PRESETS,
   SERVER_SOURCE
 } from './sherp_config'
@@ -155,7 +158,12 @@ const buildAsrProfiles = (sherpaConfig: SherpaConfig): Record<string, Record<str
   const profiles: Record<string, Record<string, string>> = {}
   for (const [key, value] of Object.entries(configuredProfiles)) {
     if (value && typeof value === 'object') {
-      profiles[key] = compactEnv(value as Record<string, unknown>)
+      const profile = compactEnv(value as Record<string, unknown>)
+      if (
+        profile.SHERPA_ASR_NAME !== RETIRED_INDIC_ASR_REPO &&
+        profile.SHERPA_ASR_INDIC_FALLBACK !== 'true'
+      )
+        profiles[key] = profile
     }
   }
 
@@ -178,7 +186,10 @@ const buildAsrProfiles = (sherpaConfig: SherpaConfig): Record<string, Record<str
     SHERPA_LANGUAGE: sherpaConfig.language
   })
 
-  if (legacyProfile.SHERPA_ASR_MODEL || legacyProfile.SHERPA_ASR_ENCODER) {
+  if (
+    legacyProfile.SHERPA_ASR_NAME !== RETIRED_INDIC_ASR_REPO &&
+    (legacyProfile.SHERPA_ASR_MODEL || legacyProfile.SHERPA_ASR_ENCODER)
+  ) {
     profiles.default ??= legacyProfile
     const legacyLanguage = speechLanguageCode(sherpaConfig.asrLanguage || sherpaConfig.language)
     if (legacyLanguage) profiles[legacyLanguage] ??= legacyProfile
@@ -210,6 +221,14 @@ const requestedSpeechLanguages = (config: SherpaConfig): string[] => {
   return [
     ...new Set([
       ...selectedSpeechLanguages(config),
+      ...(!Array.isArray(config.enabledLanguages) &&
+      (config.asrPreset === RETIRED_INDIC_ASR_REPO ||
+        config.asrProfiles?.hindi?.SHERPA_ASR_NAME === RETIRED_INDIC_ASR_REPO ||
+        config.asrProfiles?.hindi?.SHERPA_ASR_INDIC_FALLBACK === 'true')
+        ? [speechLanguageCode(config.asrLanguage || config.language) || 'hi'].map((code) =>
+            speechAsrGroup(code) === 'hindi' ? code : 'hi'
+          )
+        : []),
       ...dictionaryLanguages.filter(
         (language) => !config.excludedGlossaryLanguages?.includes(language)
       )
@@ -226,6 +245,7 @@ const speechProfileReady = (profile?: Record<string, string>): boolean => {
       if (
         !profile.SHERPA_ASR_LANGUAGE_MASKS ||
         !Array.isArray(external) ||
+        external.length === 0 ||
         !external.every((file) => typeof file === 'string' && fs.existsSync(file))
       )
         return false
@@ -283,26 +303,59 @@ export const ensureDefaultAsrModel = (...args: Parameters<typeof ensureAsrModels
 export const ensureDefaultTtsModel = (...args: Parameters<typeof ensureTtsModels>) =>
   queueSpeechDownload(() => ensureTtsModels(...args))
 
+export const indicSpeechModelUpdateLanguages = (config: SherpaConfig): string[] => {
+  const profiles = buildAsrProfiles(config)
+  return requestedSpeechLanguages(config).filter((language) => {
+    if (speechAsrGroup(language) !== 'hindi') return false
+    const specific = profiles[language]
+    const shared = profiles.hindi
+    if ([specific, shared].some((profile) => profile && profile.SHERPA_ASR_MANAGED !== 'true'))
+      return false
+    return (
+      (specific && specific.SHERPA_ASR_TYPE !== 'indic_ctc') ||
+      shared?.SHERPA_ASR_TYPE !== 'indic_ctc' ||
+      !speechProfileReady(shared)
+    )
+  })
+}
+
+export const prepareIndicSpeechModelUpdate = (
+  config: SherpaConfig,
+  onStatus?: (status: string) => void
+) => queueSpeechDownload(() => ensureAsrModels(config, onStatus, false, 'only-indic'))
+
 const ensureAsrModels = async (
   sherpaConfig: SherpaConfig,
   onStatus?: (status: string) => void,
-  _isDelete?: boolean,
-  persist = true
+  persist = true,
+  mode: 'all' | 'only-indic' | 'without-indic' = 'all'
 ): Promise<SherpaConfig> => {
   const profiles = buildAsrProfiles(sherpaConfig)
   const selected = requestedSpeechLanguages(sherpaConfig)
-  const oldIndicRepo = 'csukuangfj/sherpa-onnx-sense-voice-funasr-nano-int8-2025-12-17'
-  for (const key of Object.keys(profiles)) {
-    if (
-      (key === 'hindi' || speechAsrGroup(key) === 'hindi') &&
-      profiles[key].SHERPA_ASR_NAME === oldIndicRepo &&
-      profiles[key].SHERPA_ASR_MANAGED === 'true' &&
-      (profiles[key].SHERPA_ASR_INDIC_FALLBACK !== 'true' || _isDelete)
-    )
-      delete profiles[key]
+  const selectedForDownload = selected.filter((language) => {
+    const indic = speechAsrGroup(language) === 'hindi'
+    return mode === 'all' || (mode === 'only-indic' ? indic : !indic)
+  })
+  let normalizedIndicProfiles = false
+  if (
+    mode !== 'without-indic' &&
+    selectedForDownload.some((language) => speechAsrGroup(language) === 'hindi')
+  ) {
+    for (const key of [
+      'hindi',
+      ...selectedForDownload.filter((language) => speechAsrGroup(language) === 'hindi')
+    ]) {
+      if (
+        profiles[key]?.SHERPA_ASR_MANAGED === 'true' &&
+        profiles[key].SHERPA_ASR_TYPE !== 'indic_ctc'
+      ) {
+        delete profiles[key]
+        normalizedIndicProfiles = true
+      }
+    }
   }
   const groups = new Set(
-    selected
+    selectedForDownload
       .filter((language) => {
         const profile = profiles[language] || profiles[speechAsrGroup(language)]
         return !profile || (profile.SHERPA_ASR_MANAGED === 'true' && !speechProfileReady(profile))
@@ -317,7 +370,13 @@ const ensureAsrModels = async (
           (profiles[key].SHERPA_ASR_MANAGED === 'true' && !speechProfileReady(profiles[key])))
     )
   )
-  if (presets.length === 0 && selected.every((language) => profiles[language])) {
+  if (
+    presets.length === 0 &&
+    !normalizedIndicProfiles &&
+    selectedForDownload.every(
+      (language) => profiles[language] || profiles[speechAsrGroup(language)]
+    )
+  ) {
     return sherpaConfig
   }
 
@@ -330,46 +389,12 @@ const ensureAsrModels = async (
   }
 
   const nextProfiles = { ...profiles }
-  // Public downloads never consume the user's global Hugging Face credentials.
-  const token = undefined
-  const fallbackIndic = (index: number) => {
-    presets[index] = LEGACY_ASR_PRESETS.find((preset) => preset.profileKeys.includes('hindi'))!
-    onStatus?.(
-      'IndicConformer download unavailable; falling back to FunASR Nano int8. Not all Indic languages are supported by this fallback.'
-    )
-    log.warn('IndicConformer download unavailable; using legacy FunASR Nano int8 fallback')
-  }
-  const filesByPreset = await Promise.all(
-    presets.map(async (preset, index) => {
-      if (preset.asrType !== 'indic_ctc') return preset.files
-      try {
-        const files = await getRepoFiles(preset.repo, token)
-        // ONNX external tensors must remain next to the encoder; do not download RNNT graphs.
-        const external = files.filter(
-          ({ filename }) =>
-            /^assets\/[A-Za-z0-9_.-]+$/.test(filename) && !/\.(onnx|json|ts)$/.test(filename)
-        )
-        return [
-          ...preset.files,
-          ...external.map(({ filename }) => ({
-            filename,
-            saveAs: filename,
-            field: 'asrExternalData'
-          }))
-        ]
-      } catch {
-        fallbackIndic(index)
-        return presets[index].files
-      }
-    })
-  )
   const downloadedByPreset: Record<string, string>[] = presets.map(() => ({}))
   const downloadResults: { presetIndex: number; field: string; filepath: string }[] = []
-  for (let presetIndex = 0; presetIndex < presets.length; presetIndex++) {
-    const downloadPreset = async () =>
+  for (const [presetIndex, original] of presets.entries()) {
+    const downloadPreset = async (preset: (typeof presets)[number]) =>
       parallelLimit(
-        filesByPreset[presetIndex].map((file) => async () => {
-          const preset = presets[presetIndex]
+        preset.files.map((file) => async () => {
           const filepath = await downloadModel(
             preset.repo,
             file.filename,
@@ -378,7 +403,7 @@ const ensureAsrModels = async (
                 onStatus?.(`Downloading Sherpa ASR ${Math.round(progress.percent)}%...`)
               }
             },
-            token,
+            undefined,
             undefined,
             file.saveAs,
             `sherpa-${preset.id}`,
@@ -388,14 +413,60 @@ const ensureAsrModels = async (
         }),
         2
       )
-    try {
-      downloadResults.push(...(await downloadPreset()))
-    } catch (error) {
-      if (presets[presetIndex].asrType !== 'indic_ctc') throw error
-      fallbackIndic(presetIndex)
-      filesByPreset[presetIndex] = presets[presetIndex].files
-      downloadResults.push(...(await downloadPreset()))
+    if (original.asrType === 'indic_ctc') {
+      try {
+        const fields = new Map(original.files.map((file) => [file.filename, file.field]))
+        const { revision, files } = await fetchIndicMirrorManifest([...fields.keys()])
+        const directory = path.join(getHfCacheDir(), 'sherpa', 'asr', 'indicconformer')
+        const completed = new Map<string, number>()
+        const total = files.reduce((sum, file) => sum + file.size, 0)
+        let transferred = 0
+        let reported = -1
+        const reportProgress = (filename: string, bytes: number) => {
+          transferred += bytes - (completed.get(filename) ?? 0)
+          completed.set(filename, bytes)
+          const percent = Math.min(99, Math.floor((transferred / total) * 100))
+          if (percent > reported) {
+            reported = percent
+            onStatus?.(`Downloading Sherpa ASR ${percent}%...`)
+          }
+        }
+        const downloaded = await parallelLimit(
+          files.map((file) => async () => {
+            const filepath = await downloadIndicMirrorFile(
+              directory,
+              revision,
+              file,
+              (url, target) =>
+                downloadFileWithProgress(
+                  url,
+                  target,
+                  (_percent, bytes) => reportProgress(file.path, Math.min(bytes, file.size)),
+                  AbortSignal.timeout(60 * 60 * 1000)
+                )
+            )
+            reportProgress(file.path, file.size)
+            return { filename: file.path, filepath }
+          }),
+          2
+        )
+        recordSherpaAsrFiles(original.repo, downloaded)
+        downloadResults.push(
+          ...downloaded.map(({ filename, filepath }) => ({
+            presetIndex,
+            filepath,
+            field: fields.get(filename) ?? 'asrExternalData'
+          }))
+        )
+        continue
+      } catch (error) {
+        throw new Error(
+          `IndicConformer download failed: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error }
+        )
+      }
     }
+    downloadResults.push(...(await downloadPreset(presets[presetIndex])))
   }
   for (const { presetIndex, field, filepath } of downloadResults) {
     downloadedByPreset[presetIndex][field] = filepath
@@ -406,7 +477,6 @@ const ensureAsrModels = async (
     const profile = compactEnv({
       SHERPA_ASR_NAME: preset.id,
       SHERPA_ASR_MANAGED: true,
-      SHERPA_ASR_INDIC_FALLBACK: preset.repo === oldIndicRepo ? true : undefined,
       SHERPA_ASR_TYPE: preset.asrType,
       SHERPA_ASR_MODEL: downloaded.asrModel,
       SHERPA_ASR_ENCODER: downloaded.asrEncoder,
@@ -445,8 +515,14 @@ const ensureAsrModels = async (
   }
   for (const language of selected) {
     const shared = nextProfiles[speechAsrGroup(language)]
-    if (shared && (!nextProfiles[language] || nextProfiles[language].SHERPA_ASR_MANAGED === 'true'))
+    if (shared?.SHERPA_ASR_TYPE === 'indic_ctc') {
+      if (nextProfiles[language]?.SHERPA_ASR_MANAGED === 'true') delete nextProfiles[language]
+    } else if (
+      shared &&
+      (!nextProfiles[language] || nextProfiles[language].SHERPA_ASR_MANAGED === 'true')
+    ) {
       nextProfiles[language] = shared
+    }
   }
   // Share only preset languages, without treating them as requests for unrelated TTS downloads.
   for (const language of SPEECH_ASR_LANGUAGES) {
@@ -454,7 +530,7 @@ const ensureAsrModels = async (
     const shared = nextProfiles[group]
     if (
       shared &&
-      shared.SHERPA_ASR_INDIC_FALLBACK !== 'true' &&
+      shared.SHERPA_ASR_TYPE !== 'indic_ctc' &&
       speechProfileReady(shared) &&
       (!nextProfiles[language] || nextProfiles[language].SHERPA_ASR_MANAGED === 'true')
     )
@@ -954,19 +1030,22 @@ export const startSherpa = (
 export const ensureSherpaStartupDependencies = async (
   speechConfig: SherpaConfig,
   onStatus?: (status: string) => void,
-  { restore = false } = {}
+  { restore = false, includeIndic = true, onlyIndic = false } = {}
 ): Promise<void> => {
-  const requiredPackages = [
-    'sherpa-onnx',
-    'fast-langdetect',
-    'soundfile',
-    'fastapi',
-    'uvicorn',
-    'python-multipart',
-    'faster-whisper'
-  ]
+  const requiredPackages = onlyIndic
+    ? []
+    : [
+        'sherpa-onnx',
+        'fast-langdetect',
+        'soundfile',
+        'fastapi',
+        'uvicorn',
+        'python-multipart',
+        'faster-whisper'
+      ]
 
   if (
+    includeIndic &&
     requestedSpeechLanguages(speechConfig).some((language) => speechAsrGroup(language) === 'hindi')
   )
     requiredPackages.push('kaldi-native-fbank', 'onnxruntime', 'scipy')
@@ -1023,10 +1102,10 @@ const startSherpaInternal = async (
   }
 
   if (!installedOnly) {
-    await ensureSherpaStartupDependencies(
-      preparedConfig ?? (await getConfig()).sherpa ?? {},
-      onStatus
-    )
+    const speechConfig = preparedConfig ?? (await getConfig()).sherpa ?? {}
+    await ensureSherpaStartupDependencies(speechConfig, onStatus, {
+      includeIndic: speechProfileReady(buildAsrProfiles(speechConfig).hindi)
+    })
     try {
       await ensureFfmpeg(onStatus)
     } catch (err) {
@@ -1038,12 +1117,15 @@ const startSherpaInternal = async (
   const configEnvVars = config.envVars ?? {}
   let sherpaConfig: SherpaConfig = { ...(preparedConfig ?? config.sherpa ?? {}) }
   if (!preparedConfig && !installedOnly) {
-    sherpaConfig = await ensureDefaultAsrModel(sherpaConfig, onStatus, false, false)
+    sherpaConfig = await ensureDefaultAsrModel(sherpaConfig, onStatus, false, 'without-indic')
     sherpaConfig = await ensureDefaultTtsModel(sherpaConfig, onStatus, false, false)
     await setConfig({ sherpa: { ...(config.sherpa ?? {}), ...sherpaConfig } })
   }
   const asrProfiles = buildAsrProfiles(sherpaConfig)
+  // The recognizer discovers the external tensors from ONNX; only the desktop needs their list.
+  for (const profile of Object.values(asrProfiles)) delete profile.SHERPA_ASR_EXTERNAL_FILES
   const ttsProfiles = buildTtsProfiles(sherpaConfig)
+  const legacyAsr = sherpaConfig.asrPreset === RETIRED_INDIC_ASR_REPO ? {} : sherpaConfig
 
   // log.info('Sherpa TTS profiles:', sherpaConfigTts)
   const host = '127.0.0.1'
@@ -1083,26 +1165,26 @@ const startSherpaInternal = async (
         SHERPA_ASR_PROFILES: JSON.stringify(asrProfiles),
         SHERPA_TTS_PROFILES: JSON.stringify(ttsProfiles),
         ...(sherpaConfig.language ? { SHERPA_LANGUAGE: sherpaConfig.language } : {}),
-        ...(sherpaConfig.asrPreset ? { SHERPA_ASR_NAME: sherpaConfig.asrPreset } : {}),
+        ...(legacyAsr.asrPreset ? { SHERPA_ASR_NAME: legacyAsr.asrPreset } : {}),
         ...(sherpaConfig.ttsPreset ? { SHERPA_TTS_NAME: sherpaConfig.ttsPreset } : {}),
-        ...(sherpaConfig.asrModel ? { SHERPA_ASR_MODEL: sherpaConfig.asrModel } : {}),
-        ...(sherpaConfig.asrEncoder ? { SHERPA_ASR_ENCODER: sherpaConfig.asrEncoder } : {}),
-        ...(sherpaConfig.asrDecoder ? { SHERPA_ASR_DECODER: sherpaConfig.asrDecoder } : {}),
-        ...(sherpaConfig.asrJoiner ? { SHERPA_ASR_JOINER: sherpaConfig.asrJoiner } : {}),
-        ...(sherpaConfig.asrPreprocessor
-          ? { SHERPA_ASR_PREPROCESSOR: sherpaConfig.asrPreprocessor }
+        ...(legacyAsr.asrModel ? { SHERPA_ASR_MODEL: legacyAsr.asrModel } : {}),
+        ...(legacyAsr.asrEncoder ? { SHERPA_ASR_ENCODER: legacyAsr.asrEncoder } : {}),
+        ...(legacyAsr.asrDecoder ? { SHERPA_ASR_DECODER: legacyAsr.asrDecoder } : {}),
+        ...(legacyAsr.asrJoiner ? { SHERPA_ASR_JOINER: legacyAsr.asrJoiner } : {}),
+        ...(legacyAsr.asrPreprocessor
+          ? { SHERPA_ASR_PREPROCESSOR: legacyAsr.asrPreprocessor }
           : {}),
-        ...(sherpaConfig.asrCachedDecoder
-          ? { SHERPA_ASR_CACHED_DECODER: sherpaConfig.asrCachedDecoder }
+        ...(legacyAsr.asrCachedDecoder
+          ? { SHERPA_ASR_CACHED_DECODER: legacyAsr.asrCachedDecoder }
           : {}),
-        ...(sherpaConfig.asrUncachedDecoder
-          ? { SHERPA_ASR_UNCACHED_DECODER: sherpaConfig.asrUncachedDecoder }
+        ...(legacyAsr.asrUncachedDecoder
+          ? { SHERPA_ASR_UNCACHED_DECODER: legacyAsr.asrUncachedDecoder }
           : {}),
-        ...(sherpaConfig.asrMergedDecoder
-          ? { SHERPA_ASR_MERGED_DECODER: sherpaConfig.asrMergedDecoder }
+        ...(legacyAsr.asrMergedDecoder
+          ? { SHERPA_ASR_MERGED_DECODER: legacyAsr.asrMergedDecoder }
           : {}),
-        ...(sherpaConfig.asrTokens ? { SHERPA_ASR_TOKENS: sherpaConfig.asrTokens } : {}),
-        ...(sherpaConfig.asrType ? { SHERPA_ASR_TYPE: sherpaConfig.asrType } : {}),
+        ...(legacyAsr.asrTokens ? { SHERPA_ASR_TOKENS: legacyAsr.asrTokens } : {}),
+        ...(legacyAsr.asrType ? { SHERPA_ASR_TYPE: legacyAsr.asrType } : {}),
         ...(sherpaConfig.ttsModel ? { SHERPA_TTS_MODEL: sherpaConfig.ttsModel } : {}),
         ...(sherpaConfig.ttsTokens ? { SHERPA_TTS_TOKENS: sherpaConfig.ttsTokens } : {}),
         ...(sherpaConfig.ttsType ? { SHERPA_TTS_TYPE: sherpaConfig.ttsType } : {}),
@@ -1167,14 +1249,13 @@ export const prepareSherpaRepairModels = (
   onStatus?: (status: string) => void
 ) =>
   queueSpeechDownload(async () => {
-    const withAsr = await ensureAsrModels(config, onStatus, false, false)
+    const withAsr = await ensureAsrModels(config, onStatus, false)
     return ensureTtsModels(withAsr, onStatus, false, false)
   })
 
 export const checkSherpaRepairModels = (config: SherpaConfig, languages: string[]): string[] => {
   const asr = buildAsrProfiles(config)
   const tts = buildTtsProfiles(config)
-  const limitedAsrLanguages: string[] = []
   for (const language of languages) {
     const support = speechModelSupport(language)
     const asrProfile = asr[language] ?? asr[speechAsrGroup(language)]
@@ -1182,9 +1263,8 @@ export const checkSherpaRepairModels = (config: SherpaConfig, languages: string[
       throw new Error(`Missing Sherpa ASR files: ${language}`)
     if (support.tts && !speechProfileReady(tts[language]))
       throw new Error(`Missing Sherpa TTS files: ${language}`)
-    if (asrProfile?.SHERPA_ASR_INDIC_FALLBACK === 'true') limitedAsrLanguages.push(language)
   }
-  return limitedAsrLanguages
+  return []
 }
 
 export const waitForSherpaRepairReady = async (
@@ -1218,10 +1298,11 @@ export const waitForSherpaRepairReady = async (
   )
 }
 
-export const verifySherpaRepairSpeech = async (server: {
-  url: string
-  pid: number
-}): Promise<void> => {
+export const verifySherpaRecognition = async (
+  server: { url: string; pid: number },
+  language: string,
+  expectedProfile?: string
+): Promise<void> => {
   // One second of generated PCM silence; no microphone or user recordings are read.
   const wave = new ArrayBuffer(44 + 32_000)
   const header = new DataView(wave)
@@ -1239,32 +1320,40 @@ export const verifySherpaRepairSpeech = async (server: {
   header.setUint32(36, 0x64617461) // data
   header.setUint32(40, 32_000, true)
 
-  const request = (endpoint: string, body: BodyInit, headers?: HeadersInit) =>
-    fetch(new URL(`/v1/audio/${endpoint}`, server.url), {
-      method: 'POST',
-      body,
-      headers,
-      redirect: 'error',
-      signal: AbortSignal.timeout(45_000)
-    })
   const form = new FormData()
   form.append('file', new Blob([wave], { type: 'audio/wav' }), 'speech-repair-test.wav')
-  form.append('language', 'zh')
-  const asr = await request('transcriptions', form)
+  form.append('language', language)
+  const asr = await fetch(new URL('/v1/audio/transcriptions', server.url), {
+    method: 'POST',
+    body: form,
+    redirect: 'error',
+    signal: AbortSignal.timeout(45_000)
+  })
   if (!asr.ok) {
     await asr.body?.cancel()
     throw new Error(`Sherpa recognition check failed (HTTP ${asr.status}).`)
   }
-  if (typeof (await asr.json())?.text !== 'string')
-    throw new Error('Invalid Sherpa recognition response.')
-
-  const tts = await request(
-    'speech',
-    JSON.stringify({ input: '\u4f60\u597d', language: 'zh', voice: '0' }),
-    {
-      'Content-Type': 'application/json'
-    }
+  const result = await asr.json()
+  if (
+    typeof result?.text !== 'string' ||
+    (expectedProfile && result.profile !== expectedProfile) ||
+    pid !== server.pid
   )
+    throw new Error('Invalid Sherpa recognition response.')
+}
+
+export const verifySherpaRepairSpeech = async (server: {
+  url: string
+  pid: number
+}): Promise<void> => {
+  await verifySherpaRecognition(server, 'zh')
+  const tts = await fetch(new URL('/v1/audio/speech', server.url), {
+    method: 'POST',
+    body: JSON.stringify({ input: '\u4f60\u597d', language: 'zh', voice: '0' }),
+    headers: { 'Content-Type': 'application/json' },
+    redirect: 'error',
+    signal: AbortSignal.timeout(45_000)
+  })
   if (!tts.ok) {
     await tts.body?.cancel()
     throw new Error(`Sherpa playback check failed (HTTP ${tts.status}).`)

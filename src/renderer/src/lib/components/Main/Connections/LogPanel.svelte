@@ -9,6 +9,7 @@
     serviceReady: boolean
     showBufferedLogs?: boolean
     statusText?: string
+    failureText?: string
     connectPty: (callback: (data: string) => void) => void
     disconnectPty: () => void
     readonly?: boolean
@@ -24,6 +25,7 @@
     serviceReady,
     showBufferedLogs = false,
     statusText = '',
+    failureText = '',
     connectPty,
     disconnectPty,
     readonly = false,
@@ -78,7 +80,7 @@
   }
 
   const copyLogs = () => {
-    const text = logViewerRef?.getBufferText?.()
+    const text = failureText || logViewerRef?.getBufferText?.()
     if (text) {
       navigator.clipboard.writeText(text)
       copied = true
@@ -260,7 +262,10 @@
 
   <!-- Log content -->
   <div class="flex-1 min-h-0 relative overflow-hidden">
-    {#if serviceReady || showBufferedLogs}
+    {#if failureText}
+      <pre
+        class="m-0 h-full overflow-auto whitespace-pre-wrap break-words bg-[#0a0a0a] p-4 text-[12px] leading-5 text-red-300">{failureText}</pre>
+    {:else if serviceReady || showBufferedLogs}
       {#key `${activeLog}-${refreshKey}`}
         <LogViewer
           bind:this={logViewerRef}

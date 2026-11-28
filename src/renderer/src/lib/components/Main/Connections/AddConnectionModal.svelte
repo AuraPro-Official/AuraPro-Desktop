@@ -69,7 +69,7 @@
 
     <!-- Body -->
     <div class="px-6 py-5">
-      <label for="connection-server-url" class="block text-[11px] text-gray-400 dark:text-gray-500"
+      <label for="connection-server-url" class="block text-[11px] text-gray-600 dark:text-gray-400"
         >{$i18n.t('setup.connectionManager.serverUrl')}</label
       >
       <input
@@ -77,7 +77,7 @@
         type="text"
         bind:value={url}
         placeholder="https://"
-        class="w-full py-2 text-[14px] text-[#1d1d1f] dark:text-[#fafafa] placeholder:opacity-20 outline-none bg-transparent border-none border-b border-black/[0.08] dark:border-white/[0.08]"
+        class="w-full py-2 text-[14px] text-[#1d1d1f] dark:text-[#fafafa] placeholder:text-gray-600 dark:placeholder:text-gray-400 outline-none bg-transparent border-none border-b border-black/[0.08] dark:border-white/[0.08]"
         onkeydown={(e) => e.key === 'Enter' && onConnect()}
       />
 
@@ -105,7 +105,7 @@
         {/if}
       </button>
       <button
-        class="w-full rounded-xl px-4 py-2 text-sm text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition bg-transparent border-none cursor-pointer"
+        class="w-full rounded-xl px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition bg-transparent border-none cursor-pointer"
         onclick={onCancel}
       >
         {$i18n.t('common.cancel')}

@@ -122,6 +122,7 @@
     },
     indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.mediumQ3),
     indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.medium),
+    indexTranslateCatalogEntry(INDEX_TRANSLATE_MODELS.mediumQ6),
     {
       name: 'high_Q4.gguf',
       sizeStr: '~15G',
@@ -1099,7 +1100,7 @@
     </div>
 
     <button
-      class="w-fit inline-flex items-center gap-2 bg-white px-8 py-2.5 text-black text-[13px] transition hover:bg-gray-100 border-none"
+      class="w-fit inline-flex items-center gap-2 rounded-lg border-none bg-[#1d1d1f] px-8 py-2.5 text-[13px] text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-[#fafafa] dark:text-[#1d1d1f] dark:hover:bg-gray-200"
       onclick={handleInstallClick}
       disabled={detectingHardware}
     >
@@ -1268,20 +1269,20 @@
       {/if}
 
       <div class="mb-5">
-        <div class="text-[11px] opacity-40 mb-1.5">Recommendation Focus</div>
+        <div class="mb-1.5 text-[11px] text-gray-600 dark:text-gray-400">Recommendation Focus</div>
         <div class="grid grid-cols-2 gap-2">
           <button
             type="button"
             class="rounded-xl border-none px-4 py-1.5 text-center transition {modelPreference ===
             'quality'
-              ? 'bg-white/[0.08] ring-1 ring-white/20'
-              : 'bg-black/[0.03] dark:bg-white/[0.03] hover:bg-white/[0.05]'}"
+              ? 'bg-black/[0.06] ring-1 ring-black/15 dark:bg-white/[0.08] dark:ring-white/20'
+              : 'bg-black/[0.03] hover:bg-black/[0.05] dark:bg-white/[0.03] dark:hover:bg-white/[0.05]'}"
             aria-pressed={modelPreference === 'quality'}
             onclick={() => setPreference('quality')}
           >
             <div
               class="text-[13px] font-medium {modelPreference === 'quality'
-                ? 'text-emerald-400'
+                ? 'text-emerald-700 dark:text-emerald-400'
                 : 'opacity-80'}"
             >
               {$i18n.t('main.getStarted.modelPreferenceQuality')}
@@ -1291,14 +1292,14 @@
             type="button"
             class="rounded-xl border-none px-4 py-1.5 text-center transition {modelPreference ===
             'balanced'
-              ? 'bg-white/[0.08] ring-1 ring-white/20'
-              : 'bg-black/[0.03] dark:bg-white/[0.03] hover:bg-white/[0.05]'}"
+              ? 'bg-black/[0.06] ring-1 ring-black/15 dark:bg-white/[0.08] dark:ring-white/20'
+              : 'bg-black/[0.03] hover:bg-black/[0.05] dark:bg-white/[0.03] dark:hover:bg-white/[0.05]'}"
             aria-pressed={modelPreference === 'balanced'}
             onclick={() => setPreference('balanced')}
           >
             <div
               class="text-[13px] font-medium {modelPreference === 'balanced'
-                ? 'text-emerald-400'
+                ? 'text-emerald-700 dark:text-emerald-400'
                 : 'opacity-80'}"
             >
               {$i18n.t('main.getStarted.modelPreferenceBalanced')}
@@ -1323,14 +1324,15 @@
         <details>
           <summary class="cursor-pointer py-2 text-[13px]">
             {$i18n.t('main.getStarted.selectedDownloadModel')}:
-            <span class="font-medium break-all text-emerald-600 dark:text-emerald-400"
+            <span class="font-medium break-all text-emerald-700 dark:text-emerald-400"
               >{selectedModel?.name ?? $i18n.t('main.getStarted.noAutoModel')}</span
             >
-            <span class="ml-2 text-[11px] opacity-50">{$i18n.t('main.getStarted.changeModel')}</span
+            <span class="ml-2 text-[11px] text-gray-600 dark:text-gray-400"
+              >{$i18n.t('main.getStarted.changeModel')}</span
             >
           </summary>
           {#if !proMode}
-            <div class="text-[11px] opacity-40 mb-1.5">
+            <div class="mb-1.5 text-[11px] text-gray-600 dark:text-gray-400">
               Recommended based on RAM/VRAM: {systemMemGB ?? '?'}G / {dedicatedVramGB}G
             </div>
           {/if}
@@ -1341,14 +1343,14 @@
               <div
                 class="flex min-w-0 items-center justify-between gap-2 px-4 py-3 rounded-xl cursor-pointer transition-all {selectedModel?.name ===
                 model.name
-                  ? 'bg-white/[0.08] ring-1 ring-white/20'
-                  : 'bg-black/[0.03] dark:bg-white/[0.03] hover:bg-white/[0.05]'}"
+                  ? 'bg-black/[0.06] ring-1 ring-black/15 dark:bg-white/[0.08] dark:ring-white/20'
+                  : 'bg-black/[0.03] hover:bg-black/[0.05] dark:bg-white/[0.03] dark:hover:bg-white/[0.05]'}"
                 onclick={() => (manualModel = model.filename)}
               >
                 <div class="flex min-w-0 flex-col">
                   <span
                     class="text-[13px] font-medium {selectedModel?.name === model.name
-                      ? 'text-emerald-400'
+                      ? 'text-emerald-700 dark:text-emerald-400'
                       : 'opacity-80'}">{model.name.replace('.gguf', '')}</span
                   >
                   <span class="text-[11px] leading-snug text-gray-600 dark:text-gray-400">
@@ -1363,7 +1365,9 @@
                   />
                 </div>
                 {#if selectedModel?.name === model.name}
-                  <div class="size-2 shrink-0 rounded-full bg-emerald-400"></div>
+                  <div
+                    class="size-2 shrink-0 rounded-full bg-emerald-700 dark:bg-emerald-400"
+                  ></div>
                 {/if}
               </div>
             {/each}
@@ -1372,13 +1376,19 @@
       </div>
 
       <div class="mb-5 rounded-xl bg-black/[0.03] px-4 py-3 dark:bg-white/[0.04]">
-        <div class="mb-2 flex items-center justify-between gap-3 text-[11px] opacity-50">
+        <div class="mb-2 flex items-center justify-between gap-3 text-[11px]">
           <span>安装空间检查</span>
-          <span class={hasEnoughDiskSpace() ? 'text-emerald-400' : 'text-red-400'}>
+          <span
+            class={checkingDiskSpace
+              ? 'text-gray-600 dark:text-gray-400'
+              : hasEnoughDiskSpace()
+                ? 'text-emerald-700 dark:text-emerald-400'
+                : 'text-red-700 dark:text-red-400'}
+          >
             {checkingDiskSpace ? '检测中' : hasEnoughDiskSpace() ? '空间充足' : '空间不足'}
           </span>
         </div>
-        <div class="grid gap-1.5 text-[10px] leading-relaxed opacity-35">
+        <div class="grid gap-1.5 text-[10px] leading-relaxed text-gray-600 dark:text-gray-400">
           <div class="flex items-center justify-between gap-3">
             <span>至少需要</span>
             <span class="font-mono">{formatGb(requiredModelInstallBytes())}G</span>
@@ -1397,7 +1407,7 @@
             <span>Sherpa</span>
             <span>{installSherpaRecommended ? '模型大小 + 5G' : '模型大小 + 3G'}</span>
           </div>
-          <div class="mt-1 truncate font-mono opacity-70" title={diskProbePath || installDir}>
+          <div class="mt-1 truncate font-mono" title={diskProbePath || installDir}>
             {diskProbePath || installDir}
           </div>
         </div>
@@ -1412,7 +1422,7 @@
       {/if}
 
       <button
-        class="w-fit inline-flex items-center gap-2 bg-white px-8 py-2.5 text-black text-[13px] transition hover:bg-gray-100 border-none disabled:cursor-not-allowed disabled:opacity-40"
+        class="w-fit inline-flex items-center gap-2 rounded-lg border-none bg-[#1d1d1f] px-8 py-2.5 text-[13px] text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-[#fafafa] dark:text-[#1d1d1f] dark:hover:bg-gray-200"
         onclick={() => startModelDownload()}
         disabled={!selectedModel || detectingHardware || checkingDiskSpace}
       >

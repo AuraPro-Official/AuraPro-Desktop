@@ -294,6 +294,7 @@
     width: 100%;
     background: transparent;
     overflow: hidden;
+    color-scheme: light;
     user-select: none;
     -webkit-font-smoothing: antialiased;
   }
@@ -387,6 +388,7 @@
 
   @media (prefers-color-scheme: dark) {
     .bar {
+      color-scheme: dark;
       background: #1a1a1c;
       color: #fafafa;
       border-color: rgba(255, 255, 255, 0.08);
@@ -434,7 +436,7 @@
   }
 
   input::placeholder {
-    color: rgba(0, 0, 0, 0.22);
+    color: #64646a;
   }
 
   @media (prefers-color-scheme: dark) {
@@ -442,7 +444,7 @@
       color: #fafafa;
     }
     input::placeholder {
-      color: rgba(255, 255, 255, 0.18);
+      color: #a1a1aa;
     }
   }
 
