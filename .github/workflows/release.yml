@@ -248,7 +248,7 @@ jobs:
       github.event_name == 'push' &&
       github.ref == 'refs/heads/release' &&
       !cancelled() &&
-      needs.package.result != 'failure'
+      needs.package.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -368,8 +368,8 @@ jobs:
           name: v${{ steps.version.outputs.version }}
           body_path: /tmp/release_notes.md
           draft: false
-          prerelease: ${{ steps.version.outputs.version == '3.10.15' || steps.version.outputs.version == '3.10.17' || steps.version.outputs.version == '3.10.18' }}
-          make_latest: ${{ (steps.version.outputs.version == '3.10.13' || steps.version.outputs.version == '3.10.15' || steps.version.outputs.version == '3.10.17' || steps.version.outputs.version == '3.10.18') && 'false' || 'true' }}
+          prerelease: ${{ steps.version.outputs.version == '3.10.15' || steps.version.outputs.version == '3.10.17' || steps.version.outputs.version == '3.10.18' || steps.version.outputs.version == '3.10.19' }}
+          make_latest: ${{ (steps.version.outputs.version == '3.10.13' || steps.version.outputs.version == '3.10.15' || steps.version.outputs.version == '3.10.17' || steps.version.outputs.version == '3.10.18' || steps.version.outputs.version == '3.10.19') && 'false' || 'true' }}
           files: |
             windows-*-*/*.exe
             windows-*-*/*.blockmap

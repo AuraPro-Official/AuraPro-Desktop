@@ -543,7 +543,8 @@
       </div>
       <Switch
         checked={$config?.llamaCpp?.enabled ?? false}
-        onToggle={() => updateConfig('enabled', !($config?.llamaCpp?.enabled ?? false))}
+        label={$i18n.t('settings.inference.startOnLaunch')}
+        onchange={(value) => updateConfig('enabled', value)}
       />
     </div>
 

@@ -188,9 +188,11 @@
     }
   }
   let savingLanguages = $state(false)
+  let languageSaveError = $state('')
   const toggleLanguage = async (language: string, checked: boolean) => {
-    if (savingLanguages) return
+    if (savingLanguages || downloading !== null) return
     savingLanguages = true
+    languageSaveError = ''
     const previous = sherpaConfig.enabledLanguages
     const selected = selectedSpeechLanguages(sherpaConfig)
     const enabledLanguages = checked
@@ -201,7 +203,7 @@
       await saveSherpaConfig({ enabledLanguages })
     } catch (error) {
       sherpaConfig = { ...sherpaConfig, enabledLanguages: previous }
-      setupStatus = getErrorMessage(error)
+      languageSaveError = getErrorMessage(error)
     } finally {
       savingLanguages = false
     }
@@ -396,11 +398,12 @@
   }
 
   const saveSherpaConfig = async (updates: SherpaConfig) => {
-    const current = await window.electronAPI.getConfig()
-    const sherpa = { ...(current?.sherpa ?? {}), ...sherpaConfig, ...updates }
-    await window.electronAPI.setConfig({ sherpa })
-    config.set(await window.electronAPI.getConfig())
-    sherpaConfig = sherpa
+    // The main process merges the patch. Do not send reactive settings or stale profiles over IPC.
+    await window.electronAPI.setConfig({ sherpa: $state.snapshot(updates) })
+    const saved = await window.electronAPI.getConfig()
+    config.set(saved)
+    const sherpa = { ...sherpaConfig, ...saved.sherpa }
+    sherpaConfig = { ...sherpa, enabledLanguages: selectedSpeechLanguages(sherpa) }
   }
 
   const basename = (filename: string) => filename.split('/').pop() ?? filename
@@ -830,7 +833,10 @@
   }
 
   const downloadTTSModel = async (isDelete?: boolean) => {
+    if (downloading !== null || savingLanguages) return
     downloading = 'selected-tts'
+    downloadProgress = {}
+    setupStatus = ''
     try {
       await saveSherpaConfig({ enabledLanguages: selectedSpeechLanguages(sherpaConfig) })
       await window.electronAPI.downloadSherpaTTSModel(isDelete)
@@ -843,7 +849,10 @@
   }
 
   const downloadAsrModel = async (isDelete?: boolean) => {
+    if (downloading !== null || savingLanguages) return
     downloading = 'selected-asr'
+    downloadProgress = {}
+    setupStatus = ''
     try {
       await saveSherpaConfig({ enabledLanguages: selectedSpeechLanguages(sherpaConfig) })
       await window.electronAPI.downloadSherpaAsrModel(isDelete)
@@ -1251,6 +1260,9 @@
             </label>
           {/each}
         </div>
+        {#if languageSaveError}
+          <div class="settings-feedback mt-3 px-3 py-2" role="alert">{languageSaveError}</div>
+        {/if}
       </details>
       <div class="py-4 border-t settings-divider">
         <div class="flex items-center justify-between gap-4">
@@ -1264,7 +1276,7 @@
           </div>
           <button
             class="settings-button shrink-0"
-            disabled={downloading !== null}
+            disabled={downloading !== null || savingLanguages}
             onclick={() => downloadAsrModel(false)}
           >
             {downloading === 'selected-asr'
@@ -1324,7 +1336,7 @@
           </div>
           <button
             class="settings-button shrink-0"
-            disabled={downloading !== null}
+            disabled={downloading !== null || savingLanguages}
             onclick={() => downloadTTSModel(false)}
           >
             {downloading === 'selected-tts'
